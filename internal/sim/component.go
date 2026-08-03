@@ -227,8 +227,9 @@ func armorHealth(v Variant) int {
 }
 
 // Weapons returns the blueprint's weapon variants in slot order. Slot order is
-// installation order, and it is what picks the firing weapon (design §12 P1
-// leaves selection open; E7.9 owns the real answer).
+// installation order, and it is what picks the firing weapon: design §12 P1's
+// selection question is settled as first ready in slot order
+// (docs/decisions.md).
 func (b Blueprint) Weapons() []Variant {
 	var out []Variant
 	for _, v := range b.Components {

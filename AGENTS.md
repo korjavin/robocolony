@@ -95,8 +95,14 @@ Every PR must pass:
 go vet ./...
 go build ./...
 go test ./...
-gofmt -l .        # must print nothing
+gofmt -l $(git ls-files '*.go')   # must print nothing
 ```
+
+`git ls-files` rather than `.` on purpose: a bare `.` walks `.claude/worktrees/`,
+where parallel agents keep live checkouts, so it reports *other people's*
+in-progress files and a clean tree looks dirty. The tracked-file form gives the
+same answer locally and in CI, and still catches an unformatted file anywhere in
+the repo once it is staged.
 
 Non-trivial logic ships with a test in the same package. Table-driven where it
 fits. No test frameworks beyond `testing`.
@@ -109,3 +115,7 @@ fits. No test frameworks beyond `testing`.
   for review. `git fetch origin master` first — worktrees can be cut stale.
 - Merge commits only. Never squash, never rebase-merge, never push to `master`.
 - Flag deferrals honestly in the PR body rather than silently dropping scope.
+- **Screenshots**: `gh` cannot upload images into a PR body, and binaries do not
+  belong in the repo. Push them to a throwaway branch (`screenshots-<branch>`)
+  and link the raw URLs; delete it after review. Several PRs rediscovered this
+  independently before it was written down.
