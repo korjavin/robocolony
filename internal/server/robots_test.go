@@ -17,9 +17,8 @@ import (
 	"github.com/korjavin/robocolony/internal/sim"
 )
 
-// twoColonies starts a real two-player match: the ownership rules are only
-// meaningful when there is somebody else's colony to try to command.
-func twoColonies(t *testing.T) (*Robots, *lobby.Match, db.User, db.User) {
+// newService brings up a lobby service over a throwaway database.
+func newService(t *testing.T) (*lobby.Service, *db.DB) {
 	t.Helper()
 	database, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -37,6 +36,14 @@ func twoColonies(t *testing.T) (*Robots, *lobby.Match, db.User, db.User) {
 			t.Errorf("Shutdown() = %v", err)
 		}
 	})
+	return svc, database
+}
+
+// twoColonies starts a real two-player match: the ownership rules are only
+// meaningful when there is somebody else's colony to try to command.
+func twoColonies(t *testing.T) (*Robots, *lobby.Match, db.User, db.User) {
+	t.Helper()
+	svc, database := newService(t)
 
 	owner, err := database.UpsertUser(t.Context(), "sub-owner", "owner@example.com", "Owner")
 	if err != nil {
@@ -425,6 +432,52 @@ func TestCommandsOnUnknownMatch(t *testing.T) {
 		t.Fatal("recalled a robot that does not exist")
 	} else {
 		wantStatus(t, err, http.StatusNotFound)
+	}
+}
+
+// A finished match is frozen: it stays observable, but neither command may
+// edit the state the final leaderboard and the last snapshot are read from.
+func TestCommandsRefuseAFinishedMatch(t *testing.T) {
+	svc, database := newService(t)
+	owner, err := database.UpsertUser(t.Context(), "sub-owner", "owner@example.com", "Owner")
+	if err != nil {
+		t.Fatalf("UpsertUser() = %v", err)
+	}
+	// A one-second match, written straight to the database: Settings.Validate
+	// enforces a 60 second floor and this test will not wait a minute. Start
+	// takes the row as it stands.
+	row, err := database.CreateLobby(t.Context(), owner.ID, "sprint",
+		`{"duration_sec":1,"richness":0.02,"spawn_per_min":6,"max_players":4}`)
+	if err != nil {
+		t.Fatalf("CreateLobby() = %v", err)
+	}
+	if _, err := svc.Start(t.Context(), row.ID, owner.ID); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	m, ok := svc.Registry().Get(row.ID)
+	if !ok {
+		t.Fatalf("match %d is not in the registry after Start", row.ID)
+	}
+	h := NewRobots(svc.Registry(), database)
+	id := aRobot(t, m, m.Colonies[0].ID)
+	programID := saveProgram(t, h, owner, "scavenger", lobby.DefaultProgram())
+
+	for deadline := time.Now().Add(10 * time.Second); !m.Finished(); {
+		if time.Now().After(deadline) {
+			t.Fatal("the one-second match never finished")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if _, err := h.Recall(t.Context(), owner.ID, m.ID, id); err == nil {
+		t.Error("recalled a robot in a match that is over")
+	} else {
+		wantStatus(t, err, http.StatusConflict)
+	}
+	if _, err := h.InstallProgram(t.Context(), owner.ID, m.ID, id, programID); err == nil {
+		t.Error("reprogrammed a robot in a match that is over")
+	} else {
+		wantStatus(t, err, http.StatusConflict)
 	}
 }
 

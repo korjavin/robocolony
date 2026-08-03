@@ -166,6 +166,17 @@ func (h *Robots) own(matchID, userID int64) (*lobby.Match, sim.ColonyID, error) 
 	if !ok {
 		return nil, 0, errf(http.StatusNotFound, "match not found: live match state does not survive a server restart")
 	}
+	// A finished match stays in the registry so it can still be observed, and
+	// its world stops stepping. Commanding it would edit the final state after
+	// the fact, so both commands stop here.
+	//
+	// Checked outside the match lock because Finished takes that same lock, and
+	// therefore one command can still land on a match that finishes in the gap.
+	// That is one tick's worth of race on a match that just ended, which is no
+	// different from the command having arrived a tick earlier.
+	if m.Finished() {
+		return nil, 0, errf(http.StatusConflict, "the match is over")
+	}
 	// Colonies are fixed when the match starts and never written again, so this
 	// needs no lock.
 	for _, c := range m.Colonies {
