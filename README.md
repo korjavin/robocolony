@@ -59,7 +59,9 @@ gitignored; production values are Portainer stack environment variables.
 | `GOOGLE_CLIENT_SECRET` | — | *E2 — declared, unused today* |
 | `GOOGLE_REDIRECT_URL` | — | *E2 — declared, unused today* |
 | `HOSTNAME` | — | compose/Traefik only |
-| `TRAEFIK_NETWORK_NAME` | `traefik_default` | compose/Traefik only |
+| `TRAEFIK_NETWORK_NAME` | `proxy` | compose/Traefik only |
+| `TRAEFIK_CERT_RESOLVER` | `wildcard` | compose/Traefik only |
+| `TRAEFIK_CERT_DOMAIN` | `cloud.myhealthbot.ai` | compose/Traefik only |
 
 ## Deployment
 
@@ -79,6 +81,7 @@ a Portainer webhook redeploys the stack.
 1. Create the stack from this repository and point it at the **`deploy`
    branch**, never `master`. `master` carries a `:latest` placeholder tag.
 2. Set the stack environment variables: `HOSTNAME`, `TRAEFIK_NETWORK_NAME`,
+   `TRAEFIK_CERT_RESOLVER`, `TRAEFIK_CERT_DOMAIN`,
    `BASE_URL`, `LOG_LEVEL`, `DB_PATH`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`,
    `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`.
 3. No host setup is needed for storage. The container runs as **uid/gid 1000**

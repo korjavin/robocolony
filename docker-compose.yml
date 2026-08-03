@@ -15,10 +15,17 @@ services:
       - traefik_network
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
+      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-proxy}"
       - "traefik.http.routers.robocolony.rule=Host(`${HOSTNAME}`)"
       - "traefik.http.routers.robocolony.entrypoints=websecure"
-      - "traefik.http.routers.robocolony.tls.certresolver=myresolver"
+      # The host's medtracker router matches HostRegexp(`^.+\.cloud.myhealthbot.ai$`),
+      # a catch-all for every subdomain. Traefik ranks routers by rule length by
+      # default, and that regexp is longer than our Host() rule — so without an
+      # explicit priority the catch-all wins and this service is unreachable.
+      - "traefik.http.routers.robocolony.priority=1000"
+      - "traefik.http.routers.robocolony.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-wildcard}"
+      - "traefik.http.routers.robocolony.tls.domains[0].main=${TRAEFIK_CERT_DOMAIN:-cloud.myhealthbot.ai}"
+      - "traefik.http.routers.robocolony.tls.domains[0].sans=*.${TRAEFIK_CERT_DOMAIN:-cloud.myhealthbot.ai}"
       - "traefik.http.services.robocolony.loadbalancer.server.port=8080"
     volumes:
       # Named volume, not a bind mount: Docker seeds a fresh named volume from
