@@ -1,0 +1,48 @@
+# Portainer deploys this stack from the `deploy` branch, never from master.
+# On master the image tag is a `:latest` placeholder; CI rewrites it to the
+# commit SHA on the deploy branch. See .github/workflows/deploy.yml.
+#
+# Portainer stack environment variables:
+#   HOSTNAME               public domain, e.g. robocolony.example.com
+#   TRAEFIK_NETWORK_NAME   external Traefik network (default traefik_default)
+#   plus the application variables below (documented in .env.example)
+
+services:
+  robocolony:
+    image: ghcr.io/korjavin/robocolony:latest
+    container_name: robocolony
+    networks:
+      - traefik_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
+      - "traefik.http.routers.robocolony.rule=Host(`${HOSTNAME}`)"
+      - "traefik.http.routers.robocolony.entrypoints=websecure"
+      - "traefik.http.routers.robocolony.tls.certresolver=myresolver"
+      - "traefik.http.services.robocolony.loadbalancer.server.port=8080"
+    volumes:
+      # Named volume, not a bind mount: Docker seeds a fresh named volume from
+      # the image's /app/data, which the Dockerfile already owns as uid/gid
+      # 1000. A bind mount would arrive root-owned and the non-root process
+      # could not write the SQLite file.
+      - robocolony_data:/app/data
+    environment:
+      - PORT=8080
+      # Set this in Portainer to https://<HOSTNAME>; empty falls back to localhost.
+      - BASE_URL=${BASE_URL}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      # Consumed from E2 onward; declared now so the stack needs no edit later.
+      - DB_PATH=${DB_PATH:-/app/data/robocolony.db}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
+    restart: unless-stopped
+
+volumes:
+  robocolony_data:
+
+networks:
+  traefik_network:
+    external: true
+    name: ${TRAEFIK_NETWORK_NAME:-traefik_default}
