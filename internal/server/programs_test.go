@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/korjavin/robocolony/internal/db"
@@ -352,5 +353,55 @@ func TestBlueprintConstraints(t *testing.T) {
 				wantLibStatus(t, err, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+// TestBlueprintPreviewAgreesWithSave: the editor draws its live §6.3 verdict
+// from the preview endpoint and its save gate from CreateBlueprint. If those
+// two ever disagree the editor either refuses a legal design or offers one the
+// save will bounce, so pin them to the same answer over the same cases.
+func TestBlueprintPreviewAgreesWithSave(t *testing.T) {
+	lib, database := newLibrary(t)
+	user := newUser(t, database, "player")
+
+	twoWeapons := []int{int(sim.Tracks), int(sim.MediumArmor), int(sim.Laser), int(sim.AutoGun)}
+	for _, tt := range []struct {
+		name       string
+		components []int
+	}{
+		{"two weapons", twoWeapons},
+		{"three weapons", append(slices.Clone(twoWeapons), int(sim.Cannon))},
+		{"no locomotion", []int{int(sim.MediumArmor)}},
+		{"unknown component", []int{int(sim.Tracks), int(sim.MediumArmor), 200}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stats, err := lib.PreviewBlueprint(tt.components)
+			if err != nil {
+				t.Fatalf("PreviewBlueprint() = %v", err)
+			}
+			_, saveErr := lib.CreateBlueprint(t.Context(), user.ID, tt.name, tt.components)
+			if stats.OK != (saveErr == nil) {
+				t.Fatalf("preview ok = %v (%q) but save error = %v", stats.OK, stats.Error, saveErr)
+			}
+			if !stats.OK {
+				return
+			}
+			bp := sim.Blueprint{Components: toVariants(tt.components)}
+			if stats.Mass != bp.Mass() || stats.Value != bp.Value() ||
+				stats.Health != sim.StartingHealth(bp) || stats.Speed != sim.EffectiveSpeed(bp) {
+				t.Fatalf("preview %+v does not match sim", stats)
+			}
+		})
+	}
+}
+
+// TestBlueprintPreviewRefusesOversized: the preview runs no simulation, but it
+// is still untrusted input and must not take an unbounded parts list.
+func TestBlueprintPreviewRefusesOversized(t *testing.T) {
+	lib, _ := newLibrary(t)
+	if _, err := lib.PreviewBlueprint(make([]int, maxComponents+1)); err == nil {
+		t.Fatal("an oversized parts list was accepted")
+	} else {
+		wantLibStatus(t, err, http.StatusBadRequest)
 	}
 }
