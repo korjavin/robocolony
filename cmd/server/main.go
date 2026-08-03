@@ -127,6 +127,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	a.Routes(mux)
 	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
 	mux.HandleFunc("GET /lobby", lobbyPage)
+	mux.HandleFunc("GET /match", matchPage)
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
@@ -154,6 +155,12 @@ func loginPage(w http.ResponseWriter, r *http.Request) {
 // which is where the session is actually required.
 func lobbyPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "lobby.html")
+}
+
+// matchPage is the observer shell for /match?id=N. Like the lobby it is static:
+// the session is required by the world stream it subscribes to.
+func matchPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "match.html")
 }
 
 // me is the smallest authenticated endpoint: it tells the client who it is,
