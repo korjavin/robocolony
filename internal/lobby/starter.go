@@ -199,6 +199,14 @@ type kit struct {
 	blueprints []sim.Blueprint
 	programs   []namedProgram
 	start      []sim.Blueprint // one per starting robot
+
+	// budget is the match's starting budget when this is a player's colony,
+	// and zero for the canned AI kits. Design §2.1's equal budget is a rule
+	// about the *players*: an AI profile is a fixed opponent whose opening was
+	// measured as it stands (see the ladder in ai.go), so pricing it at
+	// whatever a host typed into the lobby form would retune that ladder
+	// behind the numbers written down there. equipColony leaves a zero alone.
+	budget int
 }
 
 // namedProgram is a program plus the runtime id blueprints refer to it by.
@@ -231,12 +239,24 @@ func repeat(bp sim.Blueprint, n int) []sim.Blueprint {
 	return out
 }
 
-// equipColony approves a kit's blueprints at a base and puts its starting
-// robots on the map. Everything random here draws from the world's own rng, so
-// two matches with the same seed, member list and AI list start identical.
+// equipColony approves a kit's blueprints at a base, puts its starting robots
+// on the map, and turns whatever the roster did not spend into base stock.
+// Everything random here draws from the world's own rng, so two matches with
+// the same seed, member list and AI list start identical.
 func equipColony(w *sim.World, base *sim.Base, k kit) {
 	base.Blueprints = append(base.Blueprints, k.blueprints...)
+	spent := 0
 	for _, bp := range k.start {
+		// The budget bounds the whole roster, not just the one startingRoster
+		// priced: the built-in kit is a fixed list of three robots, so a host
+		// who sets a budget below what it costs has to see it cut here or that
+		// colony would out-equip one whose player picked a loadout. The tail
+		// goes first, which keeps the cheapest body. What the cut frees is not
+		// lost; it comes back below as stock.
+		if k.budget > 0 && spent+bp.Value() > k.budget {
+			break
+		}
+		spent += bp.Value()
 		w.Robots = append(w.Robots, &sim.Robot{
 			ID:        w.NextID(),
 			Colony:    base.Colony,
@@ -246,5 +266,42 @@ func equipColony(w *sim.World, base *sim.Base, k kit) {
 			Blueprint: bp,
 			ProgramID: bp.ProgramID,
 		})
+	}
+	spendRemainder(w, base, k.budget-spent)
+}
+
+// spendRemainder converts unspent starting budget into base inventory — design
+// §12 P0, answered: it becomes parts rather than being lost or reserved.
+//
+// Equal starting strength (design §2.1) survives it because the loop only stops
+// when nothing in the catalogue still fits, so every *player* colony leaves the
+// shop having spent all but less than the cheapest component (20) of the same
+// budget. A lean roster buys spares, never an advantage: parts in the base
+// count for a quarter of what the same value counts for on a live robot
+// (sim's inventoryScorePercent), so under-spending is still a loss.
+//
+// It draws from sim.Catalogue(), the same table the map spawns from, so nothing
+// lands in a base that a colony could not have scavenged. The draw is on the
+// world's rng, never math/rand: it is world state at tick zero and a replay
+// rebuilds it from the seed.
+func spendRemainder(w *sim.World, base *sim.Base, left int) {
+	if base.Inventory == nil {
+		base.Inventory = map[sim.Variant]int{}
+	}
+	cat := sim.Catalogue()
+	fits := make([]sim.Component, 0, len(cat))
+	for {
+		fits = fits[:0]
+		for _, c := range cat {
+			if c.Value > 0 && c.Value <= left {
+				fits = append(fits, c)
+			}
+		}
+		if len(fits) == 0 {
+			return
+		}
+		c := fits[w.Rand().Intn(len(fits))]
+		base.Inventory[c.Variant]++
+		left -= c.Value
 	}
 }

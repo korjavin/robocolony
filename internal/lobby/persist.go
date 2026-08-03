@@ -169,7 +169,15 @@ var fingerprint = sync.OnceValue(func() string {
 	// invalidate every log in flight. Profiles() is not fixed in the same way —
 	// but adding or removing a profile *is* a change to what a stored AI match
 	// replays into, so it belongs in the fingerprint rather than outside it.
-	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 2, Seed: 0x5eed, AI: Profiles()}
+	//
+	// StartingBudget is deliberately above what the built-in kit costs, so the
+	// mini-match leaves a remainder and equipColony's conversion of it into
+	// base stock is part of what is hashed. Set to the kit's own price it would
+	// be invisible here, and a build that converts differently would accept a
+	// log recorded by one that did not — the divergence would then be a colony
+	// that starts with stock it never had.
+	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 2, Seed: 0x5eed,
+		StartingBudget: 500, AI: Profiles()}
 	members := []db.Member{{UserID: 1, DisplayName: "a"}, {UserID: 2, DisplayName: "b"}}
 
 	h := fnv.New64a()

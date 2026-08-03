@@ -2,7 +2,9 @@ package lobby
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/korjavin/robocolony/internal/db"
@@ -287,7 +289,7 @@ func TestLoadoutGateClosesAtStart(t *testing.T) {
 // robots, or more component value, than the built-in kit every colony used to
 // start from.
 func TestStartingRosterIsEqual(t *testing.T) {
-	budget := startingBudget()
+	budget := defaultStartingBudget()
 	cheap := sim.Blueprint{Name: "cheap", Components: []sim.Variant{sim.Tracks, sim.LightArmor}}
 	rich := sim.Blueprint{Name: "rich", Components: gunner}
 
@@ -302,7 +304,7 @@ func TestStartingRosterIsEqual(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			roster := startingRoster(tc.bps)
+			roster := startingRoster(tc.bps, budget)
 			if len(roster) == 0 {
 				t.Fatal("startingRoster() fielded nothing")
 			}
@@ -324,10 +326,10 @@ func TestStartingRosterIsEqual(t *testing.T) {
 	// The starter scavenger is the reference: a colony approving it gets exactly
 	// the opening every colony used to get, which is what makes the budget
 	// "equal" rather than merely "bounded".
-	if got := startingRoster([]sim.Blueprint{DefaultBlueprint()}); len(got) != startingRobots {
+	if got := startingRoster([]sim.Blueprint{DefaultBlueprint()}, budget); len(got) != startingRobots {
 		t.Errorf("the starter scavenger now fields %d robots, want the unchanged %d", len(got), startingRobots)
 	}
-	if got := startingRoster([]sim.Blueprint{rich}); len(got) >= startingRobots {
+	if got := startingRoster([]sim.Blueprint{rich}, budget); len(got) >= startingRobots {
 		t.Errorf("an armed body fields %d robots, want fewer than the %d unarmed ones", len(got), startingRobots)
 	}
 }
@@ -336,7 +338,7 @@ func TestStartingRosterIsEqual(t *testing.T) {
 // a player who never opens the picker. It is also why this change leaves the
 // replay fingerprint alone.
 func TestNoLoadoutIsTheBuiltInKit(t *testing.T) {
-	k, err := memberKit(db.Member{UserID: 1, DisplayName: "ada"})
+	k, err := memberKit(db.Member{UserID: 1, DisplayName: "ada"}, defaultStartingBudget())
 	if err != nil {
 		t.Fatalf("memberKit() = %v", err)
 	}
@@ -348,4 +350,99 @@ func TestNoLoadoutIsTheBuiltInKit(t *testing.T) {
 	if len(k.start) > 0 && k.start[0].ID != DefaultBlueprintID {
 		t.Errorf("memberKit() starts with %q, want the built-in %q", k.start[0].ID, DefaultBlueprintID)
 	}
+}
+
+// TestStartingBudgetIsSpentInFull is design §12 P0's answer: the host sets the
+// budget, and whatever the opening roster does not spend arrives as parts in
+// the base rather than being lost.
+//
+// It is also the equal-strength check (design §2.1): every *player* colony,
+// lean loadout or expensive one, leaves the start worth the same budget, up to
+// less than the cheapest component in the catalogue, which is the finest
+// granularity the conversion can reach. An AI colony is deliberately outside
+// it — see the kit.budget comment in starter.go — so this checks the human
+// seats and separately checks that the AI opening never moved.
+func TestStartingBudgetIsSpentInFull(t *testing.T) {
+	const seats = 2
+	cheapest := cheapestComponentValue(t)
+	aiWorth := map[int]int{}
+	for _, budget := range []int{minStartingBudget, defaultStartingBudget(), 500, maxStartingBudget} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			set := shortSettings(60)
+			set.StartingBudget = budget
+			set.MaxPlayers = seats
+			set.AI = Profiles()[:1]
+			if err := set.Validate(); err != nil {
+				t.Fatalf("Validate() = %v", err)
+			}
+			m := testMatch(t, set, seats)
+
+			for i, b := range m.world.Bases {
+				worth, robots := b.InventoryValue(), 0
+				for _, r := range m.world.Robots {
+					if r.Colony == b.Colony {
+						worth += r.Blueprint.Value()
+						robots++
+					}
+				}
+				if robots == 0 {
+					// Even at the floor: a colony with no robot collects
+					// nothing (design §5.3), so no legal budget may field one.
+					t.Errorf("colony %d starts with no robots at budget %d", b.Colony, budget)
+				}
+				if i >= seats {
+					// The AI seats: the same opening at every budget, or the
+					// measured ladder in ai.go stops meaning anything.
+					if prev, seen := aiWorth[i]; seen && prev != worth {
+						t.Errorf("AI colony %d starts worth %d at budget %d but %d at another: the budget re-priced it",
+							b.Colony, worth, budget, prev)
+					}
+					aiWorth[i] = worth
+					continue
+				}
+				if worth > budget || worth <= budget-cheapest {
+					t.Errorf("colony %d starts worth %d, want the budget %d spent down to under %d left",
+						b.Colony, worth, budget, cheapest)
+				}
+				for _, e := range b.SortedInventory() {
+					if _, ok := sim.Lookup(e.Variant); !ok {
+						t.Errorf("colony %d holds %d of unknown variant %d", b.Colony, e.Count, e.Variant)
+					}
+				}
+			}
+		})
+	}
+
+	// The leftover is drawn from the world's rng, so the same seed must produce
+	// the same stock. This is what a replay rests on.
+	set := shortSettings(60)
+	set.StartingBudget = 500
+	a, b := testMatch(t, set, 2), testMatch(t, set, 2)
+	for i := range a.world.Bases {
+		x, y := a.world.Bases[i].SortedInventory(), b.world.Bases[i].SortedInventory()
+		if !reflect.DeepEqual(x, y) {
+			t.Fatalf("colony %d starts with %v in one match and %v in another from the same seed", i, x, y)
+		}
+	}
+
+	// A budget at the floor still fields a robot, whatever the host sets: a
+	// colony with neither robots nor stock can never act again (design §5.3).
+	if minStartingBudget < DefaultBlueprint().Value() {
+		t.Fatalf("minStartingBudget %d is below the built-in scavenger's %d, so a legal lobby could not be started",
+			minStartingBudget, DefaultBlueprint().Value())
+	}
+}
+
+func cheapestComponentValue(t *testing.T) int {
+	t.Helper()
+	cheapest := 0
+	for _, c := range sim.Catalogue() {
+		if c.Value > 0 && (cheapest == 0 || c.Value < cheapest) {
+			cheapest = c.Value
+		}
+	}
+	if cheapest == 0 {
+		t.Fatal("no priced component in the catalogue")
+	}
+	return cheapest
 }

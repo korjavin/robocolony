@@ -110,23 +110,25 @@ func toVariants(in []int) []sim.Variant {
 // fallback: it can only mean a corrupt row or a build whose language no longer
 // decodes these rules, and starting a match with robots the player did not
 // choose is worse than refusing to start it.
-func memberKit(m db.Member) (kit, error) {
+func memberKit(m db.Member, budget int) (kit, error) {
+	built := humanKit()
+	built.budget = budget
 	if len(m.Loadout) == 0 {
-		return humanKit(), nil
+		return built, nil
 	}
 	var l Loadout
 	if err := json.Unmarshal(m.Loadout, &l); err != nil {
 		return kit{}, fmt.Errorf("lobby: member %d: decode loadout: %w", m.UserID, err)
 	}
 	if len(l.Entries) == 0 {
-		return humanKit(), nil
+		return built, nil
 	}
 	if len(l.Entries) > maxLoadoutEntries {
 		return kit{}, fmt.Errorf("lobby: member %d: loadout approves %d blueprints, the limit is %d",
 			m.UserID, len(l.Entries), maxLoadoutEntries)
 	}
 
-	var k kit
+	k := kit{budget: budget}
 	for _, e := range l.Entries {
 		bp := e.blueprint()
 		if err := bp.Validate(); err != nil {
@@ -141,10 +143,10 @@ func memberKit(m db.Member) (kit, error) {
 		// a program need no dedupe here.
 		k.programs = append(k.programs, namedProgram{bp.ProgramID, p})
 	}
-	k.start = startingRoster(k.blueprints)
+	k.start = startingRoster(k.blueprints, budget)
 	if len(k.start) == 0 {
-		// Unreachable while the most expensive legal robot costs less than the
-		// whole budget (see startingBudget). A colony with no robots and no
+		// Reachable only by approving a body that costs more than the whole
+		// budget the host set. A colony with no robots and no
 		// inventory can never act again (design §5.3), so refuse rather than
 		// field one.
 		return kit{}, fmt.Errorf("lobby: member %d: no approved blueprint fits the starting budget", m.UserID)
@@ -152,14 +154,13 @@ func memberKit(m db.Member) (kit, error) {
 	return k, nil
 }
 
-// startingBudget is design §2.1 step 4's "same known starting budget", priced
-// in the only currency the simulation has: component value, the same number the
+// defaultStartingBudget is what Settings.StartingBudget defaults to, priced in
+// the only currency the simulation has: component value, the same number the
 // design §9 score is built from.
 //
-// It is defined as what the built-in kit costs, so the default colony spends it
-// exactly and this feature cannot make anyone stronger than the game already
-// was — only differently equipped.
-func startingBudget() int { return startingRobots * DefaultBlueprint().Value() }
+// It is defined as what the built-in kit costs, so a host who never touches the
+// setting gets exactly the opening this game has always had.
+func defaultStartingBudget() int { return startingRobots * DefaultBlueprint().Value() }
 
 // startingRoster is the robots a colony takes into the arena, and the whole of
 // the "nobody out-equips anybody" guarantee.
@@ -174,15 +175,19 @@ func startingBudget() int { return startingRobots * DefaultBlueprint().Value() }
 //
 //   - never more than startingRobots units, so approving a cheap body cannot
 //     buy a bigger colony;
-//   - never more than startingBudget in component value, so approving an
+//   - never more than the match's budget in component value, so approving an
 //     expensive one cannot buy a stronger colony. Two heavy gunners cost about
 //     what three unarmed scavengers do, and that is the trade the player makes
 //     rather than a way around the cap.
-func startingRoster(bps []sim.Blueprint) []sim.Blueprint {
+//
+// What is left over is not wasted: equipColony converts it into base inventory
+// (design §12 P0), so spending less than the budget buys spares rather than
+// nothing.
+func startingRoster(bps []sim.Blueprint, budget int) []sim.Blueprint {
 	bp := bps[0]
 	n := startingRobots
 	if v := bp.Value(); v > 0 {
-		n = min(n, startingBudget()/v)
+		n = min(n, budget/v)
 	}
 	return repeat(bp, n)
 }

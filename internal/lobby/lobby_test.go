@@ -244,6 +244,12 @@ func TestSettingsValidation(t *testing.T) {
 		{"spawn rate off", bad(func(s *Settings) { s.SpawnPerMin = 0 }), true},
 		{"too many players", bad(func(s *Settings) { s.MaxPlayers = 99 }), false},
 		{"no players", bad(func(s *Settings) { s.MaxPlayers = 0 }), false},
+		{"budget too small", bad(func(s *Settings) { s.StartingBudget = minStartingBudget - 1 }), false},
+		{"budget too large", bad(func(s *Settings) { s.StartingBudget = maxStartingBudget + 1 }), false},
+		{"budget negative", bad(func(s *Settings) { s.StartingBudget = -1 }), false},
+		// Zero is the one exception: it is what a settings row written before
+		// the setting existed decodes to, and budget() reads it as the default.
+		{"budget unset", bad(func(s *Settings) { s.StartingBudget = 0 }), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

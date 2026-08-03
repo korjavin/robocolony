@@ -46,6 +46,8 @@
       <label>Richness <input name="richness" type="number" step="0.001" min="0.001" max="0.25" value="0.02"></label>
       <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
       <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
+      <label>Starting budget <input name="starting_budget" type="number" min="115" max="3450" value="345"></label>
+      <p class="meta">Budget is component value per colony. Whatever your opening robots do not spend arrives as parts in your base.</p>
       <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
       <button type="submit">Create</button>
     </fieldset>
@@ -109,7 +111,10 @@ async function refresh() {
     const ai = l.settings.ai || [];
     meta.textContent = `${l.members.length}/${l.settings.max_players} players: ${names}`
       + (ai.length ? ` · AI: ${ai.join(", ")}` : "")
-      + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`;
+      + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`
+      // A lobby created before the budget setting existed has no field; the
+      // server equips it from the default.
+      + ` · budget ${l.settings.starting_budget || "default"}`;
     li.append(head, meta);
 
     const seat = me && l.members.find((m) => m.user_id === me.id);
@@ -301,6 +306,7 @@ $("create").addEventListener("submit", async (ev) => {
         richness: num("richness"),
         spawn_per_min: num("spawn_per_min"),
         max_players: num("max_players"),
+        starting_budget: num("starting_budget"),
       },
     });
     await refresh();
