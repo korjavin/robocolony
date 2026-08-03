@@ -145,6 +145,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	mux.HandleFunc("GET /lobby", lobbyPage)
 	mux.HandleFunc("GET /match", matchPage)
 	mux.HandleFunc("GET /editor", editorPage)
+	mux.HandleFunc("GET /help", helpPage)
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
@@ -186,6 +187,14 @@ func matchPage(w http.ResponseWriter, r *http.Request) {
 // linked to — so the editor existed and could not be found.
 func editorPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "editor.html")
+}
+
+// helpPage is the rule-language guide the editor links to: how a tick is
+// decided, what the sensors really cover, and what the validation badges mean.
+// Static, and deliberately reachable without a session — reading how the
+// language works is not a privileged operation.
+func helpPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "help.html")
 }
 
 // me is the smallest authenticated endpoint: it tells the client who it is,

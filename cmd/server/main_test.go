@@ -41,6 +41,9 @@ func TestRoutes(t *testing.T) {
 		// links do not break, but nothing should depend on the file extension.
 		{path: "/editor", wantCode: http.StatusOK, wantBody: "Program editor"},
 		{path: "/match", wantCode: http.StatusOK, wantBody: "Selected robot"},
+		// The rule language guide the editor links to. A page nobody can reach
+		// by clicking has shipped here twice; this asserts the route exists.
+		{path: "/help", wantCode: http.StatusOK, wantBody: "The rule language, in one page"},
 		// The renderer is a module the shell loads by URL: if the embed
 		// directive stops matching web/js, the page 404s in the browser and
 		// nothing else in the build notices.
