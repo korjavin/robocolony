@@ -131,6 +131,63 @@ func TestLobbyLifecycle(t *testing.T) {
 	}
 }
 
+// The solo path, end to end: one player, one AI opponent, a started match with
+// two colonies. Without this a lobby of one generates a world nobody competes
+// in, which is the whole reason design §12 P2 exists.
+func TestSoloMatchAgainstAI(t *testing.T) {
+	svc, database := newService(t)
+	ctx := t.Context()
+	owner := newUser(t, database, "ada")
+	guest := newUser(t, database, "bob")
+
+	created, err := svc.Create(ctx, owner.ID, "solo", DefaultSettings())
+	if err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+
+	// Owner only, and unknown profiles are refused before they reach a match.
+	if _, err := svc.SetAI(ctx, created.ID, guest.ID, []Profile{ProfileAggressive}); err == nil {
+		t.Error("a non-owner set the AI colonies")
+	} else {
+		wantStatus(t, err, http.StatusForbidden)
+	}
+	_, err = svc.SetAI(ctx, created.ID, owner.ID, []Profile{"telepath"})
+	wantStatus(t, err, http.StatusBadRequest)
+
+	view, err := svc.SetAI(ctx, created.ID, owner.ID, []Profile{ProfileAggressive, ProfileDefensive})
+	if err != nil {
+		t.Fatalf("SetAI() = %v", err)
+	}
+	if len(view.Settings.AI) != 2 {
+		t.Fatalf("SetAI() left %+v", view.Settings.AI)
+	}
+	// Replacing the list is how one is removed; there is no second verb.
+	if view, err = svc.SetAI(ctx, created.ID, owner.ID, []Profile{ProfileAggressive}); err != nil {
+		t.Fatalf("SetAI() shrinking the list = %v", err)
+	}
+	if len(view.Settings.AI) != 1 {
+		t.Fatalf("SetAI() left %+v, want one", view.Settings.AI)
+	}
+
+	info, err := svc.Start(ctx, created.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	if len(info.Colonies) != 2 {
+		t.Fatalf("Start() colonies = %+v, want the player and one AI", info.Colonies)
+	}
+	if info.Colonies[0].UserID != owner.ID || info.Colonies[0].AI != "" {
+		t.Errorf("colony 0 = %+v, want the human seat first", info.Colonies[0])
+	}
+	if info.Colonies[1].AI != ProfileAggressive || info.Colonies[1].UserID != 0 {
+		t.Errorf("colony 1 = %+v, want the AI seat", info.Colonies[1])
+	}
+
+	// Design §2.1 covers AI colonies too: the roster is closed once it starts.
+	_, err = svc.SetAI(ctx, created.ID, owner.ID, nil)
+	wantStatus(t, err, http.StatusConflict)
+}
+
 func TestJoinAndLeave(t *testing.T) {
 	svc, database := newService(t)
 	ctx := t.Context()
@@ -262,6 +319,58 @@ func TestDefaultKitIsPlayable(t *testing.T) {
 	}
 	if !seen[DefaultBlueprint().ID] {
 		t.Error("DefaultBlueprint() is not one of the approved starter blueprints")
+	}
+	if DefaultBlueprint().ID != DefaultBlueprintID {
+		t.Errorf("DefaultBlueprint().ID = %q, want %q: internal/server seeds the library against it",
+			DefaultBlueprint().ID, DefaultBlueprintID)
+	}
+	// The set must span the catalogue on both axes, or one exhausted component
+	// row stalls production exactly the way one exhausted armor row used to.
+	want := map[sim.Variant]map[sim.Variant]bool{}
+	for _, bp := range DefaultBlueprints() {
+		var loco, armor sim.Variant
+		for _, v := range bp.Components {
+			switch k, _ := v.Kind(); k {
+			case sim.KindLocomotion:
+				loco = v
+			case sim.KindArmor:
+				armor = v
+			}
+		}
+		if want[loco] == nil {
+			want[loco] = map[sim.Variant]bool{}
+		}
+		want[loco][armor] = true
+	}
+	for _, loco := range variantsOfKind(sim.KindLocomotion) {
+		for _, armor := range variantsOfKind(sim.KindArmor) {
+			if !want[loco][armor] {
+				t.Errorf("no starter blueprint pairs %v with %v", loco, armor)
+			}
+		}
+	}
+}
+
+// The live-match stall, second edition: PR #19 fanned the starting kit out over
+// armor, PR #25 added legs and anti-gravity, and a colony holding neither
+// tracks nor medium armor stalled again for the same reason. Production must
+// survive any single component row running dry.
+func TestColonyBuildsFromAnyLocomotion(t *testing.T) {
+	for _, loco := range []sim.Variant{sim.Tracks, sim.Legs, sim.AntiGrav} {
+		m := testMatch(t, shortSettings(600), 1)
+		m.Read(func(w *sim.World, _ *prog.Runtime) {
+			w.Robots = nil // wiped out: §5.3's rebuild-from-inventory path
+			b := w.Bases[0]
+			b.Inventory = map[sim.Variant]int{
+				loco: 1, sim.HeavyArmor: 1, sim.Manipulator: 1, sim.PartsRadar: 1,
+			}
+			for i := 0; i < 200 && len(w.Robots) == 0; i++ {
+				w.Step()
+			}
+			if len(w.Robots) == 0 {
+				t.Errorf("colony holding %v built nothing in 200 ticks (%s)", loco, b.IdleReason())
+			}
+		})
 	}
 }
 

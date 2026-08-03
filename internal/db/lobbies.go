@@ -194,6 +194,27 @@ func (d *DB) LeaveLobby(ctx context.Context, lobbyID, userID int64) error {
 	return nil
 }
 
+// UpdateLobbySettings rewrites an open lobby's settings, for its owner only.
+// Both rules are in the WHERE clause, so a start racing this cannot leave a
+// running match whose settings changed underneath it. Returns sql.ErrNoRows
+// when nothing matched.
+func (d *DB) UpdateLobbySettings(ctx context.Context, lobbyID, ownerID int64, settingsJSON string) error {
+	res, err := d.ExecContext(ctx,
+		`UPDATE lobbies SET settings_json = ? WHERE id = ? AND owner_id = ? AND state = 'open'`,
+		settingsJSON, lobbyID, ownerID)
+	if err != nil {
+		return fmt.Errorf("db: update lobby settings: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db: update lobby settings: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // StartLobby flips an open lobby to running, and only for its owner. Ownership
 // and the "no start twice" rule are both in the WHERE clause, so two concurrent
 // start requests cannot both win. It returns sql.ErrNoRows when nothing

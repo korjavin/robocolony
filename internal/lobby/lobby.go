@@ -254,6 +254,41 @@ func (s *Service) Join(ctx context.Context, id, userID int64) (LobbyView, error)
 	return s.Get(ctx, id)
 }
 
+// SetAI replaces the lobby's AI colonies (design §12 P2). It is the whole
+// surface: adding, removing and reordering are all "here is the list I want",
+// which is idempotent and cannot half-apply.
+//
+// Owner only, and only while the lobby is open — design §2.1's "nobody joins
+// after the start" is about the colony list, and an AI colony is a colony.
+func (s *Service) SetAI(ctx context.Context, id, userID int64, profiles []Profile) (LobbyView, error) {
+	lobby, err := s.db.LobbyByID(ctx, id)
+	if err != nil {
+		return LobbyView{}, notFound(err, "lobby")
+	}
+	if lobby.OwnerID != userID {
+		return LobbyView{}, errf(http.StatusForbidden, "only the lobby owner may change the AI colonies")
+	}
+	set, err := decodeSettings(lobby.SettingsJSON)
+	if err != nil {
+		return LobbyView{}, err
+	}
+	set.AI = profiles
+	if err := set.Validate(); err != nil {
+		return LobbyView{}, errf(http.StatusBadRequest, "%s", err)
+	}
+	encoded, err := json.Marshal(set)
+	if err != nil {
+		return LobbyView{}, err
+	}
+	if err := s.db.UpdateLobbySettings(ctx, id, userID, string(encoded)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return LobbyView{}, errf(http.StatusConflict, "the match has already started")
+		}
+		return LobbyView{}, err
+	}
+	return s.Get(ctx, id)
+}
+
 // Leave frees the caller's seat. The owner cannot leave: the lobby would have
 // nobody able to start or settle it.
 func (s *Service) Leave(ctx context.Context, id, userID int64) error {
@@ -281,10 +316,6 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 	if err != nil {
 		return Info{}, notFound(err, "lobby")
 	}
-	set, err := decodeSettings(lobby.SettingsJSON)
-	if err != nil {
-		return Info{}, err
-	}
 	if err := s.db.StartLobby(ctx, id, userID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Info{}, err
@@ -295,11 +326,22 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 		return Info{}, errf(http.StatusConflict, "the match has already started")
 	}
 
-	// Membership is read *after* the flip on purpose: joining and leaving are
-	// both gated on state = 'open', so from here the seats cannot move, and
-	// the colonies in the match are exactly the rows in lobby_members. Reading
-	// first would let a join land in the gap and get a seat but no colony.
-	members, err := s.db.LobbyMembers(ctx, id)
+	// Everything the match is built from is read *after* the flip on purpose.
+	// Joining, leaving and SetAI are all gated on state = 'open', so from here
+	// neither the seats nor the AI list can move, and the colonies in the match
+	// are exactly the members plus exactly the profiles in the stored settings.
+	// Reading first would let a join land in the gap and get a seat but no
+	// colony — or, worse, let a SetAI land in it and leave a running world with
+	// one colony list and the row a restart replays from with another.
+	lobby, err = s.db.LobbyByID(ctx, id)
+	var set Settings
+	if err == nil {
+		set, err = decodeSettings(lobby.SettingsJSON)
+	}
+	var members []db.Member
+	if err == nil {
+		members, err = s.db.LobbyMembers(ctx, id)
+	}
 	if err == nil && len(members) == 0 {
 		err = errf(http.StatusConflict, "the lobby is empty")
 	}
@@ -391,6 +433,7 @@ func (s *Service) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("GET /api/lobbies/{id}", s.handleGet)
 	handle("POST /api/lobbies/{id}/join", s.handleJoin)
 	handle("POST /api/lobbies/{id}/leave", s.handleLeave)
+	handle("PUT /api/lobbies/{id}/ai", s.handleSetAI)
 	handle("POST /api/lobbies/{id}/start", s.handleStart)
 	handle("GET /api/matches/{id}", s.handleMatch)
 }
@@ -404,7 +447,11 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	if lobbies == nil {
 		lobbies = []LobbyView{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"lobbies": lobbies, "defaults": DefaultSettings()})
+	// ai_profiles is the menu a lobby screen builds its "add an AI opponent"
+	// control from, so the client never hard-codes the profile names.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"lobbies": lobbies, "defaults": DefaultSettings(), "ai_profiles": Profiles(),
+	})
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -471,6 +518,28 @@ func (s *Service) handleLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "left"})
+}
+
+func (s *Service) handleSetAI(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body struct {
+		Profiles []Profile `json:"profiles"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	view, err := s.SetAI(r.Context(), id, user.ID, body.Profiles)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Service) handleStart(w http.ResponseWriter, r *http.Request) {

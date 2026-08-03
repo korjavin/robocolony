@@ -99,9 +99,25 @@ func liveMatch(t *testing.T, svc *Service, lobby db.Lobby, set Settings, members
 // TestReplayPreservesStateHash is the acceptance test for this bead: a match
 // run some ticks in, persisted, and rebuilt from what reached the disk is the
 // same world, down to the state hash the E1.1 determinism guard uses.
+//
+// The AI case is the same assertion with computer colonies seated (design §12
+// P2). It is worth its own run because an AI colony makes decisions all match
+// and records not one command: the whole reason it is safe is that those
+// decisions come from the same deterministic evaluator a player's robots use,
+// and the profile list travels in the settings the replay re-reads. If AI
+// behaviour ever stopped being a pure function of the seed, this is what would
+// notice.
 func TestReplayPreservesStateHash(t *testing.T) {
+	withAI := shortSettings(600)
+	withAI.AI = Profiles()
+	withAI.MaxPlayers = maxPlayers - len(withAI.AI)
+	for name, set := range map[string]Settings{"humans only": shortSettings(600), "with ai": withAI} {
+		t.Run(name, func(t *testing.T) { testReplayPreservesStateHash(t, set) })
+	}
+}
+
+func testReplayPreservesStateHash(t *testing.T, set Settings) {
 	svc, database := newService(t)
-	set := shortSettings(600)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 
