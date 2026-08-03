@@ -175,6 +175,15 @@ func TestScoutExample(t *testing.T) {
 	if !ok || tr.Rule != 2 || tr.Action != MoveToOwnBase || tr.Side != 1 {
 		t.Fatalf("trace = %+v, want rule 2 / %s with 1 side effect", tr, MoveToOwnBase)
 	}
+	// rc-tad.6: Rule names only the rule that took the tick, so §10.8 rule 1
+	// looked dead to every observer. It matched, so the trace must say so.
+	if !tr.Matched(0) || !tr.Matched(2) {
+		t.Errorf("matched §10.8 rule 1 = %v, rule 3 = %v; both ran this tick", tr.Matched(0), tr.Matched(2))
+	}
+	// Rule 2 needs the robot at its base, which it is not.
+	if tr.Matched(1) {
+		t.Error("the trace claims §10.8 rule 2 matched away from base")
+	}
 	if r.Coord.Chebyshev(base.Coord) >= 8 {
 		t.Fatalf("robot moved to %v, which is no closer to base %v", r.Coord, base.Coord)
 	}
@@ -339,6 +348,32 @@ func TestProgramDrivenWorldIsDeterministic(t *testing.T) {
 
 // TestSignalPositionPrefersTheMatchedSignal: two signals of different kinds in
 // one tick must not make save_signal_position store the wrong one.
+// TestTraceMatchedIsPerTick pins the two properties that keep the matched-rule
+// record from becoming a log: it is rebuilt every tick, so yesterday's matches
+// never accumulate, and it is bounded by MaxRules however the caller indexes it.
+func TestTraceMatchedIsPerTick(t *testing.T) {
+	e := New(Program{Rules: []Rule{
+		{When: Pred(CarryingComponent), Then: []Action{DoArg(SaveCurrentPosition, 1)}},
+		{When: Pred(CarryingNothing), Then: []Action{Do(MoveForward)}},
+	}})
+
+	e.Decide(sim.RobotView{Cargo: sim.Laser})
+	if tr := e.Trace(); !tr.Matched(0) || tr.Matched(1) {
+		t.Fatalf("carrying: matched 0=%v 1=%v, want only rule 1", tr.Matched(0), tr.Matched(1))
+	}
+	// Same evaluator, empty hands: the previous tick's match must be gone.
+	e.Decide(sim.RobotView{Cargo: sim.VariantNone})
+	tr := e.Trace()
+	if tr.Matched(0) || !tr.Matched(1) {
+		t.Fatalf("empty-handed: matched 0=%v 1=%v, want only rule 2", tr.Matched(0), tr.Matched(1))
+	}
+	for _, i := range []int{-1, 2, MaxRules, MaxRules + 64, 1 << 30} {
+		if tr.Matched(i) {
+			t.Errorf("Matched(%d) is true for a rule that does not exist", i)
+		}
+	}
+}
+
 func TestSignalPositionPrefersTheMatchedSignal(t *testing.T) {
 	v := sim.RobotView{
 		Signals: []sim.Signal{

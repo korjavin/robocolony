@@ -86,41 +86,42 @@ func TestValidate(t *testing.T) {
 		bp       sim.Blueprint
 		errCodes []string
 		warns    []string
+		notes    []string
 	}{
-		{"scavenger is clean", scavenger(), blueprint(sim.Manipulator, sim.PartsRadar), nil, nil},
-		// §10.8 and §10.9 only ever react: neither can act on a robot that has
-		// just been built, which is what inert_start exists to say.
-		{"scout warns that it cannot start", scout(), blueprint(sim.Manipulator), nil, []string{"inert_start"}},
-		{"responder warns that it cannot start", responder(), blueprint(sim.PartsRadar, sim.Laser), nil, []string{"inert_start"}},
+		{"scavenger is clean", scavenger(), blueprint(sim.Manipulator, sim.PartsRadar), nil, nil, nil},
+		// Neither §10.8 nor §10.9 can act on a robot that has just been built,
+		// but only §10.8 is stuck: §10.9 is waiting on the world (rc-tad.5).
+		{"scout warns that it cannot start", scout(), blueprint(sim.Manipulator), nil, []string{"inert_start"}, nil},
+		{"responder only notes that it reacts", responder(), blueprint(sim.PartsRadar, sim.Laser), nil, nil, []string{"reactive_start"}},
 		{
 			"radar action without radar",
 			Program{Rules: []Rule{{Pred(CarryingNothing), []Action{Do(MoveToRadarTarget)}}}},
 			blueprint(sim.Manipulator),
-			[]string{"missing_component"}, nil,
+			[]string{"missing_component"}, nil, nil,
 		},
 		{
 			"pickup without manipulator",
 			Program{Rules: []Rule{{Pred(ComponentInReach), []Action{Do(PickUpComponent)}}}},
 			blueprint(),
-			[]string{"missing_component"}, []string{"inert_start"},
+			[]string{"missing_component"}, nil, []string{"reactive_start"},
 		},
 		{
 			"two primary actions",
 			Program{Rules: []Rule{{Pred(SeesObstacle), []Action{Do(TurnLeft), Do(MoveForward)}}}},
 			full,
-			[]string{"multiple_primary"}, []string{"inert_start"},
+			[]string{"multiple_primary"}, nil, []string{"reactive_start"},
 		},
 		{
 			"side effect plus one primary is fine",
 			Program{Rules: []Rule{{Pred(SeesComponent), []Action{DoArg(SaveVisibleTarget, 1), Do(MoveForward)}}}},
 			full,
-			nil, []string{"forward_only"},
+			nil, []string{"forward_only"}, []string{"reactive_start"},
 		},
 		{
 			"forward-only movement warns",
 			Program{Rules: []Rule{{Pred(CarryingNothing), []Action{Do(MoveForward)}}}},
 			full,
-			nil, []string{"forward_only"},
+			nil, []string{"forward_only"}, nil,
 		},
 		{
 			"dominated rule warns",
@@ -129,7 +130,7 @@ func TestValidate(t *testing.T) {
 				{And(Pred(CarryingComponent), Pred(AtOwnBase)), []Action{Do(DepositComponentAtBase)}},
 			}},
 			full,
-			nil, []string{"unreachable_rule"},
+			nil, []string{"unreachable_rule"}, nil,
 		},
 		{
 			// A side-effect-only rule does not end the tick, so it cannot
@@ -140,21 +141,21 @@ func TestValidate(t *testing.T) {
 				{And(Pred(CarryingComponent), Pred(AtOwnBase)), []Action{Do(DepositComponentAtBase)}},
 			}},
 			full,
-			nil, []string{"inert_start"},
+			nil, []string{"inert_start"}, nil,
 		},
 		{
-			"radar predicate without radar only warns",
+			"radar predicate without radar cannot start either",
 			Program{Rules: []Rule{{Pred(RadarDetectsTarget), []Action{Do(TurnRandom)}}}},
 			blueprint(),
-			nil, []string{"dead_predicate"},
+			nil, []string{"dead_predicate", "inert_start"}, nil,
 		},
 		{
 			"unknown identifiers are errors",
 			Program{Rules: []Rule{{Pred("nope"), []Action{Do("also_nope")}}}},
 			full,
-			[]string{"unknown_predicate", "unknown_action"}, []string{"inert_start"},
+			[]string{"unknown_predicate", "unknown_action"}, []string{"inert_start"}, nil,
 		},
-		{"empty program warns", Program{}, full, nil, []string{"empty_program"}},
+		{"empty program warns", Program{}, full, nil, []string{"empty_program"}, nil},
 	}
 
 	for _, tt := range tests {
@@ -162,12 +163,18 @@ func TestValidate(t *testing.T) {
 			r := Validate(tt.prog, tt.bp)
 			assertCodes(t, "error", r.Errors, tt.errCodes)
 			assertCodes(t, "warning", r.Warnings, tt.warns)
+			assertCodes(t, "note", r.Notes, tt.notes)
 			if r.OK() != (len(tt.errCodes) == 0) {
 				t.Errorf("OK() = %v with errors %v", r.OK(), r.Errors)
 			}
 			for _, w := range r.Warnings {
 				if w.Severity != SevWarning {
 					t.Errorf("warning %+v has severity %q", w, w.Severity)
+				}
+			}
+			for _, n := range r.Notes {
+				if n.Severity != SevNote {
+					t.Errorf("note %+v has severity %q", n, n.Severity)
 				}
 			}
 		})
@@ -384,54 +391,102 @@ func TestLanguageIsSerializableAndConsistent(t *testing.T) {
 	}
 }
 
-// TestWarnInertStart pins the two worked examples against each other: §10.7
-// acts on its first tick, §10.8 cannot, and only the second is worth telling
-// the player about.
+// TestPredicateWorldColumn pins the world-observable / self-state split by
+// hand. World is a bool, so a row added later gets "self-state" by default and
+// nothing else would notice — but the default is the answer that produces a
+// warning, and a false "this program cannot act" is exactly what rc-tad.5 is
+// about. Adding a predicate means deciding here.
+func TestPredicateWorldColumn(t *testing.T) {
+	world := map[PredicateID]bool{
+		SeesComponent: true, ComponentInReach: true, SeesEnemyRobot: true,
+		SeesObstacle: true, VisibleTargetInWpnRange: true, EnemyVisible: true,
+		RadarDetectsTarget: true, DetectedTargetInWpnRange: true,
+		ReceivedComeHere: true, ReceivedAvoidHere: true,
+		// path_blocked and the target_* pair are deliberately absent: sim only
+		// raises them after a move the robot itself attempted, so a robot that
+		// matches no rule can never see one.
+	}
+	for _, s := range Language().Predicates {
+		if s.World != world[s.ID] {
+			t.Errorf("predicate %q: World = %v, want %v", s.ID, s.World, world[s.ID])
+		}
+	}
+}
+
+// TestWarnInertStart pins the three worked examples against each other, which
+// is rc-tad.5 in one table: §10.7 acts on its first tick and says nothing,
+// §10.9 idles until the world gives it something and gets a neutral note, and
+// only §10.8 — blocked by a memory point no rule ever sets — is a warning.
+//
+// want is the code expected at program level: "" for neither.
 func TestWarnInertStart(t *testing.T) {
 	bp := blueprint(sim.Manipulator, sim.PartsRadar, sim.Laser)
 	tests := []struct {
 		name string
 		prog Program
-		want bool
+		want string
 	}{
-		{"§10.7 scavenger acts from a clean start", scavenger(), false},
-		{"§10.8 scout cannot act from a clean start", scout(), true},
-		{"§10.9 responder only reacts", responder(), true},
-		{"empty program says empty_program instead", Program{}, false},
+		{"§10.7 scavenger acts from a clean start", scavenger(), ""},
+		{"§10.8 scout is stuck on a point nothing sets", scout(), "inert_start"},
+		{"§10.9 responder only reacts", responder(), "reactive_start"},
+		{"empty program says empty_program instead", Program{}, ""},
 		{"a rule on carrying_nothing always starts", Program{Rules: []Rule{
 			{Pred(CarryingNothing), []Action{Do(TurnRandom)}},
-		}}, false},
+		}}, ""},
 		{"at_own_base matches: robots are built at their base", Program{Rules: []Rule{
 			{Pred(AtOwnBase), []Action{Do(TurnRandom)}},
-		}}, false},
+		}}, ""},
 		{"an OR reaching one startable branch is enough", Program{Rules: []Rule{
 			{Or(Pred(SeesEnemyRobot), PredArg(PointIsEmpty, 1)), []Action{Do(TurnRandom)}},
-		}}, false},
+		}}, ""},
 		{"a side-effect-only rule still counts as a match", Program{Rules: []Rule{
 			{Pred(CarryingNothing), []Action{DoArg(SaveCurrentPosition, 1)}},
-		}}, false},
-		{"waiting on a signal cannot start", Program{Rules: []Rule{
+		}}, ""},
+		{"waiting on a signal is reactive, not stuck", Program{Rules: []Rule{
 			{Pred(ReceivedComeHere), []Action{Do(MoveToOwnBase)}},
-		}}, true},
+		}}, "reactive_start"},
+		{"waiting on a point nothing writes is stuck", Program{Rules: []Rule{
+			{PredArg(PointIsSet, 1), []Action{DoArg(MoveToPoint, 1)}},
+		}}, "inert_start"},
+		// A robot that never matches a rule never moves, so nothing can ever
+		// block its path: reachability is not a stimulus the world supplies.
+		{"waiting on path_blocked is stuck, not reactive", Program{Rules: []Rule{
+			{Pred(PathBlocked), []Action{Do(TurnRandom)}},
+		}}, "inert_start"},
+		{"a world predicate ANDed with unset self-state is still stuck", Program{Rules: []Rule{
+			{And(Pred(SeesEnemyRobot), Pred(CarryingComponent)), []Action{Do(AttackVisibleTarget)}},
+		}}, "inert_start"},
+		{"a world predicate ORed with unset self-state is reactive", Program{Rules: []Rule{
+			{Or(Pred(SeesEnemyRobot), Pred(CarryingComponent)), []Action{Do(AttackVisibleTarget)}},
+		}}, "reactive_start"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := Validate(tt.prog, bp)
-			got := false
-			for _, w := range r.Warnings {
-				if w.Code == "inert_start" {
-					got = true
-					if w.Severity != SevWarning || w.Rule != -1 {
-						t.Errorf("inert_start must be a program-level warning, got %+v", w)
-					}
+			got := ""
+			for _, is := range append(append([]Issue{}, r.Warnings...), r.Notes...) {
+				if is.Code != "inert_start" && is.Code != "reactive_start" {
+					continue
+				}
+				if got != "" {
+					t.Errorf("both %q and %q were reported", got, is.Code)
+				}
+				got = is.Code
+				if is.Rule != -1 {
+					t.Errorf("%s must be program level, got %+v", is.Code, is)
 				}
 			}
 			if got != tt.want {
-				t.Errorf("inert_start = %v, want %v (warnings %+v)", got, tt.want, r.Warnings)
+				t.Errorf("clean-start finding = %q, want %q (warnings %+v, notes %+v)",
+					got, tt.want, r.Warnings, r.Notes)
+			}
+			// Only the stuck case earns a badge, and neither ever blocks a save.
+			if n := len(r.Notes); tt.want == "reactive_start" && (n != 1 || len(r.Warnings) != 0) {
+				t.Errorf("a reactive program must carry a note and no warning: %+v / %+v", r.Warnings, r.Notes)
 			}
 			if !r.OK() {
-				t.Errorf("a clean-start warning blocked the save: %+v", r.Errors)
+				t.Errorf("a clean-start finding blocked the save: %+v", r.Errors)
 			}
 		})
 	}

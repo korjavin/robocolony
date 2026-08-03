@@ -33,6 +33,28 @@ type Trace struct {
 	Reason string   `json:"reason"`       // short human phrase for the observer
 	Side   int      `json:"side_effects"` // zero-tick actions executed this tick
 	Idle   bool     `json:"idle"`         // the tick produced no primary action
+
+	// matched is one bit per rule index that matched this tick, read through
+	// Matched. Rule alone names only the rule that *ended* the tick, so a rule
+	// of nothing but zero-tick side effects — design §10.8 rules 1 and 5 — ran
+	// every tick and looked dead to every observer.
+	//
+	// A bitset keeps Trace what E3.2 made it: a fixed-size struct overwritten
+	// per tick. 32 bytes covers all MaxRules however long the match runs, where
+	// a slice would grow with it. Unexported, so it stays off the wire frame —
+	// E7.4 owns retained history and can export a view of this when it needs
+	// one.
+	matched [(MaxRules + 63) / 64]uint64
+}
+
+// Matched reports whether the rule at this index matched during the traced
+// tick. True for a side-effect-only rule that ran and let evaluation continue,
+// as well as for the rule that took the tick.
+func (t Trace) Matched(rule int) bool {
+	if rule < 0 || rule >= MaxRules {
+		return false
+	}
+	return t.matched[rule/64]&(1<<uint(rule%64)) != 0
 }
 
 const reasonNoMatch = "no rule matched"
@@ -69,6 +91,7 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 		if !m.cond(rule.When, 0) {
 			continue
 		}
+		tr.matched[i/64] |= 1 << uint(i%64)
 
 		// Every action of the matched rule runs, in slice order. The primary
 		// one ends the tick wherever it sits, so side effects after it still
@@ -116,6 +139,11 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 type matcher struct {
 	v      sim.RobotView
 	signal *sim.Signal
+	// anyWorld reads every world-observable predicate as true, leaving the
+	// self-state ones answering from v. Decide never sets it; warnInertStart
+	// does, to ask "could anything outside the robot make this rule match?"
+	// without enumerating world states.
+	anyWorld bool
 }
 
 // cond walks the condition tree. Depth is capped exactly as Validate caps it,
@@ -150,6 +178,13 @@ func (m *matcher) cond(c Condition, depth int) bool {
 }
 
 func (m *matcher) pred(id PredicateID, arg int) bool {
+	// A world predicate whose sensor the blueprint lacks is not something the
+	// world can deliver either — dead_predicate says so separately.
+	if m.anyWorld {
+		if spec, ok := LookupPredicate(id); ok && spec.World && len(missing(spec.Needs, m.v.Blueprint)) == 0 {
+			return true
+		}
+	}
 	v := &m.v
 	switch id {
 	case CarryingComponent:
