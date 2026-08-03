@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/korjavin/robocolony/internal/config"
+	"github.com/korjavin/robocolony/internal/db"
 	"github.com/korjavin/robocolony/web"
 )
 
@@ -37,6 +38,17 @@ func run() error {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(log)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Before the listener: an unwritable DB_PATH must stop the deploy, not
+	// surface as a 500 on the first login.
+	database, err := db.Open(ctx, cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = database.Close() }()
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
 		Handler:           routes(),
@@ -46,9 +58,6 @@ func run() error {
 		IdleTimeout: 120 * time.Second,
 		ErrorLog:    slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errc := make(chan error, 1)
 	go func() {
