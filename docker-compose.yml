@@ -21,9 +21,11 @@ services:
       - "traefik.http.routers.robocolony.tls.certresolver=myresolver"
       - "traefik.http.services.robocolony.loadbalancer.server.port=8080"
     volumes:
-      # Must be writable by uid/gid 1000 (the container's non-root user):
-      #   mkdir -p data && chown 1000:1000 data
-      - ./data:/app/data
+      # Named volume, not a bind mount: Docker seeds a fresh named volume from
+      # the image's /app/data, which the Dockerfile already owns as uid/gid
+      # 1000. A bind mount would arrive root-owned and the non-root process
+      # could not write the SQLite file.
+      - robocolony_data:/app/data
     environment:
       - PORT=8080
       # Set this in Portainer to https://<HOSTNAME>; empty falls back to localhost.
@@ -36,6 +38,9 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
     restart: unless-stopped
+
+volumes:
+  robocolony_data:
 
 networks:
   traefik_network:

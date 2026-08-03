@@ -81,15 +81,10 @@ a Portainer webhook redeploys the stack.
 2. Set the stack environment variables: `HOSTNAME`, `TRAEFIK_NETWORK_NAME`,
    `BASE_URL`, `LOG_LEVEL`, `DB_PATH`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`,
    `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`.
-3. The container runs as **uid/gid 1000**, so the bind-mounted data directory
-   must be writable by that user. On the host, once:
-
-   ```sh
-   mkdir -p data && chown 1000:1000 data
-   ```
-
-   Skipping this is the usual cause of SQLite "unable to open database file"
-   after the first deploy.
+3. No host setup is needed for storage. The container runs as **uid/gid 1000**
+   and the SQLite file lives in the `robocolony_data` named volume, which
+   Docker seeds from the image's `/app/data` and therefore creates already
+   owned by that user. A bind mount would arrive root-owned and break writes.
 
 ## License
 

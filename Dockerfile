@@ -18,9 +18,9 @@ WORKDIR /app
 
 COPY --from=builder /out/server ./server
 
-# Non-root runtime. /app/data holds the SQLite file and must be writable by
-# the same uid the process runs as; a bind-mounted host directory has to be
-# chown'd to 1000:1000 on the host (see README).
+# Non-root runtime. /app/data holds the SQLite file. It is created and owned
+# here so that a fresh named volume mounted over it inherits uid/gid 1000 —
+# that is what lets the compose stack deploy with no host-side chown.
 RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser && \
     mkdir -p /app/data && \
