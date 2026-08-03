@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -70,6 +71,9 @@ type Handler struct {
 	oauth  *oauth2.Config
 	verify VerifyFunc
 	secure bool // Secure cookie flag: off for local http://localhost
+	// redirectURL is what we hand Google; Routes serves the callback at its
+	// path so the two can never disagree.
+	redirectURL string
 }
 
 // New discovers Google's OIDC endpoints — one network call at startup, which
@@ -108,17 +112,43 @@ func newHandler(database *db.DB, cfg config.Config, endpoint oauth2.Endpoint, ve
 			Endpoint:     endpoint,
 			Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
 		},
-		verify: verify,
-		secure: cfg.CookieSecure,
+		verify:      verify,
+		secure:      cfg.CookieSecure,
+		redirectURL: cfg.GoogleRedirectURL,
 	}
 }
 
 // Routes registers the auth endpoints. They are deliberately not behind
 // RequireAuth.
+//
+// The callback is served at whatever path GOOGLE_REDIRECT_URL names, not only
+// at the default. Google sends the user to the registered redirect URI, so a
+// deployment that configures a different path than the server serves produces
+// a 404 at the end of an otherwise successful sign-in — the server telling
+// Google one thing and doing another. Deriving the route from the same value
+// removes the possibility of that drift.
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/login", h.login)
-	mux.HandleFunc("GET /auth/callback", h.callback)
+	mux.HandleFunc("GET "+defaultCallbackPath, h.callback)
 	mux.HandleFunc("POST /auth/logout", h.logout)
+
+	if p := callbackPath(h.redirectURL); p != defaultCallbackPath {
+		mux.HandleFunc("GET "+p, h.callback)
+		slog.Info("serving the OAuth callback at a configured path",
+			"path", p, "default", defaultCallbackPath)
+	}
+}
+
+const defaultCallbackPath = "/auth/callback"
+
+// callbackPath extracts the path from a configured redirect URL, falling back
+// to the default when it is empty or unparseable.
+func callbackPath(redirectURL string) string {
+	u, err := url.Parse(redirectURL)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return defaultCallbackPath
+	}
+	return u.Path
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {

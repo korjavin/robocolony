@@ -355,3 +355,67 @@ func TestCookieSecureFollowsConfig(t *testing.T) {
 		t.Error("Secure was not set with CookieSecure on")
 	}
 }
+
+// TestCallbackServedAtConfiguredPath pins the invariant that broke a real
+// deployment: the server must serve the callback at whatever path it hands
+// Google. When GOOGLE_REDIRECT_URL named /auth/google/callback while the
+// server only served /auth/callback, every sign-in completed at Google and
+// then 404'd on the way back.
+func TestCallbackServedAtConfiguredPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, redirectURL string
+		want              []string
+		absent            string
+	}{
+		{
+			name:        "default path only",
+			redirectURL: "https://example.test/auth/callback",
+			want:        []string{"/auth/callback"},
+		},
+		{
+			name:        "configured path is also served",
+			redirectURL: "https://example.test/auth/google/callback",
+			want:        []string{"/auth/callback", "/auth/google/callback"},
+		},
+		{
+			name:        "unparseable redirect falls back to the default",
+			redirectURL: "://nonsense",
+			want:        []string{"/auth/callback"},
+			absent:      "/nonsense",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &Handler{redirectURL: tc.redirectURL}
+			mux := http.NewServeMux()
+			h.Routes(mux)
+
+			for _, p := range tc.want {
+				req := httptest.NewRequest(http.MethodGet, "https://example.test"+p, nil)
+				if _, pattern := mux.Handler(req); pattern == "" {
+					t.Errorf("no handler registered for %s", p)
+				}
+			}
+			if tc.absent != "" {
+				req := httptest.NewRequest(http.MethodGet, "https://example.test"+tc.absent, nil)
+				if _, pattern := mux.Handler(req); pattern != "" {
+					t.Errorf("unexpected handler for %s (pattern %q)", tc.absent, pattern)
+				}
+			}
+		})
+	}
+}
+
+func TestCallbackPath(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"https://x.test/auth/google/callback", "/auth/google/callback"},
+		{"https://x.test/auth/callback", "/auth/callback"},
+		{"https://x.test", "/auth/callback"},
+		{"https://x.test/", "/auth/callback"},
+		{"", "/auth/callback"},
+		{"://nonsense", "/auth/callback"},
+	} {
+		if got := callbackPath(tc.in); got != tc.want {
+			t.Errorf("callbackPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
