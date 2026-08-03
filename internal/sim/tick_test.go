@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"cmp"
 	"math/rand"
 	"reflect"
 	"slices"
@@ -1007,6 +1008,16 @@ func TestScoreDeterministic(t *testing.T) {
 	}
 	if len(a.Loose) == 0 {
 		t.Fatal("no salvage on the battlefield after a lethal match")
+	}
+
+	// The tick loop, and with it the salvage sweep, walks w.Robots in slice
+	// order and draws from the rng as it goes — so slice order decides the
+	// draws. It is safe because the slice is always in id order: spawns append
+	// a fresh higher id, and the sweep deletes in place. This match has done
+	// both dozens of times; if some future edit reorders the slice, that
+	// unstated invariant breaks here rather than in a rare divergence.
+	if !slices.IsSortedFunc(a.Robots, func(x, y *Robot) int { return cmp.Compare(x.ID, y.ID) }) {
+		t.Fatal("w.Robots is no longer in id order: rng draws now depend on slice order")
 	}
 }
 
