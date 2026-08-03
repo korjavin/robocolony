@@ -287,6 +287,32 @@ func TestFinishedMatchDropsItsRecord(t *testing.T) {
 	}
 }
 
+// TestStartPersistsImmediately: a match killed ungracefully in its first
+// seconds must still be replayable, so the record cannot wait for the first
+// save interval.
+func TestStartPersistsImmediately(t *testing.T) {
+	svc, database := newService(t)
+	owner := newUser(t, database, "ada")
+	view, err := svc.Create(t.Context(), owner.ID, "fresh match", shortSettings(600))
+	if err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+	if _, err := svc.Start(t.Context(), view.ID, owner.ID); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	// The driver writes the record on its own goroutine, so poll rather than
+	// assume it beat this line. Well under the ten seconds saveEvery would take.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := database.MatchLogByID(t.Context(), view.ID); err == nil {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("no replay record for a match that has been running: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // TestFingerprintIsStable: the guard must not fire on a build that has not
 // changed, or every deploy would abandon every match for nothing.
 func TestFingerprintIsStable(t *testing.T) {

@@ -310,6 +310,11 @@ func (r *Registry) drive(m *Match, onEnd func(*Match)) {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
+	// Immediately, not at the first interval: without this a match killed
+	// ungracefully in its first ten seconds has no record at all, and Restore
+	// would finish a lobby it could have replayed from tick 0.
+	r.persist(m)
+
 	unsaved := 0
 	for {
 		select {
