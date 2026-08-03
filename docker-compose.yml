@@ -5,6 +5,8 @@
 # Portainer stack environment variables:
 #   HOSTNAME               public domain, e.g. robocolony.example.com
 #   TRAEFIK_NETWORK_NAME   external Traefik network (default traefik_default)
+#   TRAEFIK_CERT_RESOLVER  Traefik ACME resolver name (default myresolver)
+#   TRAEFIK_CERT_DOMAIN    base domain of the certificate (default: HOSTNAME)
 #   plus the application variables below (documented in .env.example)
 
 services:
@@ -18,7 +20,13 @@ services:
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
       - "traefik.http.routers.robocolony.rule=Host(`${HOSTNAME}`)"
       - "traefik.http.routers.robocolony.entrypoints=websecure"
-      - "traefik.http.routers.robocolony.tls.certresolver=myresolver"
+      # Explicit priority: a Traefik instance that also hosts a broad
+      # HostRegexp router would otherwise outrank this one, since Traefik
+      # ranks routers by rule length unless told otherwise.
+      - "traefik.http.routers.robocolony.priority=1000"
+      - "traefik.http.routers.robocolony.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-myresolver}"
+      - "traefik.http.routers.robocolony.tls.domains[0].main=${TRAEFIK_CERT_DOMAIN:-${HOSTNAME}}"
+      - "traefik.http.routers.robocolony.tls.domains[0].sans=*.${TRAEFIK_CERT_DOMAIN:-${HOSTNAME}}"
       - "traefik.http.services.robocolony.loadbalancer.server.port=8080"
     volumes:
       # Named volume, not a bind mount: Docker seeds a fresh named volume from
