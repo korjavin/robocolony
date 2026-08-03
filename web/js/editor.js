@@ -43,7 +43,10 @@ let findings = { errors: [], warnings: [], notes: [] };
 let pending = 0;
 let dryrun = null;          // last /api/programs/dryrun report, or null
 
-const blank = () => ({ id: 0, name: "new program", program: { v: 1, name: "new program", rules: [] } });
+const blank = () => ({
+  id: 0, name: "new program",
+  program: { v: lang.schema_version, name: "new program", rules: [] },
+});
 const firstPred = () => ({ op: "pred", pred: lang.catalogue.predicates[0].id });
 const newRule = () => ({ when: firstPred(), then: [{ do: lang.catalogue.actions[0].id }] });
 const blueprintID = () => Number($("blueprint").value || 0);
@@ -429,7 +432,14 @@ function renderLibrary() {
   const host = $("library");
   host.replaceChildren();
   if (programs.length === 0) {
-    host.append(el("li", { className: "meta", textContent: "Empty. Start from a template." }));
+    // Reachable only if a read ever comes back empty: the library seeds the
+    // three worked programs whenever it has none, so a player cannot strand
+    // themselves by deleting everything. This says what to do about it anyway,
+    // because a robot at its base can only be given a program from here.
+    host.append(el("li", {
+      className: "meta",
+      textContent: "Empty. Start from a template, import a file, or add rules and Save.",
+    }));
   }
   for (const p of programs) {
     const li = el("li", { className: p.id === current.id ? "on" : "" });
@@ -613,6 +623,95 @@ async function save(asCopy) {
     render();
   } catch (e) { showRefusal(e); }
 }
+
+// ---------------------------------------------------------------------------
+// Export and import.
+//
+// The file *is* the wire format — internal/prog's {"v":1,"name":...,"rules":[]}
+// — with no wrapper and no extra fields, so what is downloaded here is what the
+// server stores and what prog.Decode reads back. There is no server round-trip
+// on export: the editor already holds the program.
+//
+// No blueprint travels with the file. A blueprint is not part of the program
+// document (§10.10), and a blueprint id means nothing in another player's
+// library, so an import is instead checked against the blueprint selected in
+// this editor — server-side, on /api/programs/validate the moment it loads and
+// again by SaveProgram when it is saved. A program that needs hardware the
+// chosen robot lacks says so, per rule, in the usual red.
+// ---------------------------------------------------------------------------
+
+const fileStem = (name) =>
+  name.replace(/[^a-z0-9._-]+/gi, "-").replace(/^[-.]+|-+$/g, "").slice(0, 64) || "program";
+
+function exportProgram() {
+  err(""); status("");
+  const name = $("name").value;
+  const doc = { ...current.program, v: lang.schema_version, name };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2) + "\n"],
+    { type: "application/json" }));
+  el("a", { href: url, download: `${fileStem(name)}.json` }).click();
+  URL.revokeObjectURL(url);
+  status(`exported ${fileStem(name)}.json`);
+}
+
+// renderable checks only the shape this editor draws. It is not validation —
+// the server decides what a program *means* — but a condition node with no
+// operands would throw inside renderCond before the server ever saw the file,
+// and an imported file is whatever somebody handed the player.
+function renderable(node, depth) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  if (depth > lang.limits.max_cond_depth) return false;
+  if (node.op === "and" || node.op === "or") {
+    return Array.isArray(node.of) && node.of.every((k) => renderable(k, depth + 1));
+  }
+  return node.op === "pred" && typeof node.pred === "string";
+}
+
+const renderableRule = (r) =>
+  r && typeof r === "object" && !Array.isArray(r) && renderable(r.when, 0)
+  && Array.isArray(r.then) && r.then.every((a) => a && typeof a.do === "string");
+
+async function importProgram(file) {
+  err(""); status("");
+  let doc;
+  try {
+    doc = JSON.parse(await file.text());
+  } catch (e) {
+    err(`${file.name} is not valid JSON: ${e.message}`);
+    return;
+  }
+  const v = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc.v ?? lang.schema_version) : null;
+  if (v === null || !Array.isArray(doc.rules)) {
+    err(`${file.name} is not a program: a program is a JSON object with a "rules" list.`);
+    return;
+  }
+  // An unknown version is refused, never guessed at: "v" exists for exactly this.
+  if (v !== lang.schema_version) {
+    err(`${file.name} is a version ${v} program and this build reads version ${lang.schema_version}.`);
+    return;
+  }
+  if (!doc.rules.every(renderableRule)) {
+    err(`${file.name} is malformed: every rule needs a "when" condition and a "then" action list.`);
+    return;
+  }
+  const name = String(doc.name || fileStem(file.name.replace(/\.json$/i, "")))
+    .slice(0, lang.limits.max_name_len);
+  // Imported as a new, unsaved program: it must never overwrite a library row,
+  // and a name already taken comes back from the save as a 409 to rename.
+  current = { id: 0, name, program: { v: lang.schema_version, name, rules: doc.rules } };
+  $("name").value = name;
+  findings = { errors: [], warnings: [], notes: [] };
+  changed(); // → /api/programs/validate against the selected blueprint
+  status(`imported ${file.name} — review it, then Save`);
+}
+
+$("export").addEventListener("click", exportProgram);
+
+$("import").addEventListener("change", async (ev) => {
+  const file = ev.target.files[0];
+  ev.target.value = ""; // so re-picking the same file fires again
+  if (file) await importProgram(file);
+});
 
 $("save").addEventListener("click", () => save(false));
 $("dup").addEventListener("click", () => save(true));
