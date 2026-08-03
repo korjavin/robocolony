@@ -41,7 +41,13 @@ const pollInterval = time.Second / lobby.TickRate / 2
 //
 // The handler owns no goroutines: everything runs on the request's own, so a
 // client that disappears mid-frame leaves nothing behind but a failed write.
-func Stream(reg *lobby.Registry) http.HandlerFunc {
+//
+// stopping is closed when the process is shutting down. An SSE stream is an
+// active request that by design never finishes, so http.Server.Shutdown can
+// only ever time out waiting for it; the handler selects on this alongside the
+// request context and returns, which lets the drain complete. A nil channel
+// blocks forever, which is the right behaviour for a server that never stops.
+func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || id <= 0 {
@@ -91,6 +97,12 @@ func Stream(reg *lobby.Registry) http.HandlerFunc {
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-stopping:
+				// Just close the body: to the client this is an ordinary
+				// disconnect, which EventSource retries with backoff. An "end"
+				// frame would tell it the match is over and stop the retries.
+				slog.Info("world stream closed: server shutting down", "match_id", id, "tick", last)
 				return
 			case <-beat.C:
 				if _, err := io.WriteString(w, ": ping\n\n"); err != nil {

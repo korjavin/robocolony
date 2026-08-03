@@ -75,15 +75,22 @@ func run() error {
 		return err
 	}
 
+	// Closed by RegisterOnShutdown below, i.e. the moment Shutdown starts. Only
+	// the world streams watch it: an ordinary request finishes on its own and
+	// the drain waits for it, but an SSE stream never finishes, so without a
+	// signal of its own the drain can only time out.
+	stopping := make(chan struct{})
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(authHandler, lobbies, database, server.NewLibrary(database)),
+		Handler:           routes(authHandler, lobbies, database, server.NewLibrary(database), stopping),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).
 		IdleTimeout: 120 * time.Second,
 		ErrorLog:    slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
+	srv.RegisterOnShutdown(func() { close(stopping) })
 
 	errc := make(chan error, 1)
 	go func() {
@@ -105,8 +112,13 @@ func run() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return err
+	// Not returned yet: a request that refuses to drain must not skip the tick
+	// drivers below, whose replay records are what the next process resumes
+	// from. It is still reported at the end — with the streams closing on their
+	// own, a timeout here now means a genuinely stuck request, not a spectator.
+	drainErr := srv.Shutdown(shutdownCtx)
+	if drainErr != nil {
+		log.Error("request drain did not finish", "err", drainErr, "grace", shutdownGrace.String())
 	}
 	// After the listener, so a request cannot start a match into a registry
 	// that is already draining. Its own deadline, because a slow request drain
@@ -118,11 +130,14 @@ func run() error {
 	if err := lobbies.Shutdown(matchCtx); err != nil {
 		return err
 	}
+	if drainErr != nil {
+		return drainErr
+	}
 	log.Info("shutdown complete")
 	return nil
 }
 
-func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *server.Library) http.Handler {
+func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *server.Library, stopping <-chan struct{}) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	a.Routes(mux)
@@ -135,7 +150,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	lobbies.Routes(mux, a.RequireAuth)
 	library.Routes(mux, a.RequireAuth)
 	server.NewDryRunner(library).Routes(mux, a.RequireAuth)
-	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry())))
+	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry(), stopping)))
 	server.NewRobots(lobbies.Registry(), database).Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))

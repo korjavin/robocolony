@@ -193,7 +193,7 @@ func TestStreamFrames(t *testing.T) {
 	reg, m := startMatch(t)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/matches/{id}/stream", Stream(reg))
+	mux.Handle("GET /api/matches/{id}/stream", Stream(reg, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -258,7 +258,7 @@ func TestStreamDisconnect(t *testing.T) {
 	reg, m := startMatch(t)
 
 	done := make(chan struct{})
-	handler := Stream(reg)
+	handler := Stream(reg, nil)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/matches/{id}/stream", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
@@ -305,7 +305,7 @@ func TestStreamDisconnect(t *testing.T) {
 func TestStreamUnknownMatch(t *testing.T) {
 	reg := lobby.NewRegistry(nil, nil)
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/matches/{id}/stream", Stream(reg))
+	mux.Handle("GET /api/matches/{id}/stream", Stream(reg, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -318,6 +318,42 @@ func TestStreamUnknownMatch(t *testing.T) {
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
 		}
+	}
+}
+
+// TestStreamShutdown is the bug rc-w9s.16 survived to production on: a stream
+// held open across a shutdown. Shutdown waits for active requests, and an SSE
+// stream never finishes on its own, so before the fix this drained for the full
+// grace and returned context.DeadlineExceeded. The stream has to be *open and
+// streaming* here — a test that opens no stream proves nothing.
+func TestStreamShutdown(t *testing.T) {
+	reg, m := startMatch(t)
+
+	stopping := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/matches/{id}/stream", Stream(reg, stopping))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	// The wiring main.go uses: closed the moment Shutdown starts.
+	srv.Config.RegisterOnShutdown(func() { close(stopping) })
+
+	resp, err := http.Get(srv.URL + "/api/matches/" + strconv.FormatInt(m.ID, 10) + "/stream")
+	if err != nil {
+		t.Fatalf("GET stream = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	readEvents(t, resp.Body, 2) // connected and streaming, not merely dialled
+
+	// Well under the 30s production grace: the point is that the drain finishes
+	// because the stream returns, not because the deadline ran out.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := srv.Config.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown() = %v, want nil: an open SSE stream must not stall the drain", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("Shutdown() took %v with one stream open, want near-instant", took)
 	}
 }
 

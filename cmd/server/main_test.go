@@ -51,7 +51,7 @@ func TestRoutes(t *testing.T) {
 	// The zero Handler registers the routes and authenticates nobody, which is
 	// all this wiring test needs; internal/auth covers the flow itself. The
 	// lobby service never reaches its database on these paths.
-	h := routes(&auth.Handler{}, lobby.New(nil), nil, server.NewLibrary(nil))
+	h := routes(&auth.Handler{}, lobby.New(nil), nil, server.NewLibrary(nil), nil)
 	for _, tt := range tests {
 		t.Run(tt.path+" "+tt.accept, func(t *testing.T) {
 			rec := httptest.NewRecorder()
