@@ -32,8 +32,8 @@ type Init struct {
 	//
 	// ponytail: digits cap the catalogue at 10 terrain classes. Design §3.1
 	// lists six, so E7.3 fits; anything past that switches to base36.
-	Terrain       []string `json:"terrain"`
-	TerrainLegend []string `json:"terrain_legend"`
+	Terrain       []string       `json:"terrain"`
+	TerrainLegend []TerrainClass `json:"terrain_legend"`
 
 	// Components is the catalogue, so the renderer can name a cargo variant or
 	// an inventory stack without hardcoding the numbers.
@@ -49,6 +49,22 @@ type Colony struct {
 	// AI is the profile driving a computer colony (design §12 P2), and empty
 	// for a human seat. UserID is 0 alongside it.
 	AI string `json:"ai,omitempty"`
+}
+
+// TerrainClass is one row of the design §3.1 traversal matrix, projected onto
+// the wire so the legend can say what a class *does* and not merely name it.
+// The matrix lives in internal/sim and only there: the client renders these
+// lists, it does not own a copy.
+//
+// Impassable and Favored are locomotion variant ids, resolved against
+// Components like every other variant in this payload, so renaming a component
+// cannot leave a stale string in the legend. HardBarrier is impassable to every
+// locomotion, present and future, which no list of ids can express.
+type TerrainClass struct {
+	Name        string `json:"name"`
+	HardBarrier bool   `json:"hard_barrier,omitempty"`
+	Impassable  []int  `json:"impassable,omitempty"`
+	Favored     []int  `json:"favored,omitempty"`
 }
 
 // Component is one catalogue row.
@@ -200,9 +216,12 @@ type ColonyStats struct {
 // NewInit builds the connect frame. Callers must hold the match lock over w.
 func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World) Init {
 	specs := sim.TerrainSpecs()
-	legend := make([]string, 0, len(specs))
+	legend := make([]TerrainClass, 0, len(specs))
 	for _, s := range specs {
-		legend = append(legend, s.Name)
+		legend = append(legend, TerrainClass{
+			Name: s.Name, HardBarrier: s.HardBarrier,
+			Impassable: variants(s.Impassable), Favored: variants(s.Favored),
+		})
 	}
 
 	rows := make([]string, w.Height)
