@@ -97,24 +97,24 @@ func (w *World) salvage(r *Robot) {
 	}
 }
 
-// Result is one colony's leaderboard line: the design §9 score plus the
-// telemetry beside it. §9 says the formula is provisional and lists the
-// candidate additions — remaining base inventory, collected resources,
-// destroyed enemy value, survival, time active — so all of them are reported
-// here and E7.8 can compare formulas against recorded matches instead of
-// running fresh ones.
+// Result is one colony's leaderboard line: the design §9 score, the two terms
+// it is made of, and the telemetry beside it. The telemetry is reported whether
+// or not the formula uses it — §9's remaining candidates (collected resources,
+// destroyed enemy value, time active) were measured and rejected, and the next
+// balance pass will want the same numbers to re-check that.
 type Result struct {
 	Colony ColonyID
-	// Score is design §9 exactly as written, and nothing else.
+	// Score is the design §9 score: see World.Score.
 	Score          int
+	FleetValue     int // §9's own term: installed component value, surviving robots
 	Robots         int // surviving units
-	InventoryValue int // component value still sitting in the base
+	InventoryValue int // full component value still sitting in the base
 	Stats
 }
 
-// Score is design §9 for one colony: the summed value of the installed
-// components of every surviving robot.
-func (w *World) Score(colony ColonyID) int {
+// FleetValue is design §9's formula as written: the summed value of the
+// installed components of every surviving robot of one colony.
+func (w *World) FleetValue(colony ColonyID) int {
 	total := 0
 	for _, r := range w.Robots {
 		if r.Colony == colony {
@@ -124,30 +124,72 @@ func (w *World) Score(colony ColonyID) int {
 	return total
 }
 
-// Leaderboard is every colony's result, best score first, ties broken by colony
-// id so two identical matches produce an identical ordering. It reads live
-// state, so it is meaningful at any tick; after Ended it is the final result.
+// Score is the design §9 score, finalised by E7.8:
+//
+//	colony_score = fleet_value + inventoryScorePercent% * base_inventory_value
+//
+// §9 left the formula open and listed the candidates; these are the two that
+// survived being measured over matched seeds.
+//
+//   - Fleet value is §9's own term and stays the dominant one. It is also the
+//     survival requirement §12 P0 asks about — a destroyed robot contributes
+//     nothing — which is why no separate survival gate exists: one would have to
+//     zero a colony that design §5.3 says is still alive and still rebuilding.
+//   - Base inventory counts, but at a fraction, because a colony ends a match
+//     holding two to four times more value in stock than in robots. At full
+//     weight the score becomes a hoarding contest and a wiped-out colony
+//     outranks the colony that wiped it out; at zero, an hour of scavenging
+//     scores the same as an hour of idling the moment the last robot dies.
+//     Fielding a component is worth strictly more than stockpiling it, which is
+//     the property §9 asks for, spelled the other way round from its own
+//     tiny-robots example: robots cannot be inflated, and parts are discounted.
+//
+// Collected resources, destroyed enemy value and time active are deliberately
+// not terms. Collected double-counts what is already in the inventory or in the
+// fleet built from it. Time active only separates colonies that scored near
+// zero anyway. A kill credit was measured to make aggression pay twice — the
+// value a kill removes from the enemy fleet is already the reward — and the
+// armed strategies did not need the help.
+//
+// Everything here is frozen state (robots, base inventory), so a finished
+// match keeps answering after Ended.
+func (w *World) Score(colony ColonyID) int {
+	score := w.FleetValue(colony)
+	if b := w.baseOf(colony); b != nil {
+		score += b.InventoryValue() * inventoryScorePercent / 100
+	}
+	return score
+}
+
+// Leaderboard is every colony's result, best score first. It reads live state,
+// so it is meaningful at any tick; after Ended it is the final result.
+//
+// Ties break on fleet value and then on colony id (design §12 P0 asks for a
+// tie-break rule): between two colonies holding the same total, the one holding
+// more of it in robots ranks higher, and beyond that the ordering is arbitrary
+// but reproducible, which is all a tie can be.
 func (w *World) Leaderboard() []Result {
 	out := make([]Result, 0, len(w.Bases))
 	for _, b := range w.Bases {
-		res := Result{Colony: b.Colony, Score: w.Score(b.Colony), Stats: b.Stats}
+		res := Result{
+			Colony:         b.Colony,
+			Score:          w.Score(b.Colony),
+			FleetValue:     w.FleetValue(b.Colony),
+			InventoryValue: b.InventoryValue(),
+			Stats:          b.Stats,
+		}
 		for _, r := range w.Robots {
 			if r.Colony == b.Colony {
 				res.Robots++
-			}
-		}
-		// SortedInventory, not a range over the map: value is a sum, so map
-		// order would not change it — but the rule in this package is that
-		// nothing reads that map directly, and exceptions are how it rots.
-		for _, e := range b.SortedInventory() {
-			if c, ok := Lookup(e.Variant); ok {
-				res.InventoryValue += c.Value * e.Count
 			}
 		}
 		out = append(out, res)
 	}
 	slices.SortFunc(out, func(a, b Result) int {
 		if c := cmp.Compare(b.Score, a.Score); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(b.FleetValue, a.FleetValue); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.Colony, b.Colony)

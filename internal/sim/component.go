@@ -106,6 +106,19 @@ const MaxWeapons = 2
 // healthBase is the durability of the chassis itself, before armor.
 const healthBase = 20
 
+// inventoryScorePercent is how much of a component's catalogue value the design
+// §9 score credits while it is still sitting in the base rather than installed
+// on a live robot (E7.8; see Score).
+//
+// It is the whole anti-hoarding knob. At 100 a stockpile is worth as much as a
+// fleet, and a colony that was wiped out beats the colony that wiped it out; at
+// 0 a match's entire economy vanishes the moment the last robot dies, which
+// design §5.3 explicitly says is not the end of that colony. 25 was measured,
+// not guessed: over 16 seeds it is the highest weight at which no annihilated
+// colony outscored a surviving one, and it still separates a colony that
+// scavenged all match from one that idled at home.
+const inventoryScorePercent = 25
+
 // salvageDropPercent is the chance, per *installed* component, that it survives
 // the wreck as an ordinary loose component (design §8.2: a random subset drops,
 // everything else disappears). Rolled once per component on the world's rng.

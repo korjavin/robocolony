@@ -229,10 +229,11 @@ type InvEntry struct {
 	Count   int
 }
 
-// Stats is one colony's running telemetry. Design §9's score is provisional and
-// E7.8 revisits it; these are the inputs the candidate formulas listed there
-// need (collected resources, destroyed enemy value, survival, time active), so
-// they are recorded during the match rather than reconstructed from it later.
+// Stats is one colony's running telemetry: what a colony did, as opposed to
+// what it ends up holding. None of it is a term of the design §9 score (E7.8
+// measured the candidates and settled on fleet value plus discounted stock —
+// see World.Score), and it is kept because the next balance pass needs the same
+// numbers to re-check that decision, and because design §4.4 shows them.
 //
 // Mutable state: every field here is in StateHash.
 type Stats struct {
@@ -264,6 +265,20 @@ func (b *Base) SortedInventory() []InvEntry {
 	}
 	slices.SortFunc(out, func(a, b InvEntry) int { return cmp.Compare(a.Variant, b.Variant) })
 	return out
+}
+
+// InventoryValue is the total catalogue value of the stock in the base. It is
+// the second term of the design §9 score (see World.Score) and it reads
+// SortedInventory rather than the map: a sum does not care about order, but the
+// rule in this package is that nothing reads that map directly.
+func (b *Base) InventoryValue() int {
+	total := 0
+	for _, e := range b.SortedInventory() {
+		if c, ok := Lookup(e.Variant); ok {
+			total += c.Value * e.Count
+		}
+	}
+	return total
 }
 
 // LooseComponent is a component lying in the arena, waiting to be scavenged.
