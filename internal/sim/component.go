@@ -85,6 +85,11 @@ const MaxWeapons = 2
 // healthBase is the durability of the chassis itself, before armor.
 const healthBase = 20
 
+// salvageDropPercent is the chance, per *installed* component, that it survives
+// the wreck as an ordinary loose component (design §8.2: a random subset drops,
+// everything else disappears). Rolled once per component on the world's rng.
+const salvageDropPercent = 40
+
 // WeaponSpec is one row of the design §8.1 weapon table. Range is in Chebyshev
 // cells, Cooldown in ticks between shots of that same module, Accuracy the
 // percent chance to hit, rolled once per shot on the world's rng.

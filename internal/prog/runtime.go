@@ -67,5 +67,9 @@ func (rt *Runtime) Trace(robotID int) (Trace, bool) {
 }
 
 // Forget drops a destroyed robot's evaluator. Without it the runtime would grow
-// for the length of a match; E5.2 calls it when a robot is destroyed.
+// for the length of a match, and a recycled id would inherit a dead robot's
+// state. Assign it to sim.World.OnDestroy and the world calls it on every
+// removal:
+//
+//	w.Control, w.OnDestroy = rt.Control, rt.Forget
 func (rt *Runtime) Forget(robotID int) { delete(rt.robots, robotID) }
