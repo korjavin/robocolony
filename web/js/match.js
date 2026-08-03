@@ -669,10 +669,14 @@ function renderStats() {
   t.replaceChildren();
   if (!snap) return;
   const head = document.createElement("tr");
-  for (const c of ["#", "Colony", "Robots", "Fleet value", "Parts"]) head.append(el("th", null, c));
+  for (const c of ["#", "Colony", "Robots", "Score", "Fleet value", "Parts"]) head.append(el("th", null, c));
   t.append(head);
 
-  const rows = [...snap.colonies].sort((a, b) => b.fleet_value - a.fleet_value);
+  // Rank by score, not fleet value: the design §9 score is fleet value plus a
+  // quarter of the base inventory, so a colony sitting on a large stock can
+  // outrank one whose robots are worth more. Fleet value stays visible because
+  // it is the term a player can watch moving on the board.
+  const rows = [...snap.colonies].sort((a, b) => b.score - a.score || b.fleet_value - a.fleet_value);
   rows.forEach((c, i) => {
     const tr = document.createElement("tr");
     tr.append(el("td", null, String(i + 1)));
@@ -680,8 +684,8 @@ function renderStats() {
     const sw = el("span", "swatch");
     sw.style.background = colonyColor(c.colony);
     name.append(sw, document.createTextNode(colonyName(c.colony)));
-    tr.append(name, el("td", null, String(c.robots)), el("td", null, String(c.fleet_value)),
-      el("td", null, String(c.inventory)));
+    tr.append(name, el("td", null, String(c.robots)), el("td", null, String(c.score)),
+      el("td", null, String(c.fleet_value)), el("td", null, String(c.inventory)));
     t.append(tr);
   });
 }
