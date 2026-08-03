@@ -21,6 +21,17 @@ test still passed:
 - `RobotView.Blueprint.Components` aliased live world state, so a controller
   could write through the view and silently change a robot's mass and every
   subsequent hash.
+- The **same masking bug as the first, one function over**: the shared test
+  world approved a single blueprint, so production's `Intn(len(buildable))` was
+  `Intn(1)` — zero from any stream, invisible to both the hash and the
+  rng-consumption check. Found the fifth time someone ran the deliberate break.
+
+**The masking pattern is worth naming, because it has now appeared twice:** a
+fixture that offers exactly *one* choice makes a random draw return the same
+value from any source, so swapping the rand source changes nothing and the guard
+sees nothing. Any fixture exercising a random selection needs **at least two
+live options for the whole run** — and enough stock, health or fuel that the
+second option does not quietly disappear halfway through.
 
 **Therefore:** when you touch `internal/sim`, do the deliberate break. Swap one
 roll to package-level `math/rand`, confirm the guard *fails*, restore it, and
