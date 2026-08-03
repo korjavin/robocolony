@@ -15,6 +15,9 @@ type Severity string
 const (
 	SevError   Severity = "error"
 	SevWarning Severity = "warning"
+	// SevNote is neither a fault nor a fix: something worth knowing about a
+	// program that is doing exactly what it says. It carries no badge.
+	SevNote Severity = "note"
 )
 
 // Issue is one validation finding, serializable to the editor.
@@ -30,6 +33,11 @@ type Issue struct {
 type Result struct {
 	Errors   []Issue `json:"errors"`
 	Warnings []Issue `json:"warnings"`
+	// Notes are observations about a correct program. They are a separate
+	// bucket rather than a third severity inside Warnings so that an editor
+	// showing a badge per warning does not badge them: a badge on two of the
+	// three programs we ship teaches players to ignore badges (rc-tad.5).
+	Notes []Issue `json:"notes,omitempty"`
 }
 
 // OK reports whether the program may be saved and run.
@@ -43,6 +51,10 @@ func (r *Result) warn(rule int, code, format string, a ...any) {
 	r.Warnings = append(r.Warnings, Issue{SevWarning, code, rule, fmt.Sprintf(format, a...)})
 }
 
+func (r *Result) note(rule int, code, format string, a ...any) {
+	r.Notes = append(r.Notes, Issue{SevNote, code, rule, fmt.Sprintf(format, a...)})
+}
+
 // Validate checks a program against the blueprint it will run on.
 //
 // Errors: anything structurally broken (see Decode), a rule with more than one
@@ -52,6 +64,9 @@ func (r *Result) warn(rule int, code, format string, a ...any) {
 // Warnings: legal but ineffective. A predicate that can never be true because
 // the sensor is absent, a robot whose only movement action is move_forward, a
 // rule an earlier rule always pre-empts, an empty program.
+//
+// Notes: correct but worth knowing — a program that does nothing until the
+// world gives it something to react to (see warnInertStart).
 func Validate(p Program, b sim.Blueprint) Result {
 	var r Result
 	r.Errors = append(r.Errors, structure(p)...)
@@ -105,30 +120,48 @@ func cleanStart(b sim.Blueprint) sim.RobotView {
 	}
 }
 
-// warnInertStart flags a program in which no rule at all matches a robot that
-// has just been built — design §10.8 as printed is exactly this, and a robot
-// running it sits at "no rule matched" forever.
+// warnInertStart reports a program in which no rule at all matches a robot that
+// has just been built, and separates the two very different reasons for it.
 //
-// The claim is deliberately narrow: it runs the real evaluator over one
-// synthetic view and reports what that single walk proves. It says nothing
-// about whether a rule becomes reachable later, which is general reachability
-// analysis and is declined here for the same reason unreachable_rule declines
-// it. A warning, never an error: a fragment meant to be combined with another
-// program is legal to save, and may well be installed on a robot that is
-// already carrying something.
+//   - Reactive (design §10.9): some rule needs nothing but a world event —
+//     something seen, heard, detected or bumped into. The robot idles at the
+//     start and then works. That is a legitimate design, so it is a note.
+//   - Stuck (design §10.8 as printed): no rule can be reached by any world
+//     event, because every one of them also waits on self-state — a memory
+//     point, cargo — that the program never establishes. Nothing outside the
+//     robot unblocks it, so this is the warning.
+//
+// The second walk is the whole mechanism: re-run the rule with every
+// world-observable predicate optimistically true and see whether it matches. It
+// is a per-predicate classification (PredicateSpec.World), not a search over
+// rule interactions — general reachability analysis stays declined here for the
+// same reason unreachable_rule declines it. Neither outcome is ever an error: a
+// fragment meant to be combined with another program is legal to save, and may
+// well be installed on a robot that is already carrying something.
 func warnInertStart(r *Result, p Program, b sim.Blueprint) {
 	if len(p.Rules) == 0 {
 		return // empty_program already said it, and said it better
 	}
 	v := cleanStart(b)
+	reactive := false
 	for i := range p.Rules {
 		m := matcher{v: v}
 		if m.cond(p.Rules[i].When, 0) {
-			return
+			return // something matches right now: not inert at all
+		}
+		if !reactive {
+			w := matcher{v: v, anyWorld: true}
+			reactive = w.cond(p.Rules[i].When, 0)
 		}
 	}
+	if reactive {
+		r.note(-1, "reactive_start", "no rule matches a freshly built robot, but a rule is waiting on "+
+			"something the robot can see, hear or detect: it will idle until that happens, then act")
+		return
+	}
 	r.warn(-1, "inert_start", "no rule matches a freshly built robot — empty memory, empty hands, "+
-		"nothing in sight — so it will idle until something around it changes")
+		"nothing in sight — and every rule also waits on something about the robot itself that no rule "+
+		"ever sets, so nothing in the world around it can start it")
 }
 
 // warnDeadPredicates flags predicates whose sensor the blueprint lacks. Legal,

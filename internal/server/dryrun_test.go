@@ -41,19 +41,12 @@ func TestDryRunScavengerScavenges(t *testing.T) {
 			t.Errorf("rule %d never fired: %+v", i, out.Rules[i])
 		}
 	}
-	// Every §10.7 rule ends its tick, so every one of them is traceable.
-	for _, row := range out.Rules {
-		if !row.Observable {
-			t.Errorf("rule %d is not observable, but all of §10.7 has primary actions", row.Rule)
-		}
-	}
 }
 
-// TestDryRunSideEffectRuleIsNotCalledDead is the honest edge of the report: a
-// rule made only of zero-tick side effects runs and evaluation continues
-// (AGENTS.md action model), but the evaluator's trace names only the rule that
-// took the tick. Such a rule must be marked unobservable rather than accused of
-// never firing — a false "this rule is dead" is worse than saying nothing.
+// TestDryRunSideEffectRuleIsNotCalledDead is rc-tad.6's acceptance: a rule made
+// only of zero-tick side effects runs and evaluation continues past it
+// (AGENTS.md action model). It used to be invisible to the trace and had to be
+// excused as "unobservable"; now it is reported as having fired, because it did.
 func TestDryRunSideEffectRuleIsNotCalledDead(t *testing.T) {
 	p := prog.Program{V: prog.SchemaVersion, Rules: []prog.Rule{
 		// Always matches, always writes, never ends the tick.
@@ -62,17 +55,20 @@ func TestDryRunSideEffectRuleIsNotCalledDead(t *testing.T) {
 	}}
 	out := dryRun(p, lobby.DefaultBlueprint(), 20)
 
-	if out.Rules[0].Observable {
-		t.Error("a side-effect-only rule was reported as observable")
-	}
-	if !out.Rules[1].Observable {
-		t.Error("a rule with a primary action was reported as unobservable")
-	}
-	if len(out.NeverFired) != 0 {
-		t.Errorf("never_fired = %v, want the unobservable rule left out and rule 1 firing", out.NeverFired)
+	if out.Rules[0].Fired == 0 || out.Rules[0].FirstTick < 0 {
+		t.Errorf("the side-effect-only rule matched every tick but reports %+v", out.Rules[0])
 	}
 	if out.Rules[1].Fired == 0 {
 		t.Error("the rule that takes the tick never fired")
+	}
+	// Both rules match on the same tick, so the side effect can never be rarer
+	// than the rule below it.
+	if out.Rules[0].Fired != out.Rules[1].Fired {
+		t.Errorf("rule 1 fired %d times, rule 2 %d; both match on the same ticks",
+			out.Rules[0].Fired, out.Rules[1].Fired)
+	}
+	if len(out.NeverFired) != 0 {
+		t.Errorf("never_fired = %v, want nothing: both rules fire", out.NeverFired)
 	}
 }
 
@@ -83,17 +79,12 @@ func TestDryRunSideEffectRuleIsNotCalledDead(t *testing.T) {
 func TestDryRunScoutNeverFires(t *testing.T) {
 	out := dryRun(scoutProgram(), lobby.DefaultBlueprint(), dryRunTicks)
 
-	// Rules 0 and 4 are side-effect-only (save_visible_target, clear_point), so
-	// they are unobservable and cannot be listed; every rule that could have
-	// been seen firing never was.
-	want := []int{1, 2, 3, 5}
+	// Every rule, including the two side-effect-only ones (rules 1 and 5 of
+	// §10.8: save_visible_target, clear_point). Those used to be excused as
+	// unobservable; the trace now proves they genuinely never matched.
+	want := []int{0, 1, 2, 3, 4, 5}
 	if !reflect.DeepEqual(out.NeverFired, want) {
-		t.Errorf("never_fired = %v, want every observable rule %v", out.NeverFired, want)
-	}
-	for _, i := range []int{0, 4} {
-		if out.Rules[i].Observable {
-			t.Errorf("§10.8 rule %d is side-effect-only and cannot be observed from a trace", i+1)
-		}
+		t.Errorf("never_fired = %v, want every rule %v", out.NeverFired, want)
 	}
 	for _, row := range out.Rules {
 		if row.Fired != 0 || row.FirstTick != -1 {

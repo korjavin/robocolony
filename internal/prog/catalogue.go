@@ -59,6 +59,13 @@ type PredicateSpec struct {
 	// evaluator that implements it; TestCatalogueIsDocumented keeps it filled.
 	Desc string  `json:"desc"`
 	Arg  ArgKind `json:"arg"`
+	// World marks a predicate that reads the world outside the robot — what it
+	// sees, what radar reports, what it was told, what it bumped into. The rest
+	// read the robot's own state: cargo, health, hardware, memory points, and
+	// standing at its own base. warnInertStart uses the split to tell a program
+	// that is merely waiting for a stimulus from one that nothing outside it can
+	// ever unblock. It is a per-predicate label, not reachability analysis.
+	World bool `json:"world"`
 	// Needs lists components without which the predicate can never be true.
 	// A missing component here is a warning, not an error: testing a sensor
 	// you do not have is legal, just pointless.
@@ -169,62 +176,68 @@ const (
 	GroupMemory        = "memory"
 )
 
-// predicates is data, not a switch. Adding a predicate is adding a row.
+// predicates is data, not a switch. Adding a predicate is adding a row. The
+// World column is the world-observable / self-state split warnInertStart reads.
 var predicates = []PredicateSpec{
 	{CarryingComponent, GroupSelf, "Carrying a component",
-		"True while the robot is holding a component. It can hold only one at a time.", ArgNone, nil},
+		"True while the robot is holding a component. It can hold only one at a time.", ArgNone, false, nil},
 	{CarryingNothing, GroupSelf, "Carrying nothing",
-		"True while the robot's hands are empty. This is how a fresh robot starts.", ArgNone, nil},
+		"True while the robot's hands are empty. This is how a fresh robot starts.", ArgNone, false, nil},
 	{HealthBelow, GroupSelf, "Health below %",
-		"True once damage has taken the robot below this share of the health it was built with.", ArgPercent, nil},
+		"True once damage has taken the robot below this share of the health it was built with.", ArgPercent, false, nil},
 	{HealthAbove, GroupSelf, "Health above %",
-		"True while the robot still has more than this share of the health it was built with.", ArgPercent, nil},
+		"True while the robot still has more than this share of the health it was built with.", ArgPercent, false, nil},
 
 	{AtOwnBase, GroupLocation, "At own base",
-		"True while the robot stands within reach of its own base — where it can deposit cargo.", ArgNone, nil},
+		"True while the robot stands within reach of its own base — where it can deposit cargo.", ArgNone, false, nil},
 	{AtPoint, GroupLocation, "At point",
-		"True while the robot stands on the coordinate remembered in this point. False whenever the point is empty.", ArgPoint, nil},
+		"True while the robot stands on the coordinate remembered in this point. False whenever the point is empty.", ArgPoint, false, nil},
 	{PointIsSet, GroupLocation, "Point is set",
-		"True when this memory point holds a coordinate. All three points start empty and are wiped on reprogramming.", ArgPoint, nil},
+		"True when this memory point holds a coordinate. All three points start empty and are wiped on reprogramming.", ArgPoint, false, nil},
 	{PointIsEmpty, GroupLocation, "Point is empty",
-		"True when this memory point holds nothing — the opposite of Point is set.", ArgPoint, nil},
+		"True when this memory point holds nothing — the opposite of Point is set.", ArgPoint, false, nil},
 
 	{SeesComponent, GroupVision, "Sees a component",
-		"True when a loose component is anywhere in the forward vision cone, however far away.", ArgNone, nil},
+		"True when a loose component is anywhere in the forward vision cone, however far away.", ArgNone, true, nil},
 	{ComponentInReach, GroupVision, "Component in reach",
-		"True only when a loose component is on this cell or right next to it — close enough to pick up.", ArgNone, nil},
+		"True only when a loose component is on this cell or right next to it — close enough to pick up.", ArgNone, true, nil},
 	{SeesEnemyRobot, GroupVision, "Sees an enemy robot",
-		"True when a robot of another colony is in the forward vision cone.", ArgNone, nil},
+		"True when a robot of another colony is in the forward vision cone.", ArgNone, true, nil},
 	{SeesObstacle, GroupVision, "Sees an obstacle",
-		"True when the cell straight ahead cannot be entered. Pair it with a turn or the robot jams.", ArgNone, nil},
+		"True when the cell straight ahead cannot be entered. Pair it with a turn or the robot jams.", ArgNone, true, nil},
 	{VisibleTargetInWpnRange, GroupVision, "Visible target in weapon range",
-		"True when the nearest robot seen ahead is close enough for a loaded weapon to hit.", ArgNone, kindList{sim.KindWeapon}},
+		"True when the nearest robot seen ahead is close enough for a loaded weapon to hit.", ArgNone, true, kindList{sim.KindWeapon}},
 
 	{RadarDetectsTarget, GroupRadar, "Radar detects a target",
-		"True when the radar reports anything at all. Radar sees in every direction, not just ahead.", ArgNone, kindList{sim.KindRadar}},
+		"True when the radar reports anything at all. Radar sees in every direction, not just ahead.", ArgNone, true, kindList{sim.KindRadar}},
 	{DetectedTargetInWpnRange, GroupRadar, "Detected target in weapon range",
-		"True when the nearest enemy robot on radar is close enough for a loaded weapon to hit.", ArgNone, kindList{sim.KindRadar, sim.KindWeapon}},
+		"True when the nearest enemy robot on radar is close enough for a loaded weapon to hit.", ArgNone, true, kindList{sim.KindRadar, sim.KindWeapon}},
 
 	{ReceivedComeHere, GroupCommunication, "Received COME_HERE",
-		"True for the one tick after a colony mate broadcast COME_HERE. Signals are not remembered — save the position in the same rule or it is gone.", ArgNone, nil},
+		"True for the one tick after a colony mate broadcast COME_HERE. Signals are not remembered — save the position in the same rule or it is gone.", ArgNone, true, nil},
 	{ReceivedAvoidHere, GroupCommunication, "Received AVOID_HERE",
-		"True for the one tick after a colony mate broadcast AVOID_HERE. Not remembered either.", ArgNone, nil},
+		"True for the one tick after a colony mate broadcast AVOID_HERE. Not remembered either.", ArgNone, true, nil},
 
+	// The reachability group is feedback from the world about a move the robot
+	// attempted: a wall, a robot in the way, a route that does not exist. It
+	// counts as world-observable, which errs towards the neutral note — a
+	// missed warning is the status quo, a false one is what rc-tad.5 is about.
 	{PathBlocked, GroupReachability, "Path blocked",
-		"True when the robot's last attempt to move was refused, usually by a wall or another robot.", ArgNone, nil},
+		"True when the robot's last attempt to move was refused, usually by a wall or another robot.", ArgNone, true, nil},
 	{TargetReached, GroupReachability, "Target reached",
-		"True on the tick the robot arrives where its last move-to action was heading.", ArgNone, nil},
+		"True on the tick the robot arrives where its last move-to action was heading.", ArgNone, true, nil},
 	{TargetUnreachable, GroupReachability, "Target unreachable",
-		"True when the last move-to action found no route to its destination at all.", ArgNone, nil},
+		"True when the last move-to action found no route to its destination at all.", ArgNone, true, nil},
 
+	// weapon_ready and has_weapon read the robot's own hardware, not the world.
 	{WeaponReady, GroupCombat, "Weapon ready",
-		"True while at least one installed weapon has finished reloading.", ArgNone, kindList{sim.KindWeapon}},
+		"True while at least one installed weapon has finished reloading.", ArgNone, false, kindList{sim.KindWeapon}},
 	// has_weapon is the introspection predicate: false on an unarmed
 	// blueprint is the answer, not a mistake, so it declares no Needs.
 	{HasWeapon, GroupCombat, "Has a weapon",
-		"True when this blueprint carries a weapon at all. False is a legitimate answer, not a mistake.", ArgNone, nil},
+		"True when this blueprint carries a weapon at all. False is a legitimate answer, not a mistake.", ArgNone, false, nil},
 	{EnemyVisible, GroupCombat, "Enemy visible",
-		"The same test as Sees an enemy robot, spelled the way the combat rules read.", ArgNone, nil},
+		"The same test as Sees an enemy robot, spelled the way the combat rules read.", ArgNone, true, nil},
 }
 
 // actions is data, not a switch. The Primary column is the locked rule action
