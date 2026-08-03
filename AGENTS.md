@@ -29,7 +29,7 @@ sql/migrations/      NNN_name.sql, goose format
 | Tick rate | 10 ticks/sec, fixed. Client snapshots at 10/s. |
 | Client transport | **SSE** (`text/event-stream`) for world snapshots; plain `POST` JSON for player commands. Do NOT add a WebSocket dependency. |
 | Rule action model (design §12 P0) | Memory writes and `broadcast(...)` are **zero-tick side effects**: they execute and evaluation *continues* down the rule list. The first matching rule with a *primary* action (movement / navigation / interaction / combat) ends the tick. |
-| Signal reach (design §12 P0) | Global friendly channel. No radius. |
+| Signal reach (design §12 P0) | Friendly channel with a **radius of about half the board**: `max(Width, Height) / 2`, Chebyshev, from the sender's position at send time. Both `COME_HERE` and `AVOID_HERE`. A robot further out simply never matches `received(...)` — no language change (rc-w9s.20). |
 | Persistence | SQLite via `modernc.org/sqlite` (CGO-free — builds must stay `CGO_ENABLED=0`). Users, sessions, blueprints, programs, lobbies are persisted. The live world stays in memory, but a running match **survives a restart**: each one persists its seed and its ordered player-command log (`internal/lobby/persist.go`) and is replayed at startup. Every mutation of a live world that is not a tick must go through `Match.Apply`, or the replay rebuilds a world in which it never happened. |
 | Auth | Google OIDC. Every non-static route except `/health` and the auth callbacks requires a session. |
 | Go version | `go 1.25.0` in `go.mod`, `golang:1.25-alpine` builder. CI is the build authority; locally `GOTOOLCHAIN=auto` fetches 1.25.0 on first build. |

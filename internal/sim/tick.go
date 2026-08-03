@@ -58,9 +58,34 @@ const (
 	// Reach for pick up and deposit: the robot's own cell or one cell away.
 	interactRange = 1
 
-	// Base production, design §5.2.
-	buildTicksBase         = 20
-	buildTicksPerComponent = 5
+	// Signal reach, design §7.5. The friendly channel is not global: a signal
+	// reaches only friendly robots within signalRadius of the sender, measured
+	// in the package's one distance, Chebyshev. Expressed as a divisor of the
+	// longer arena side so "about half the board" holds on any map — 32 cells
+	// on the default 64×64 arena, which is longer than any radar (a radio must
+	// outreach the sensors) but short enough that a scout on the far side of
+	// the map is genuinely out of touch.
+	signalRadiusDivisor = 2
+
+	// Base production, design §5.2. Build time is mass-dependent, decided in
+	// rc-w9s.22: a big design now costs tempo as well as parts, so the cheap
+	// colony gets more attempts.
+	//
+	// Linear in mass, with a floor. The extremes are what picked the numbers,
+	// on the design §6.3 legal range (mass 44 for legs + light armor up to 190
+	// for tracks + heavy armor + two cannons + manipulator + radar):
+	//
+	//	lightest legal   44 mass →  26 ticks   (2.6 s: cheap, not free)
+	//	starter scavenger 88 mass →  41 ticks   (was 40 — the measured baseline
+	//	                                         keeps its tempo)
+	//	heavy gunner     145 mass →  60 ticks
+	//	heaviest legal   190 mass →  75 ticks   (~3× the lightest, and still a
+	//	                                         eightieth of a match)
+	//
+	// Component count is deliberately no longer a term: it is highly correlated
+	// with mass, and charging both taxed the same thing twice.
+	buildTicksBase   = 12
+	massPerBuildTick = 3
 )
 
 // SignalKind is one of the two shared-channel signals (design §7.5).
@@ -72,9 +97,10 @@ const (
 )
 
 // Signal is one broadcast on the friendly channel. Per the locked decision in
-// AGENTS.md the channel is global: every robot of the sender's colony hears it,
-// with no radius. A signal exists for exactly one tick, the tick after it was
-// sent, and never interrupts the receiver by itself (design §7.5).
+// AGENTS.md the channel carries about half the board: every robot of the
+// sender's colony within World.signalRadius of Coord hears it, and one further
+// out hears nothing. A signal exists for exactly one tick, the tick after it
+// was sent, and never interrupts the receiver by itself (design §7.5).
 type Signal struct {
 	Kind   SignalKind
 	From   int // sender robot id
@@ -395,12 +421,23 @@ func (w *World) View(r *Robot, inbox []Signal) RobotView {
 	v.ObstacleAhead = !w.Passable(add(r.Coord, r.Heading.Delta()), locomotionOf(r.Blueprint))
 	v.ComponentInReach = w.componentInReach(r) != nil
 
+	radius := w.signalRadius()
 	for _, s := range inbox {
-		if s.Colony == r.Colony && s.From != r.ID {
+		if s.Colony == r.Colony && s.From != r.ID && s.Coord.Chebyshev(r.Coord) <= radius {
 			v.Signals = append(v.Signals, s)
 		}
 	}
 	return v
+}
+
+// signalRadius is how far a broadcast carries (design §7.5), from the sender's
+// position at send time. Derived from the arena rather than fixed, so the reach
+// stays "about half the board" whatever size the map is generated at.
+//
+// Derived, not stored: it is a function of Width and Height, both already
+// hashed, so nothing here belongs in StateHash.
+func (w *World) signalRadius() int {
+	return max(w.Width, w.Height) / signalRadiusDivisor
 }
 
 // apply runs the zero-tick side effects, then the primary action, and charges
@@ -666,10 +703,11 @@ type BuildOrder struct {
 	Ticks     int
 }
 
-// buildTicks is how long a blueprint takes to assemble (design §12 P1 is still
-// open between fixed and mass-dependent; this is the component-count answer).
+// buildTicks is how long a blueprint takes to assemble: design §5.2's open
+// question, settled mass-dependent in rc-w9s.22. See the balance block for the
+// shape and the extremes it was checked against.
 func buildTicks(bp Blueprint) int {
-	return buildTicksBase + len(bp.Components)*buildTicksPerComponent
+	return buildTicksBase + bp.Mass()/massPerBuildTick
 }
 
 // produce runs design §5.2 for one base: finish the current job, then start a
