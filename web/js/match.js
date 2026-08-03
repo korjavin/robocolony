@@ -585,7 +585,9 @@ function renderBase() {
       el("div", "meta", `${b.build.ticks_left} ticks left · `
         + b.build.components.map(compName).join(", ")));
   } else {
-    box.append(el("p", "meta", "Idle."));
+    // idle_reason (from the server) distinguishes a base that is merely between
+    // builds from one that is blocked — a silent stall reads as a bug.
+    box.append(el("p", "meta", b.idle_reason ? `Idle — ${b.idle_reason}.` : "Idle."));
   }
 
   box.append(el("h3", null, "Inventory"));
