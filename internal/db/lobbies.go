@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -39,6 +40,12 @@ type Lobby struct {
 type Member struct {
 	UserID      int64  `json:"user_id"`
 	DisplayName string `json:"display_name"`
+
+	// Loadout is the blueprints this player approved for their colony and the
+	// programs they run, frozen at the moment they were chosen (design §2.1
+	// step 3). Its schema belongs to internal/lobby, like settings_json;
+	// absent means the built-in starter kit.
+	Loadout json.RawMessage `json:"loadout,omitempty"`
 }
 
 const lobbyColumns = `id, owner_id, name, settings_json, state, created_at`
@@ -109,7 +116,7 @@ func (d *DB) LobbyByID(ctx context.Context, id int64) (Lobby, error) {
 // second would otherwise leave to chance.
 func (d *DB) LobbyMembers(ctx context.Context, lobbyID int64) ([]Member, error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT u.id, u.display_name FROM lobby_members m JOIN users u ON u.id = m.user_id
+		SELECT u.id, u.display_name, m.loadout_json FROM lobby_members m JOIN users u ON u.id = m.user_id
 		WHERE m.lobby_id = ? ORDER BY m.joined_at, m.rowid`, lobbyID)
 	if err != nil {
 		return nil, fmt.Errorf("db: lobby members: %w", err)
@@ -118,9 +125,15 @@ func (d *DB) LobbyMembers(ctx context.Context, lobbyID int64) ([]Member, error) 
 
 	var out []Member
 	for rows.Next() {
-		var m Member
-		if err := rows.Scan(&m.UserID, &m.DisplayName); err != nil {
+		var (
+			m       Member
+			loadout string
+		)
+		if err := rows.Scan(&m.UserID, &m.DisplayName, &loadout); err != nil {
 			return nil, fmt.Errorf("db: lobby members: %w", err)
+		}
+		if loadout != "" {
+			m.Loadout = json.RawMessage(loadout)
 		}
 		out = append(out, m)
 	}
@@ -187,6 +200,33 @@ func (d *DB) LeaveLobby(ctx context.Context, lobbyID, userID int64) error {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("db: leave lobby: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// SetLobbyLoadout rewrites one member's own colony loadout. Empty clears it
+// back to the built-in kit.
+//
+// Membership and the open-lobby gate are both in the WHERE clause, in the same
+// shape LeaveLobby uses: a caller who is not seated here, or a start that has
+// already flipped the row to running, matches no row rather than being caught
+// by a read-then-write. That is what keeps design §2.1's "no changes after the
+// start" true even for a request already in flight when Start ran. Returns
+// sql.ErrNoRows when nothing matched.
+func (d *DB) SetLobbyLoadout(ctx context.Context, lobbyID, userID int64, loadoutJSON string) error {
+	res, err := d.ExecContext(ctx, `
+		UPDATE lobby_members SET loadout_json = ? WHERE lobby_id = ? AND user_id = ?
+		  AND (SELECT state FROM lobbies WHERE id = ?) = 'open'`,
+		loadoutJSON, lobbyID, userID, lobbyID)
+	if err != nil {
+		return fmt.Errorf("db: set lobby loadout: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db: set lobby loadout: %w", err)
 	}
 	if n == 0 {
 		return sql.ErrNoRows

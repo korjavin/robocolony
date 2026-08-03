@@ -17,11 +17,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/korjavin/robocolony/internal/auth"
 	"github.com/korjavin/robocolony/internal/db"
+	"github.com/korjavin/robocolony/internal/prog"
 )
 
 // Service is the lobby feature: its persistence, its match registry and its
@@ -177,6 +179,24 @@ type LobbyView struct {
 	CreatedAt string      `json:"created_at"`
 }
 
+// forUser hides what the other players brought. A colony's loadout is its
+// opening, and design §4.3's "no fog of war" is about the running match — where
+// every base's approved blueprints are in the snapshot anyway — not about the
+// lobby: seeing before the start that an opponent has approved gunners would
+// buy a counter-pick the game itself never offers.
+//
+// It copies rather than clearing in place: LobbyView.Members aliases the slice
+// the domain call returned, and a handler must not scribble on it.
+func (v LobbyView) forUser(userID int64) LobbyView {
+	v.Members = slices.Clone(v.Members)
+	for i := range v.Members {
+		if v.Members[i].UserID != userID {
+			v.Members[i].Loadout = nil
+		}
+	}
+	return v
+}
+
 // Create opens a lobby owned by the caller, with the seed drawn server-side.
 func (s *Service) Create(ctx context.Context, userID int64, name string, set Settings) (LobbyView, error) {
 	if name == "" {
@@ -287,6 +307,103 @@ func (s *Service) SetAI(ctx context.Context, id, userID int64, profiles []Profil
 		return LobbyView{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// SetLoadout records which of the caller's *own* blueprints their colony
+// approves for production and which program each one runs (design §2.1 step 3,
+// §5.1). Like SetAI it is the whole surface: the list replaces whatever was
+// there, so it is idempotent and cannot half-apply. An empty list clears the
+// choice and the colony starts from the built-in kit, which is what it did
+// before there was anything to choose.
+//
+// Every id is resolved against the caller's library — internal/db scopes both
+// lookups by (user_id, id), so a blueprint or program belonging to somebody
+// else reads as "not found" and can never be approved. What is stored is the
+// resolved snapshot rather than the ids; see loadout.go for why.
+//
+// Only while the lobby is open, and only for a member of it: both rules are in
+// the UPDATE's WHERE clause, not in a read-then-write here.
+func (s *Service) SetLoadout(ctx context.Context, id, userID int64, choices []Choice) (LobbyView, error) {
+	if _, err := s.db.LobbyByID(ctx, id); err != nil {
+		return LobbyView{}, notFound(err, "lobby")
+	}
+	if len(choices) > maxLoadoutEntries {
+		return LobbyView{}, errf(http.StatusBadRequest,
+			"a colony may approve at most %d blueprints, got %d", maxLoadoutEntries, len(choices))
+	}
+
+	var loadout Loadout
+	for _, c := range choices {
+		entry, err := s.resolve(ctx, userID, c)
+		if err != nil {
+			return LobbyView{}, err
+		}
+		loadout.Entries = append(loadout.Entries, entry)
+	}
+
+	encoded := ""
+	if len(loadout.Entries) > 0 {
+		raw, err := json.Marshal(loadout)
+		if err != nil {
+			return LobbyView{}, err
+		}
+		if len(raw) > maxLoadoutBytes {
+			return LobbyView{}, errf(http.StatusRequestEntityTooLarge,
+				"the approved blueprints and their programs are too large to store")
+		}
+		encoded = string(raw)
+	}
+	if err := s.db.SetLobbyLoadout(ctx, id, userID, encoded); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return LobbyView{}, errf(http.StatusConflict, "you are not in this lobby, or it has already started")
+		}
+		return LobbyView{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+// resolve turns one choice into the frozen entry that is stored.
+//
+// The program is validated against the blueprint it is paired with, exactly as
+// the library validates a save: a colony whose base would build robots it
+// cannot install a program on is worse than the default kit. Only errors block
+// — a warning (inert_start) or a note (reactive_start) is a legal program doing
+// what it says, and design §10.10 has neither of them stop anything.
+func (s *Service) resolve(ctx context.Context, userID int64, c Choice) (LoadoutEntry, error) {
+	if c.BlueprintID <= 0 || c.ProgramID <= 0 {
+		return LoadoutEntry{}, errf(http.StatusBadRequest, "each approval needs a blueprint and a program")
+	}
+	bpRow, err := s.db.BlueprintByID(ctx, userID, c.BlueprintID)
+	if err != nil {
+		return LoadoutEntry{}, notFound(err, "blueprint")
+	}
+	var stored storedBlueprint
+	if err := json.Unmarshal([]byte(bpRow.JSON), &stored); err != nil {
+		return LoadoutEntry{}, fmt.Errorf("lobby: blueprint %d: %w", bpRow.ID, err)
+	}
+	entry := LoadoutEntry{
+		BlueprintID: bpRow.ID, BlueprintName: bpRow.Name, Components: stored.Components,
+		ProgramID: c.ProgramID,
+	}
+	bp := entry.blueprint()
+	if err := bp.Validate(); err != nil {
+		return LoadoutEntry{}, errf(http.StatusBadRequest, "blueprint %q: %s", bpRow.Name, err)
+	}
+
+	pRow, err := s.db.ProgramByID(ctx, userID, c.ProgramID)
+	if err != nil {
+		return LoadoutEntry{}, notFound(err, "program")
+	}
+	p, err := prog.Decode([]byte(pRow.JSON))
+	if err != nil {
+		return LoadoutEntry{}, fmt.Errorf("lobby: program %d: %w", pRow.ID, err)
+	}
+	if res := prog.Validate(p, bp); !res.OK() {
+		return LoadoutEntry{}, errf(http.StatusUnprocessableEntity,
+			"%q cannot run on %q: %s", pRow.Name, bpRow.Name, res.Errors[0].Message)
+	}
+	entry.ProgramName, entry.Program = pRow.Name, json.RawMessage(pRow.JSON)
+	return entry, nil
 }
 
 // Leave frees the caller's seat. The owner cannot leave: the lobby would have
@@ -434,6 +551,7 @@ func (s *Service) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("POST /api/lobbies/{id}/join", s.handleJoin)
 	handle("POST /api/lobbies/{id}/leave", s.handleLeave)
 	handle("PUT /api/lobbies/{id}/ai", s.handleSetAI)
+	handle("PUT /api/lobbies/{id}/loadout", s.handleSetLoadout)
 	handle("POST /api/lobbies/{id}/start", s.handleStart)
 	handle("GET /api/matches/{id}", s.handleMatch)
 }
@@ -446,6 +564,10 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	if lobbies == nil {
 		lobbies = []LobbyView{}
+	}
+	user, _ := auth.UserFrom(r.Context())
+	for i, v := range lobbies {
+		lobbies[i] = v.forUser(user.ID)
 	}
 	// ai_profiles is the menu a lobby screen builds its "add an AI opponent"
 	// control from, so the client never hard-codes the profile names.
@@ -474,7 +596,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, view)
+	writeJSON(w, http.StatusCreated, view.forUser(user.ID))
 }
 
 func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -483,12 +605,13 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	user, _ := auth.UserFrom(r.Context())
 	view, err := s.Get(r.Context(), id)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, view)
+	writeJSON(w, http.StatusOK, view.forUser(user.ID))
 }
 
 func (s *Service) handleJoin(w http.ResponseWriter, r *http.Request) {
@@ -503,7 +626,7 @@ func (s *Service) handleJoin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, view)
+	writeJSON(w, http.StatusOK, view.forUser(user.ID))
 }
 
 func (s *Service) handleLeave(w http.ResponseWriter, r *http.Request) {
@@ -539,7 +662,29 @@ func (s *Service) handleSetAI(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, view)
+	writeJSON(w, http.StatusOK, view.forUser(user.ID))
+}
+
+func (s *Service) handleSetLoadout(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body struct {
+		Entries []Choice `json:"entries"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	view, err := s.SetLoadout(r.Context(), id, user.ID, body.Entries)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view.forUser(user.ID))
 }
 
 func (s *Service) handleStart(w http.ResponseWriter, r *http.Request) {
