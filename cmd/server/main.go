@@ -18,6 +18,7 @@ import (
 	"github.com/korjavin/robocolony/internal/config"
 	"github.com/korjavin/robocolony/internal/db"
 	"github.com/korjavin/robocolony/internal/lobby"
+	"github.com/korjavin/robocolony/internal/server"
 	"github.com/korjavin/robocolony/web"
 )
 
@@ -129,6 +130,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service) http.Handler {
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
+	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry())))
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))
 	return mux
