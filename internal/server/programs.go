@@ -722,8 +722,9 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// writeResult sends validation findings with the two lists kept apart, and
-// never null: the editor iterates both unconditionally.
+// writeResult sends validation findings with the buckets kept apart. Errors and
+// warnings are never null, so the editor iterates both unconditionally; notes
+// are omitempty in prog and simply absent when there are none.
 func writeResult(w http.ResponseWriter, code int, res prog.Result) {
 	if res.Errors == nil {
 		res.Errors = []prog.Issue{}
@@ -746,7 +747,8 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 				res.Warnings = []prog.Issue{}
 			}
 			writeJSON(w, se.code, map[string]any{
-				"error": se.msg, "errors": res.Errors, "warnings": res.Warnings,
+				"error": se.msg, "errors": res.Errors,
+				"warnings": res.Warnings, "notes": res.Notes,
 			})
 			return
 		}
