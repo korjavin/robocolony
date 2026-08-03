@@ -646,7 +646,10 @@ function commandBox(r) {
       pick.replaceChildren(el("option", null, "loading library…"));
     } else if (pick.dataset.lib !== programs.map((p) => p.id).join(",")) {
       pick.dataset.lib = programs.map((p) => p.id).join(",");
-      const none = el("option", null, programs.length ? "— pick a program —" : "library is empty");
+      // A new library is seeded with the worked programs, so an empty one means
+      // the player deleted them all; the editor is the only way back.
+      const none = el("option", null,
+        programs.length ? "— pick a program —" : "library empty — write one in the editor");
       none.value = ""; // without this an <option> takes its own text as its value
       pick.replaceChildren(none);
       for (const p of programs) {

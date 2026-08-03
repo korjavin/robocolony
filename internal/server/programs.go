@@ -90,11 +90,16 @@ func blueprintStats(bp sim.Blueprint) BlueprintStats {
 // It exists so the editor's dropdowns are generated from the server's own
 // catalogue rather than a second copy in JavaScript, which could only drift.
 type Language struct {
-	Catalogue  prog.Catalogue `json:"catalogue"`
-	Components []Component    `json:"components"`
-	MemPoints  int            `json:"mem_points"`
-	Limits     Limits         `json:"limits"`
-	Templates  []Template     `json:"templates"`
+	Catalogue prog.Catalogue `json:"catalogue"`
+	// SchemaVersion is prog.SchemaVersion, so the editor stamps and checks the
+	// wire format's "v" from the server's own constant rather than a second copy
+	// of it in JavaScript. Import needs it to refuse a document from a future
+	// build with a readable message.
+	SchemaVersion int         `json:"schema_version"`
+	Components    []Component `json:"components"`
+	MemPoints     int         `json:"mem_points"`
+	Limits        Limits      `json:"limits"`
+	Templates     []Template  `json:"templates"`
 }
 
 // Limits mirrors the caps prog enforces, so the editor can stop the player
@@ -175,6 +180,27 @@ func responderProgram() prog.Program {
 	}}
 }
 
+// starterProgram is one of the design's worked programs: the name it is filed
+// under, the section it comes from, and the starter blueprint it validates
+// clean against.
+//
+// One list, two uses: the editor's "start from a template" dropdown, and the
+// rows a new player's library is seeded with (ListPrograms). They must be the
+// same set — a template the library does not hold is a program the player can
+// see and not install.
+type starterProgram struct {
+	name, section, blueprint string
+	p                        prog.Program
+}
+
+func starterPrograms() []starterProgram {
+	return []starterProgram{
+		{"component scavenger", "§10.7", starterScavenger, lobby.DefaultProgram()},
+		{"memory-assisted scout", "§10.8", starterScavenger, scoutProgram()},
+		{"defensive responder", "§10.9", starterDefender, responderProgram()},
+	}
+}
+
 // LanguageDoc builds the static editor payload.
 func LanguageDoc() Language {
 	cat := sim.Catalogue()
@@ -185,14 +211,7 @@ func LanguageDoc() Language {
 			Mass: c.Mass, Value: c.Value,
 		})
 	}
-	tmpl := []struct {
-		name, section, blueprint string
-		p                        prog.Program
-	}{
-		{"component scavenger", "§10.7", starterScavenger, lobby.DefaultProgram()},
-		{"memory-assisted scout", "§10.8", starterScavenger, scoutProgram()},
-		{"defensive responder", "§10.9", starterDefender, responderProgram()},
-	}
+	tmpl := starterPrograms()
 	templates := make([]Template, 0, len(tmpl))
 	for _, t := range tmpl {
 		// Encode cannot fail on a value built from prog's own types.
@@ -202,9 +221,10 @@ func LanguageDoc() Language {
 		})
 	}
 	return Language{
-		Catalogue:  prog.Language(),
-		Components: comps,
-		MemPoints:  sim.MemPoints,
+		Catalogue:     prog.Language(),
+		SchemaVersion: prog.SchemaVersion,
+		Components:    comps,
+		MemPoints:     sim.MemPoints,
 		Limits: Limits{
 			MaxRules:          prog.MaxRules,
 			MaxActionsPerRule: prog.MaxActionsPerRule,
@@ -219,11 +239,46 @@ func LanguageDoc() Language {
 // worth asserting about ownership and validation is testable from here without
 // a session.
 
-// ListPrograms returns the caller's library.
+// ListPrograms returns the caller's library, seeding the design's three worked
+// programs the first time.
+//
+// Without this a player who has never opened the editor has an empty library,
+// and design §4.2's reprogram command — recall a robot, install a program — has
+// nothing to offer them (rc-tad.8). The templates were only ever offered by
+// /api/language to the *editor*; InstallProgram resolves a library row.
+//
+// ponytail: seeded on read for the same reason ListBlueprints seeds blueprints
+// — there is no first-login hook to hang it on — and idempotent for the same
+// reason: the (user_id, name) unique index turns a concurrent double-seed into
+// a duplicate name, which is skipped rather than doubled. A player who deletes
+// one of them keeps it deleted; only a wholly empty library re-seeds.
+//
+// These rows go in through db.CreateProgram rather than SaveProgram: they are
+// built from prog's own types in this binary, not untrusted input, and the
+// blueprint they validate against (see starterProgram.blueprint) has an id only
+// once ListBlueprints has run. What must hold — that each one is installable on
+// the blueprint it is offered for — is asserted in TestStarterTemplatesValidate.
 func (l *Library) ListPrograms(ctx context.Context, userID int64) ([]ProgramView, error) {
 	rows, err := l.db.ListPrograms(ctx, userID)
 	if err != nil {
 		return nil, err
+	}
+	if len(rows) == 0 {
+		for _, s := range starterPrograms() {
+			encoded, err := s.p.Encode()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := l.db.CreateProgram(ctx, userID, s.name, string(encoded)); err != nil {
+				if db.IsDuplicateName(err) {
+					continue // somebody else seeded it first
+				}
+				return nil, err
+			}
+		}
+		if rows, err = l.db.ListPrograms(ctx, userID); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]ProgramView, 0, len(rows))
 	for _, p := range rows {

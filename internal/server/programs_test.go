@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/korjavin/robocolony/internal/db"
@@ -87,12 +89,18 @@ func TestProgramOwnership(t *testing.T) {
 		wantLibStatus(t, err, http.StatusNotFound)
 	}
 
+	// Bob's library is his own seeded starters and nothing of alice's.
 	list, err := lib.ListPrograms(t.Context(), bob.ID)
 	if err != nil {
 		t.Fatalf("ListPrograms() = %v", err)
 	}
-	if len(list) != 0 {
-		t.Errorf("bob's library has %d programs, want 0", len(list))
+	if len(list) != len(starterPrograms()) {
+		t.Errorf("bob's library has %d programs, want the %d starters", len(list), len(starterPrograms()))
+	}
+	for _, p := range list {
+		if p.ID == saved.ID {
+			t.Errorf("alice's program %d is in bob's library", saved.ID)
+		}
 	}
 
 	// And after all that, alice's program is untouched.
@@ -164,8 +172,11 @@ func TestValidateEndpoint(t *testing.T) {
 			t.Error("the refusal carried no errors")
 		}
 	}
-	if list, err := lib.ListPrograms(t.Context(), user.ID); err != nil || len(list) != 0 {
-		t.Fatalf("ListPrograms() = %v, %v; want an empty library", list, err)
+	// The refused save left nothing behind: the library is still just the rows
+	// seeded on first read.
+	if list, err := lib.ListPrograms(t.Context(), user.ID); err != nil || len(list) != len(starterPrograms()) {
+		t.Fatalf("ListPrograms() = %d programs, %v; want the %d seeded starters",
+			len(list), err, len(starterPrograms()))
 	}
 
 	// Warning-only: an empty program is legal, just idle. It must save, and it
@@ -403,5 +414,211 @@ func TestBlueprintPreviewRefusesOversized(t *testing.T) {
 		t.Fatal("an oversized parts list was accepted")
 	} else {
 		wantLibStatus(t, err, http.StatusBadRequest)
+	}
+}
+
+// TestProgramLibraryIsSeeded is rc-tad.8: a player who has never opened the
+// editor recalls a robot and finds an empty install picker. The library seeds
+// the design's three worked programs on first read, exactly as ListBlueprints
+// seeds the starter blueprints.
+func TestProgramLibraryIsSeeded(t *testing.T) {
+	lib, database := newLibrary(t)
+	user := newUser(t, database, "player")
+
+	first, err := lib.ListPrograms(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	if len(first) != len(starterPrograms()) {
+		t.Fatalf("a fresh library has %d programs, want the %d starters", len(first), len(starterPrograms()))
+	}
+
+	// The seeded set is the template set: a template the library does not hold
+	// is a program the player can see in the editor and cannot install.
+	seeded := map[string]json.RawMessage{}
+	for _, p := range first {
+		seeded[p.Name] = p.Program
+	}
+	for _, tmpl := range LanguageDoc().Templates {
+		raw, ok := seeded[tmpl.Name]
+		if !ok {
+			t.Fatalf("template %q is not in the seeded library", tmpl.Name)
+		}
+		if string(raw) != string(tmpl.Program) {
+			t.Errorf("seeded %q is not the template:\n got %s\nwant %s", tmpl.Name, raw, tmpl.Program)
+		}
+	}
+
+	// Idempotent: seeding on read must not double the rows on the second read.
+	second, err := lib.ListPrograms(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	if len(second) != len(first) {
+		t.Fatalf("second read has %d programs, first had %d", len(second), len(first))
+	}
+
+	// Every seeded row is one InstallProgram can resolve and decode, and at
+	// least one runs clean on the blueprint a *starting* robot carries — that is
+	// the recall-and-install flow the bug dead-ended. The §10.9 responder needs
+	// a weapon the starter scavenger does not have, which is the component-aware
+	// check doing its job, not a seeding failure.
+	clean := 0
+	for _, p := range second {
+		decoded, err := prog.Decode(p.Program)
+		if err != nil {
+			t.Fatalf("seeded program %q does not decode: %v", p.Name, err)
+		}
+		if prog.Validate(decoded, lobby.DefaultBlueprint()).OK() {
+			clean++
+		}
+	}
+	if clean == 0 {
+		t.Fatal("no seeded program installs on a starting robot's blueprint")
+	}
+
+	// A warning never blocks a save, and it must not block seeding either: the
+	// §10.8 scout is seeded despite the finding it carries on this blueprint.
+	scout, err := prog.Decode(seeded["memory-assisted scout"])
+	if err != nil {
+		t.Fatalf("seeded scout does not decode: %v", err)
+	}
+	if res := prog.Validate(scout, lobby.DefaultBlueprint()); len(res.Warnings)+len(res.Notes) == 0 {
+		t.Error("the scout carries neither a warning nor a note; this assertion no longer tests anything")
+	}
+
+	// A deleted program stays deleted: only a wholly empty library re-seeds.
+	if err := lib.DeleteProgram(t.Context(), user.ID, first[0].ID); err != nil {
+		t.Fatalf("DeleteProgram() = %v", err)
+	}
+	third, err := lib.ListPrograms(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	if len(third) != len(first)-1 {
+		t.Fatalf("after deleting one, the library has %d programs, want %d", len(third), len(first)-1)
+	}
+}
+
+// TestSeededLibraryIsPerUser: seeded rows are owned like every other row, and
+// one player's library is never another's.
+func TestSeededLibraryIsPerUser(t *testing.T) {
+	lib, database := newLibrary(t)
+	alice := newUser(t, database, "alice")
+	bob := newUser(t, database, "bob")
+
+	mine, err := lib.ListPrograms(t.Context(), alice.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms(alice) = %v", err)
+	}
+	theirs, err := lib.ListPrograms(t.Context(), bob.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms(bob) = %v", err)
+	}
+	if len(mine) != len(theirs) || len(mine) == 0 {
+		t.Fatalf("alice has %d programs, bob %d", len(mine), len(theirs))
+	}
+	for _, p := range mine {
+		if _, err := lib.GetProgram(t.Context(), bob.ID, p.ID); err == nil {
+			t.Errorf("bob read alice's seeded program %d", p.ID)
+		}
+	}
+}
+
+// TestImportedProgramIsValidatedServerSide is rc-tad.10's landmine: an imported
+// document is untrusted input from an arbitrary source, and the editor's own
+// check is not a gate. Every one of these reaches the database only through
+// SaveProgram, which refuses it.
+func TestImportedProgramIsValidatedServerSide(t *testing.T) {
+	lib, database := newLibrary(t)
+	user := newUser(t, database, "player")
+
+	for _, tt := range []struct {
+		name, doc, want string
+	}{
+		{"unknown version", `{"v":99,"rules":[]}`, "unsupported schema version"},
+		{"not json", `{"v":1,"rules":`, "not valid JSON"},
+		{"null", `null`, "no program"},
+		{"unknown predicate", `{"v":1,"rules":[{"when":{"op":"pred","pred":"sees_ghost"},"then":[{"do":"turn_random"}]}]}`, "unknown predicate"},
+		{"unknown action", `{"v":1,"rules":[{"when":{"op":"pred","pred":"sees_obstacle"},"then":[{"do":"self_destruct"}]}]}`, "unknown action"},
+		{"hardware it does not have", `{"v":1,"rules":[{"when":{"op":"pred","pred":"sees_enemy_robot"},"then":[{"do":"attack_visible_target"}]}]}`, "the blueprint has none"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := lib.SaveProgram(t.Context(), user.ID, 0, tt.name, json.RawMessage(tt.doc), 0)
+			if err == nil {
+				t.Fatal("the document was saved")
+			}
+			se := wantLibStatus(t, err, http.StatusUnprocessableEntity)
+			if se.result == nil || len(se.result.Errors) == 0 {
+				t.Fatalf("refusal carries no findings: %+v", se)
+			}
+			var joined string
+			for _, is := range se.result.Errors {
+				joined += is.Message + "\n"
+			}
+			if !strings.Contains(joined, tt.want) {
+				t.Errorf("refusal says %q, want it to mention %q", joined, tt.want)
+			}
+		})
+	}
+
+	// Nothing was half-saved along the way: the library is only the seeded set.
+	list, err := lib.ListPrograms(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	if len(list) != len(starterPrograms()) {
+		t.Fatalf("library has %d programs after the refused imports, want the %d starters",
+			len(list), len(starterPrograms()))
+	}
+}
+
+// TestExportedProgramRoundTrips is rc-tad.10's acceptance: the exported file is
+// the stored wire format, and importing it into another account gives back the
+// same program rule for rule.
+//
+// The import is checked against a blueprint the *importing* player picked, not
+// one named in the file: the §10.9 responder needs a weapon, and on the wrong
+// blueprint this same call is a refusal with the missing component named. That
+// is the decision the export carries no blueprint hint — see web/js/editor.js.
+func TestExportedProgramRoundTrips(t *testing.T) {
+	lib, database := newLibrary(t)
+	alice := newUser(t, database, "alice")
+	bob := newUser(t, database, "bob")
+
+	mine, err := lib.ListPrograms(t.Context(), alice.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	blueprints, err := lib.ListBlueprints(t.Context(), bob.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	bpID := map[string]int64{}
+	for _, b := range blueprints {
+		bpID[b.Name] = b.ID
+	}
+	pairedWith := map[string]int64{}
+	for _, s := range starterPrograms() {
+		pairedWith[s.name] = bpID[s.blueprint]
+	}
+	for _, p := range mine {
+		// What the editor writes into the file is exactly ProgramView.Program.
+		imported, err := lib.SaveProgram(t.Context(), bob.ID, 0, p.Name+" (imported)", p.Program, pairedWith[p.Name])
+		if err != nil {
+			t.Fatalf("importing %q = %v", p.Name, err)
+		}
+		want, err := prog.Decode(p.Program)
+		if err != nil {
+			t.Fatalf("Decode(%q) = %v", p.Name, err)
+		}
+		got, err := prog.Decode(imported.Program)
+		if err != nil {
+			t.Fatalf("Decode(imported %q) = %v", p.Name, err)
+		}
+		want.Name = got.Name // the library name is the player's, not the file's
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("imported %q is not the exported program:\n got %+v\nwant %+v", p.Name, got, want)
+		}
 	}
 }

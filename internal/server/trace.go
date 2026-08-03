@@ -108,7 +108,10 @@ func (h *Robots) TraceOf(matchID int64, robotID int, since uint64) (TraceHistory
 	if !ok {
 		return TraceHistory{}, errf(http.StatusNotFound, "match not found")
 	}
-	out := TraceHistory{Robot: robotID, Window: prog.HistoryTicks}
+	// Never a null events list: the client filters it on every poll, and a
+	// robot with nothing recorded yet is the common case, not an error. Same
+	// reason writeResult normalises Errors and Warnings in programs.go.
+	out := TraceHistory{Robot: robotID, Window: prog.HistoryTicks, Events: []TraceEvent{}}
 	var fail error
 	// Read, not Apply: a watch is observation. Putting it in the command log
 	// would make a replayed match differ from the one that was played.
