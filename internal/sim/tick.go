@@ -674,6 +674,25 @@ func (w *World) produce(b *Base) {
 	b.Build = BuildOrder{Blueprint: bp, Ticks: buildTicks(bp)}
 }
 
+// IdleReason says why the base is assembling nothing, and "" while it is
+// assembling something. §5.2 step 3 — "wait for the inventory to change" — is
+// a legitimate state, not a failure, but it is indistinguishable from a broken
+// simulation unless the base says so: a colony sitting on hundreds of salvaged
+// parts that fit no approved blueprint looks exactly like a stuck build queue.
+//
+// Derived, not stored: nothing here is state, so nothing here belongs in
+// StateHash.
+func (b *Base) IdleReason() string {
+	switch {
+	case b.Build.Ticks > 0:
+		return ""
+	case len(b.Blueprints) == 0:
+		return "no approved blueprints"
+	default:
+		return "no approved blueprint is fully covered by the inventory"
+	}
+}
+
 // covers reports whether the inventory holds every component the blueprint
 // needs, counting duplicates. Only map lookups, never map iteration.
 func covers(inv map[Variant]int, bp Blueprint) bool {
