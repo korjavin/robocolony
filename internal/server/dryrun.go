@@ -85,6 +85,15 @@ type DryRunRule struct {
 	Rule      int `json:"rule"` // 0-based, as prog.Trace numbers them
 	Fired     int `json:"fired"`
 	FirstTick int `json:"first_tick"` // -1 when it never fired
+
+	// Observable is false for a rule whose actions are all zero-tick side
+	// effects. Such a rule matches, runs, and evaluation continues down the
+	// list (AGENTS.md action model), so the evaluator's trace — which names
+	// only the rule that took the tick — never mentions it. Fired is then not
+	// evidence either way, and the rule is left out of NeverFired rather than
+	// reported as dead. Making it observable needs prog.Trace to record every
+	// matched rule, not just the primary one.
+	Observable bool `json:"observable"`
 }
 
 // DryRunResult is the whole report.
@@ -103,7 +112,7 @@ type DryRunResult struct {
 	PickedUp   DryRunEvent  `json:"picked_up"`   // cargo actually acquired
 	Deposited  DryRunEvent  `json:"deposited"`   // cargo actually delivered to base
 	Rules      []DryRunRule `json:"rules"`       // one row per rule, program order
-	NeverFired []int        `json:"never_fired"` // rule indices with Fired == 0
+	NeverFired []int        `json:"never_fired"` // observable rule indices with Fired == 0
 
 	// IdleReason is the evaluator's phrase for the last idle decision, e.g.
 	// "no rule matched". Empty when the program never idled.
@@ -191,7 +200,7 @@ func dryRun(p prog.Program, bp sim.Blueprint, ticks int) DryRunResult {
 		NeverFired: []int{},
 	}
 	for i := range out.Rules {
-		out.Rules[i] = DryRunRule{Rule: i, FirstTick: -1}
+		out.Rules[i] = DryRunRule{Rule: i, FirstTick: -1, Observable: hasPrimary(p.Rules[i])}
 	}
 
 	for i := 0; i < ticks; i++ {
@@ -231,11 +240,25 @@ func dryRun(p prog.Program, bp sim.Blueprint, ticks int) DryRunResult {
 	}
 
 	for i := range out.Rules {
-		if out.Rules[i].Fired == 0 {
+		if out.Rules[i].Observable && out.Rules[i].Fired == 0 {
 			out.NeverFired = append(out.NeverFired, i)
 		}
 	}
 	return out
+}
+
+// hasPrimary reports whether a rule contains an action that ends the tick. A
+// rule that does is the one the evaluator names in its trace when it matches;
+// a rule that does not is invisible to the trace entirely. Unknown actions are
+// not primary — prog.Validate has already refused the program by the time this
+// runs, so they cannot appear here anyway.
+func hasPrimary(r prog.Rule) bool {
+	for _, a := range r.Then {
+		if spec, ok := prog.LookupAction(a.Do); ok && spec.Primary {
+			return true
+		}
+	}
+	return false
 }
 
 // HTTP surface. One route, behind RequireAuth like everything else in this
