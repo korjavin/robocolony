@@ -281,13 +281,16 @@ func shortSettings(duration int) Settings {
 func TestMatchRuns(t *testing.T) {
 	m := testMatch(t, shortSettings(60), 2)
 
-	var basis []sim.Coord
+	// Keyed by robot id, not by slice index: a base that finishes a build in
+	// these 100 ticks appends a robot the starting positions know nothing
+	// about, and an index-based comparison then reads off the end.
+	basis := map[int]sim.Coord{}
 	m.Read(func(w *sim.World, _ *prog.Runtime) {
 		if len(w.Robots) != 2*startingRobots {
 			t.Fatalf("match started with %d robots, want %d", len(w.Robots), 2*startingRobots)
 		}
 		for _, r := range w.Robots {
-			basis = append(basis, r.Coord)
+			basis[r.ID] = r.Coord
 		}
 	})
 
@@ -297,8 +300,8 @@ func TestMatchRuns(t *testing.T) {
 
 	moved := 0
 	m.Read(func(w *sim.World, _ *prog.Runtime) {
-		for i, r := range w.Robots {
-			if r.Coord != basis[i] {
+		for _, r := range w.Robots {
+			if start, ok := basis[r.ID]; ok && r.Coord != start {
 				moved++
 			}
 		}

@@ -1,0 +1,153 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/korjavin/robocolony/internal/lobby"
+	"github.com/korjavin/robocolony/internal/prog"
+	"github.com/korjavin/robocolony/internal/sim"
+)
+
+// heartbeatEvery is how often an SSE comment goes out when nothing else does.
+// Tick frames already flow ten times a second on a live match; this is for the
+// gaps — a match that has just been registered, or a proxy that would otherwise
+// reap an idle connection.
+const heartbeatEvery = 15 * time.Second
+
+// maxFrameBytes is the size above which full snapshots stop being a reasonable
+// answer. Exceeding it is logged, not worked around: deltas are a bead, not
+// something to invent inside a stream handler.
+const maxFrameBytes = 64 << 10
+
+// pollInterval is how often the stream checks for a new tick. Deliberately
+// faster than the tick itself: two independent tickers at the same rate drift
+// into sending a tick twice and skipping the next one, which the renderer sees
+// as a stutter. Polling at twice the rate and sending only on a tick change
+// puts exactly one frame on the wire per tick.
+const pollInterval = time.Second / lobby.TickRate / 2
+
+// Stream is GET /api/matches/{id}/stream: the authoritative world, as SSE.
+//
+// One event: init frame on connect carries the terrain and everything else that
+// cannot change, then one event: tick frame per simulation tick until the match
+// finishes or the client goes away. Design §4.3 — no fog of war for the
+// observer, so every colony is in every frame.
+//
+// The handler owns no goroutines: everything runs on the request's own, so a
+// client that disappears mid-frame leaves nothing behind but a failed write.
+func Stream(reg *lobby.Registry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			http.Error(w, "no such match", http.StatusNotFound)
+			return
+		}
+		m, ok := reg.Get(id)
+		if !ok {
+			http.Error(w, "match not found: live match state does not survive a server restart", http.StatusNotFound)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok { // no http.Server in this repo strips it; a middleware that wraps
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		h := w.Header()
+		h.Set("Content-Type", "text/event-stream")
+		h.Set("Cache-Control", "no-cache")
+		h.Set("Connection", "keep-alive")
+		// Traefik, nginx and friends buffer a response body by default, which
+		// turns a 10Hz stream into one big delivery at disconnect.
+		h.Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush() // headers out now, so the client's onopen fires
+
+		info := m.Info()
+		var initFrame Init
+		m.Read(func(world *sim.World, _ *prog.Runtime) {
+			initFrame = NewInit(info, m.Colonies, world)
+		})
+		n, err := send(w, flusher, "init", initFrame)
+		if err != nil {
+			return
+		}
+		slog.Info("world stream opened", "match_id", id, "tick", initFrame.Tick, "init_bytes", n)
+
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		beat := time.NewTicker(heartbeatEvery)
+		defer beat.Stop()
+
+		ctx := r.Context()
+		last := initFrame.Tick
+		first := true
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-beat.C:
+				if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-ticker.C:
+				finished := m.Finished()
+				var snap Snapshot
+				fresh := false
+				m.Read(func(world *sim.World, rt *prog.Runtime) {
+					if world.Tick == last && !finished {
+						return // no new tick yet; nothing to say
+					}
+					snap = NewSnapshot(world, rt, info.EndTick)
+					fresh = true
+				})
+				if !fresh {
+					continue
+				}
+				last = snap.Tick
+				snap.Finished = finished
+
+				n, err := send(w, flusher, "tick", snap)
+				if err != nil {
+					return
+				}
+				if first {
+					first = false
+					level := slog.LevelInfo
+					if n > maxFrameBytes {
+						// File a bead for deltas; do not invent a protocol here.
+						level = slog.LevelWarn
+					}
+					slog.Log(ctx, level, "world stream frame size", "match_id", id,
+						"tick_bytes", n, "robots", len(snap.Robots), "loose", len(snap.Loose))
+				}
+				if finished {
+					slog.Info("world stream closed: match finished", "match_id", id, "tick", snap.Tick)
+					return
+				}
+			}
+		}
+	}
+}
+
+// send marshals and writes one SSE event, then flushes, and reports the payload
+// size. json.Marshal never emits a raw newline, so no data-line splitting is
+// needed.
+func send(w io.Writer, f http.Flusher, event string, payload any) (int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, body); err != nil {
+		return len(body), err
+	}
+	f.Flush()
+	return len(body), nil
+}
