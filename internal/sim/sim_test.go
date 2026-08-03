@@ -97,12 +97,30 @@ func TestGenerateDiffersBySeed(t *testing.T) {
 // TestStateHashCoversState is the other half of the determinism guard: a hash
 // that ignored most of the world would pass TestDeterminism trivially.
 func TestStateHashCoversState(t *testing.T) {
+	// retexture rewrites the first cell that is not already this class, so the
+	// mutation is a real change whatever the generated arena looks like.
+	retexture := func(want Terrain) func(*World) {
+		return func(w *World) {
+			for i := range w.Cells {
+				if w.Cells[i].Terrain != want {
+					w.Cells[i].Terrain = want
+					return
+				}
+			}
+			t.Fatalf("the whole arena is already %s", want)
+		}
+	}
 	mutations := []struct {
 		name string
 		f    func(*World)
 	}{
 		{"tick", func(w *World) { w.Step() }},
 		{"terrain", func(w *World) { w.SetTerrain(Coord{0, 0}, Barrier^w.At(Coord{0, 0}).Terrain) }},
+		// Every terrain class must hash distinctly, not just "barrier or not":
+		// rubble and sand differ only in which locomotion they stop, so a hash
+		// that collapsed them would let two different arenas look identical.
+		{"terrain rubble", retexture(Rubble)},
+		{"terrain sand", retexture(Sand)},
 		{"base coord", func(w *World) { w.Bases[0].Coord.X++ }},
 		{"base inventory count", func(w *World) { w.Bases[0].Inventory[Laser]++ }},
 		{"base inventory variant", func(w *World) { w.Bases[0].Inventory[Tracks+100] = 1 }},

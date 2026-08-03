@@ -2,24 +2,39 @@ package sim
 
 import "slices"
 
-// Balance constants. E7.3 rebalances the simulation by editing the numbers in
-// this block; no logic below should need restructuring to retune.
+// Balance constants. Rebalancing the simulation is editing the numbers in this
+// block and the tables in component.go and world.go; no logic below should need
+// restructuring to retune.
 const (
-	// Speed model, design §6.4:
-	//   effective_speed = locomotion_base_speed - mass_penalty(total_mass)
-	// A terrain modifier is the third term in the design formula; the POC
-	// terrain set is Open plus a hard Barrier, so it is uniformly zero and is
-	// omitted until E7.3 adds the rubble/track-favoured rows.
-	baseSpeedTracks   = 12
-	baseSpeedUnknown  = 8  // locomotion variants E7.2 has not tuned yet
-	massPerSpeedPoint = 20 // every N units of mass costs one speed point
-	minSpeed          = 2
-	speedScale        = 12 // ticks to cross one cell = ceil(speedScale / speed)
+	// Speed model, design §6.4, all three terms:
+	//
+	//   effective_speed = locomotion_base_speed
+	//                   - total_mass / locomotion_mass_tolerance
+	//                   + terrain_modifier(terrain, locomotion)
+	//
+	// The first two terms are per-locomotion and live in locomotionSpecs
+	// (component.go); the third is per-(terrain, locomotion) and lives in
+	// terrainSpecs (world.go). Only the shared scaling is here.
+	baseSpeedUnknown         = 8  // locomotion variants with no tuned row
+	massPerSpeedPointUnknown = 20 // ditto, mass tolerance
+	minSpeed                 = 2
+	// favoredSpeedBonus is what design §3.1's "passable or favored" is worth:
+	// enough that a legs robot crossing rubble beats the same chassis on open
+	// ground, which is the whole reason to take legs.
+	favoredSpeedBonus = 4
+	// speedScale converts speed into time: ticks to cross one cell is
+	// ceil(speedScale / speed). Large enough that the ~16..2 speed range maps
+	// onto distinct tick costs instead of collapsing the fast end into 1.
+	speedScale = 24
 
 	// Action durations, in ticks. Every action costs at least one tick.
-	turnTicks     = 1
-	interactTicks = 2
-	idleTicks     = 1
+	//
+	// turnTickDivisor makes turning a fraction of a cell of movement, so a slow
+	// heavy robot is also slow to look around — scanning with forward vision
+	// (design §7.1) costs a big chassis real time.
+	turnTickDivisor = 3
+	interactTicks   = 2
+	idleTicks       = 1
 	// Firing occupies the robot for one tick; the reload is per weapon module
 	// and lives in the weapon table (component.go), which is why a two-weapon
 	// robot can fire on consecutive ticks and a one-weapon robot cannot.
@@ -34,6 +49,11 @@ const (
 
 	// Specialist radar, design §7.2. Omnidirectional, one target class.
 	radarRange = 16
+	// The enemy-base radar reaches further than the other two: design §6.2 sells
+	// it as a *navigation landmark*, and a landmark you have to be sixteen cells
+	// from is not one. It also has the least to report — one static contact per
+	// opponent — so the extra reach buys no extra information density.
+	baseRadarRange = 28
 
 	// Reach for pick up and deposit: the robot's own cell or one cell away.
 	interactRange = 1
@@ -109,10 +129,24 @@ type Action struct {
 	Broadcasts []SignalKind // applied before Kind, heard next tick
 }
 
+// SightingKind says what a perceived entity is. It exists because the design
+// §6.2 enemy-base radar puts a *place* into the same contact list as robots and
+// loose components, and "attack the nearest radar contact" must be able to tell
+// a base apart from a robot.
+type SightingKind uint8
+
+const (
+	SightComponent SightingKind = iota
+	SightRobot
+	SightBase
+)
+
 // Sighting is one perceived entity. Variant is the component type for a loose
-// component and VariantNone for a robot.
+// component and VariantNone for a robot or a base; Kind is the reliable
+// discriminator.
 type Sighting struct {
 	ID       int
+	Kind     SightingKind
 	Coord    Coord
 	Variant  Variant
 	Colony   ColonyID
@@ -163,16 +197,6 @@ type Controller interface {
 	Decide(RobotView) Action
 }
 
-// baseSpeed is the locomotion unit's base speed (design §6.1).
-func baseSpeed(locomotion Variant) int {
-	switch locomotion {
-	case Tracks:
-		return baseSpeedTracks
-	default:
-		return baseSpeedUnknown
-	}
-}
-
 // locomotionOf returns the blueprint's locomotion variant. Validate guarantees
 // exactly one on an approved blueprint; an unvalidated one falls back to the
 // untuned default.
@@ -185,21 +209,34 @@ func locomotionOf(bp Blueprint) Variant {
 	return VariantNone
 }
 
-// EffectiveSpeed implements design §6.4: heavier robots are slower, and the
-// locomotion unit sets both the ceiling and the floor.
-func EffectiveSpeed(bp Blueprint) int {
-	return max(baseSpeed(locomotionOf(bp))-bp.Mass()/massPerSpeedPoint, minSpeed)
+// SpeedOn implements design §6.4 on a given terrain class: heavier robots are
+// slower, the locomotion unit sets the ceiling, the terrain modifier is the
+// favoured-terrain bonus, and minSpeed is the floor nothing falls through.
+func SpeedOn(bp Blueprint, t Terrain) int {
+	s := locomotionStats(locomotionOf(bp))
+	return max(s.BaseSpeed-bp.Mass()/s.MassPerSpeedPoint+t.SpeedBonus(s.Variant), minSpeed)
 }
 
-// moveTicks is how many ticks one cell of movement costs.
-func moveTicks(bp Blueprint) int {
-	s := EffectiveSpeed(bp)
+// EffectiveSpeed is SpeedOn open ground: the blueprint's speed with no terrain
+// modifier, which is what a designer comparing two blueprints wants to see.
+func EffectiveSpeed(bp Blueprint) int { return SpeedOn(bp, Open) }
+
+// moveTicks is how many ticks entering a cell of this terrain costs.
+func moveTicks(bp Blueprint, t Terrain) int {
+	s := SpeedOn(bp, t)
 	return max(1, (speedScale+s-1)/s)
 }
 
+// turnTicks is what one eighth-turn costs: a fraction of a cell of movement on
+// open ground, never less than a tick. Terrain does not enter it — the robot
+// stays where it is.
+func turnTicks(bp Blueprint) int {
+	return max(1, moveTicks(bp, Open)/turnTickDivisor)
+}
+
 // StartingHealth derives durability from the armoured body (design §6.1),
-// reading the armor tier table rather than a formula so E7.3 can make heavy
-// armor tough without also making it heavy. It is exported because it is also
+// reading the armor tier table rather than a formula so heavy armor can be made
+// tough without also being made heavy. It is exported because it is also
 // the denominator of the health_below/health_above predicates (design §10.3),
 // which are evaluated outside this package.
 func StartingHealth(bp Blueprint) int {
@@ -395,15 +432,15 @@ func (w *World) primary(r *Robot, a Action) int {
 
 	case ActTurnLeft:
 		r.Heading = r.Heading.Turn(-1)
-		return turnTicks
+		return turnTicks(r.Blueprint)
 
 	case ActTurnRight:
 		r.Heading = r.Heading.Turn(1)
-		return turnTicks
+		return turnTicks(r.Blueprint)
 
 	case ActTurnRandom:
 		r.Heading = Heading(w.rng.Intn(int(headingCount)))
-		return turnTicks
+		return turnTicks(r.Blueprint)
 
 	case ActMoveTo:
 		return w.moveTo(r, a.Coord)
@@ -439,7 +476,7 @@ func (w *World) step(r *Robot, to Coord) int {
 	}
 	r.Coord = to
 	r.PathBlocked = false
-	return moveTicks(r.Blueprint)
+	return moveTicks(r.Blueprint, w.At(to).Terrain)
 }
 
 // moveTo takes one step along a freshly computed BFS path. The path is
