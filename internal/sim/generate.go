@@ -93,9 +93,27 @@ func Generate(seed int64, opts GenOpts) *World {
 		}
 	}
 
-	// 3. Loose components. A draw that lands on a barrier, a base footprint or
-	// an already-taken cell is dropped rather than retried, so the number of
-	// rng draws stays fixed; Richness is a target, not a guarantee.
+	// 3. Connectivity. Nothing above stops the barrier scatter from walling a
+	// colony off, and a colony that cannot reach anything can never scavenge
+	// (design §5.3 leaves it permanently inactive). Carve a direct corridor
+	// from any base the first one cannot reach. Carving consumes no randomness,
+	// so a seed still draws exactly as many numbers as before.
+	//
+	// Reachability is measured with Tracks: in the POC terrain set every
+	// impassable cell is a hard barrier, so the answer is the same for every
+	// locomotion. When E7.3 adds leg-only and track-only terrain this must
+	// become "connected for at least one locomotion".
+	for i := 1; i < len(w.Bases); i++ {
+		if !w.reachable(w.Bases[0].Coord, Tracks)[w.index(w.Bases[i].Coord)] {
+			w.carve(w.Bases[i].Coord, w.Bases[0].Coord)
+		}
+	}
+	reach := w.reachable(w.Bases[0].Coord, Tracks)
+
+	// 4. Loose components. A draw that lands on a barrier, a base footprint, an
+	// already-taken cell or a pocket no base can reach is dropped rather than
+	// retried, so the number of rng draws stays fixed; Richness is a target,
+	// not a guarantee.
 	//
 	// occupied is only ever *looked up*, never ranged: map lookups are
 	// deterministic, map iteration is not.
@@ -103,7 +121,7 @@ func Generate(seed int64, opts GenOpts) *World {
 	for i := 0; i < target; i++ {
 		c := w.randCoord()
 		v := catalogue[w.rng.Intn(len(catalogue))].Variant
-		if w.At(c).Terrain != Open || occupied[c] {
+		if w.At(c).Terrain != Open || occupied[c] || !reach[w.index(c)] {
 			continue
 		}
 		occupied[c] = true
@@ -111,6 +129,26 @@ func Generate(seed int64, opts GenOpts) *World {
 	}
 
 	return w
+}
+
+// carve opens a one-cell corridor between two coordinates, stepping diagonally
+// first. Deterministic and rng-free.
+func (w *World) carve(from, to Coord) {
+	for c := from; c != to; {
+		c.X += sign(to.X - c.X)
+		c.Y += sign(to.Y - c.Y)
+		w.SetTerrain(c, Open)
+	}
+}
+
+func sign(v int) int {
+	switch {
+	case v > 0:
+		return 1
+	case v < 0:
+		return -1
+	}
+	return 0
 }
 
 func (w *World) randCoord() Coord {
