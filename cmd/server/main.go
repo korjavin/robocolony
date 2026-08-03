@@ -76,7 +76,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(authHandler, lobbies, database),
+		Handler:           routes(authHandler, lobbies, database, server.NewLibrary(database)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).
@@ -121,7 +121,7 @@ func run() error {
 	return nil
 }
 
-func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB) http.Handler {
+func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *server.Library) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	a.Routes(mux)
@@ -130,6 +130,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB) http.Handl
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
+	library.Routes(mux, a.RequireAuth)
 	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry())))
 	server.NewRobots(lobbies.Registry(), database).Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
