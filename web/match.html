@@ -114,6 +114,10 @@
          border-radius: .3rem; padding: 0 .25rem; margin-left: .35rem; }
   .out:first-child { margin-left: 0; }
   #stats tr.outrow td { opacity: .6; }
+  /* Same red, said in a sentence, for the player it happened to. */
+  .spectating { margin: 0 0 1rem; padding: .4rem .7rem; font-size: .92rem;
+                border: 1px solid #c0392b; border-left-width: .35rem;
+                border-radius: .4rem; }
 
   .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
         overflow: hidden; margin: .2rem 0 .4rem; }
@@ -206,6 +210,11 @@
     <span class="meta" id="tick"></span>
     <span class="conn" id="conn">connecting</span>
   </div>
+
+  <!-- Shown to a player whose own colony is out (design §5.3, §12 P2). They
+       keep the observer view and the trace history; only the commands are
+       gone, and they are gone because there is no robot left to command. -->
+  <p class="spectating" id="spectate" hidden></p>
 
   <div class="cols">
     <div class="arena">

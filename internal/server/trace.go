@@ -42,6 +42,11 @@ type TraceHistory struct {
 	// renders "recording from here" rather than an empty list that looks broken.
 	Watching bool         `json:"watching"`
 	Events   []TraceEvent `json:"events"`
+
+	// Final is set once the match is over. What is here is then all there will
+	// ever be, and "recording from here" would be a lie: a frozen world takes
+	// no more decisions. Design §12 P2 keeps a finished match inspectable.
+	Final bool `json:"final,omitempty"`
 }
 
 // TraceEvent is one tick of one robot's evaluation.
@@ -112,6 +117,9 @@ func (h *Robots) TraceOf(matchID int64, robotID int, since uint64) (TraceHistory
 	// robot with nothing recorded yet is the common case, not an error. Same
 	// reason writeResult normalises Errors and Warnings in programs.go.
 	out := TraceHistory{Robot: robotID, Window: prog.HistoryTicks, Events: []TraceEvent{}}
+	// Outside Read: Finished takes the same lock. Racing it costs nothing —
+	// the two branches differ only in whether a watch is started.
+	out.Final = m.Finished()
 	var fail error
 	// Read, not Apply: a watch is observation. Putting it in the command log
 	// would make a replayed match differ from the one that was played.
@@ -128,6 +136,13 @@ func (h *Robots) TraceOf(matchID int64, robotID int, since uint64) (TraceHistory
 		out.Watching = watching
 		for _, e := range events {
 			out.Events = append(out.Events, traceEvent(e))
+		}
+		if out.Final {
+			// A frozen world records nothing, so a new watch here would only
+			// take a slot — and prog.MaxWatched is 8, so it could evict the
+			// watch that still holds what a spectator came to read. Spectators
+			// outnumber players on a match that is over.
+			return
 		}
 		rt.Watch(robotID, w.Tick)
 	})

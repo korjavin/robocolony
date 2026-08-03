@@ -75,25 +75,44 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush() // headers out now, so the client's onopen fires
 
+		ctx := r.Context()
+
+		// The board goes out with the init frame rather than on the next tick.
+		// That is what makes a finished match watchable (design §12 P2): E5.2
+		// froze Step once a match ends, so its world never ticks again, and a
+		// spectator who connects after the end would otherwise be sent terrain
+		// with nothing standing on it — no robots, no bases, no standing. On a
+		// live match it costs nothing: the loop below only sends a frame when
+		// the tick moves, so this is the frame it would have sent 100ms later.
 		info := m.Info()
 		var initFrame Init
-		m.Read(func(world *sim.World, _ *prog.Runtime) {
+		var board Snapshot
+		m.Read(func(world *sim.World, rt *prog.Runtime) {
 			initFrame = NewInit(info, m.Colonies, world)
+			board = NewSnapshot(world, rt, info.EndTick)
 		})
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return
 		}
-		slog.Info("world stream opened", "match_id", id, "tick", initFrame.Tick, "init_bytes", n)
+		tn, err := send(w, flusher, "tick", board)
+		if err != nil {
+			return
+		}
+		level := slog.LevelInfo
+		if tn > maxFrameBytes {
+			// File a bead for deltas; do not invent a protocol here.
+			level = slog.LevelWarn
+		}
+		slog.Log(ctx, level, "world stream opened", "match_id", id, "tick", initFrame.Tick,
+			"init_bytes", n, "tick_bytes", tn, "robots", len(board.Robots), "loose", len(board.Loose))
 
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 		beat := time.NewTicker(heartbeatEvery)
 		defer beat.Stop()
 
-		ctx := r.Context()
-		last := initFrame.Tick
-		first := true
+		last := board.Tick
 		for {
 			select {
 			case <-ctx.Done():
@@ -127,19 +146,8 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 				})
 				if fresh {
 					last = snap.Tick
-					n, err := send(w, flusher, "tick", snap)
-					if err != nil {
+					if _, err := send(w, flusher, "tick", snap); err != nil {
 						return
-					}
-					if first {
-						first = false
-						level := slog.LevelInfo
-						if n > maxFrameBytes {
-							// File a bead for deltas; do not invent a protocol here.
-							level = slog.LevelWarn
-						}
-						slog.Log(ctx, level, "world stream frame size", "match_id", id,
-							"tick_bytes", n, "robots", len(snap.Robots), "loose", len(snap.Loose))
 					}
 				}
 				if finished {

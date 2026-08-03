@@ -575,6 +575,14 @@ async function pollHistory() {
     histAdd(fresh);
   }
   const secs = Math.round(data.window / (init?.tick_rate || 10));
+  // A finished world never decides again, so "recording from now on" would be
+  // a lie: what came back is the whole of what was kept.
+  if (data.final) {
+    setText($("history-note"), histRows === 0
+      ? `The match is over, and robot #${robot} was not being recorded when it ended — a robot only records while somebody has it selected.`
+      : `The last ${secs}s before the match ended, newest first.`);
+    return;
+  }
   setText($("history-note"), histRows === 0
     ? `Recording robot #${robot} from now on — history is only kept while a robot is selected.`
     : `Last ${secs}s of decisions, newest first. Only the selected robot is recorded.`);
@@ -741,6 +749,23 @@ const isOut = (colony) => {
   return !!st && st.robots === 0 && !!b && !b.build && !!b.idle_reason;
 };
 
+// A player whose colony is out keeps watching (design §12 P2): spectating and
+// the full trace history, only not the editing. None of that is enforced here —
+// an out colony has no robot left for the server to accept a command on, and
+// the command panel only ever appears for the viewer's own robots. This says
+// out loud what happened, because a colony that quietly stops doing anything
+// reads as a broken page rather than as a lost match.
+function renderSpectate() {
+  const box = $("spectate");
+  const mine = myColony();
+  const out = mine !== null && isOut(mine);
+  box.hidden = !out;
+  if (out) {
+    setText(box, "Your colony is out — no robots left, and nothing your base can build. "
+      + "You keep watching: pick any robot, from any colony, to follow what it decides.");
+  }
+}
+
 function renderStats() {
   const t = $("stats");
   t.replaceChildren();
@@ -853,6 +878,7 @@ function render() {
   }
   draw();
   renderClock();
+  renderSpectate();
   renderInspector();
   renderRoster();
   renderStats();
