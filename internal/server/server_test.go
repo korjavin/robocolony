@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -249,6 +250,112 @@ func TestStreamFrames(t *testing.T) {
 		if ticks[i] <= ticks[i-1] {
 			t.Errorf("ticks %v are not strictly increasing: a frame was repeated", ticks)
 			break
+		}
+	}
+}
+
+// TestSpectateAFinishedMatch is design §12 P2's acceptance bar: a match that is
+// already over is still worth opening. The world is frozen (E5.2 made Step a
+// no-op once it ends) so no tick will ever come, which is exactly why the board
+// travels with the init frame — without it a spectator gets terrain and an
+// empty arena, and the final standing is unreadable.
+//
+// The trace half of the same decision is checked here too: the retained
+// decisions are still served, and asking for them does not start a watch on a
+// world that can no longer record one.
+func TestSpectateAFinishedMatch(t *testing.T) {
+	svc, database := newService(t)
+	owner, err := database.UpsertUser(t.Context(), "sub-owner", "owner@example.com", "Owner")
+	if err != nil {
+		t.Fatalf("UpsertUser() = %v", err)
+	}
+	// A one-second match, written straight to the database: Settings.Validate
+	// enforces a 60 second floor and this test will not wait a minute.
+	row, err := database.CreateLobby(t.Context(), owner.ID, "sprint",
+		`{"duration_sec":1,"richness":0.02,"spawn_per_min":6,"max_players":4}`)
+	if err != nil {
+		t.Fatalf("CreateLobby() = %v", err)
+	}
+	if _, err := svc.Start(t.Context(), row.ID, owner.ID); err != nil {
+		t.Fatalf("Start() = %v", err)
+	}
+	m, ok := svc.Registry().Get(row.ID)
+	if !ok {
+		t.Fatalf("match %d is not in the registry after Start", row.ID)
+	}
+	robot := aRobot(t, m, m.Colonies[0].ID)
+	for deadline := time.Now().Add(10 * time.Second); !m.Finished(); {
+		if time.Now().After(deadline) {
+			t.Fatal("the one-second match never finished")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/matches/{id}/stream", Stream(svc.Registry(), nil))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/matches/"+strconv.FormatInt(m.ID, 10)+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() = %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET stream = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	events := readEvents(t, resp.Body, 3)
+	var got []string
+	for _, e := range events {
+		got = append(got, e.name)
+	}
+	if want := []string{"init", "tick", "end"}; !slices.Equal(got, want) {
+		t.Fatalf("events are %q, want %q", got, want)
+	}
+	var board Snapshot
+	if err := json.Unmarshal(events[1].data, &board); err != nil {
+		t.Fatalf("final board does not decode: %v", err)
+	}
+	if len(board.Robots) == 0 {
+		t.Error("the final board carries no robots: a spectator sees an empty arena")
+	}
+	if len(board.Bases) != len(m.Colonies) {
+		t.Errorf("the final board carries %d bases, want %d", len(board.Bases), len(m.Colonies))
+	}
+	if len(board.Colonies) == 0 {
+		t.Error("the final board carries no colony stats: there is no standing to show")
+	}
+	var end End
+	if err := json.Unmarshal(events[2].data, &end); err != nil {
+		t.Fatalf("end frame does not decode: %v", err)
+	}
+	if end.Tick != board.Tick {
+		t.Errorf("end frame is at tick %d, the final board at %d", end.Tick, board.Tick)
+	}
+
+	// Trace inspection survives the end, and does not start a watch: a watch
+	// created now would record nothing (the world is frozen) and could evict
+	// one that still holds what a spectator came to read — prog.MaxWatched is 8
+	// and a finished match may have more viewers than it had players.
+	h := NewRobots(svc.Registry(), database)
+	for i := range 2 {
+		hist, err := h.TraceOf(m.ID, robot, 0)
+		if err != nil {
+			t.Fatalf("TraceOf() on a finished match = %v", err)
+		}
+		if !hist.Final {
+			t.Error("TraceHistory.Final is false on a match that is over")
+		}
+		if hist.Watching {
+			t.Errorf("poll %d started a watch on a frozen world", i)
+		}
+		if hist.Tick != board.Tick {
+			t.Errorf("TraceOf() reports tick %d, the final board %d", hist.Tick, board.Tick)
 		}
 	}
 }
