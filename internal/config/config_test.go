@@ -15,7 +15,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "defaults",
 			env:  nil,
-			want: Config{Port: "8080", LogLevel: slog.LevelInfo, BaseURL: "http://localhost:8080", DBPath: "/app/data/robocolony.db"},
+			want: Config{Port: "8080", LogLevel: slog.LevelInfo, BaseURL: "http://localhost:8080", DBPath: "data/robocolony.db"},
 		},
 		{
 			name: "overrides",
@@ -25,7 +25,7 @@ func TestLoad(t *testing.T) {
 		{
 			name: "log level is case insensitive",
 			env:  map[string]string{"LOG_LEVEL": "WARN"},
-			want: Config{Port: "8080", LogLevel: slog.LevelWarn, BaseURL: "http://localhost:8080", DBPath: "/app/data/robocolony.db"},
+			want: Config{Port: "8080", LogLevel: slog.LevelWarn, BaseURL: "http://localhost:8080", DBPath: "data/robocolony.db"},
 		},
 		{
 			name:    "bad log level fails loudly",
