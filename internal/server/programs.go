@@ -52,8 +52,35 @@ type BlueprintView struct {
 	ID         int64  `json:"id"`
 	Name       string `json:"name"`
 	Components []int  `json:"components"`
-	Mass       int    `json:"mass"`
-	Value      int    `json:"value"`
+	BlueprintStats
+}
+
+// BlueprintStats is what a parts list costs and buys: the design §6.3 verdict
+// plus the consequences a player is trading off — mass and the §6.4 speed it
+// taxes, the §6.1 armor tier's durability, and the component value that feeds
+// the §9 fleet score.
+//
+// Every number is derived by internal/sim, never recomputed here or in the
+// browser: E7.3 retunes the game by editing sim's tables, and nothing outside
+// that package may hold a second copy of them.
+type BlueprintStats struct {
+	OK     bool   `json:"ok"`
+	Error  string `json:"error,omitempty"` // the §6.3 violation, when OK is false
+	Mass   int    `json:"mass"`
+	Value  int    `json:"value"`
+	Health int    `json:"health"`
+	Speed  int    `json:"speed"`
+}
+
+func blueprintStats(bp sim.Blueprint) BlueprintStats {
+	s := BlueprintStats{
+		OK: true, Mass: bp.Mass(), Value: bp.Value(),
+		Health: sim.StartingHealth(bp), Speed: sim.EffectiveSpeed(bp),
+	}
+	if err := bp.Validate(); err != nil {
+		s.OK, s.Error = false, err.Error()
+	}
+	return s
 }
 
 // Language is the whole editable language in one static payload: the predicate
@@ -383,9 +410,7 @@ func (l *Library) CreateBlueprint(ctx context.Context, userID int64, name string
 		return BlueprintView{}, libErrf(http.StatusBadRequest, "name is required")
 	case len(name) > maxNameLen:
 		return BlueprintView{}, libErrf(http.StatusBadRequest, "name must be at most %d characters", maxNameLen)
-	// A blueprint cannot legally need more parts than the catalogue has rows,
-	// counting the two weapon slots.
-	case len(components) > len(sim.Catalogue())+sim.MaxWeapons:
+	case len(components) > maxComponents:
 		return BlueprintView{}, libErrf(http.StatusBadRequest, "too many components")
 	}
 	bp := sim.Blueprint{Name: name, Components: toVariants(components)}
@@ -405,6 +430,25 @@ func (l *Library) CreateBlueprint(ctx context.Context, userID int64, name string
 	}
 	return blueprintView(row, bp), nil
 }
+
+// PreviewBlueprint answers "what would this robot be?" for a parts list that
+// has not been saved. It exists so the blueprint editor can show the §6.3
+// verdict and the derived numbers live as components are added and removed,
+// without a second copy of either the constraints or the balance tables in
+// JavaScript.
+//
+// An illegal parts list is a 200 carrying OK false and the reason: it is a
+// design the player is still building, not a failed request.
+func (l *Library) PreviewBlueprint(components []int) (BlueprintStats, error) {
+	if len(components) > maxComponents {
+		return BlueprintStats{}, libErrf(http.StatusBadRequest, "too many components")
+	}
+	return blueprintStats(sim.Blueprint{Components: toVariants(components)}), nil
+}
+
+// maxComponents is the most parts a blueprint could legally need: one of every
+// catalogue row, counting the second weapon slot.
+var maxComponents = len(sim.Catalogue()) + sim.MaxWeapons
 
 // storedBlueprint is the blueprints.json column. The row already carries the
 // name and the default program, so only the parts list lives in here.
@@ -431,7 +475,7 @@ func decodeBlueprint(row db.Blueprint) (sim.Blueprint, error) {
 func blueprintView(row db.Blueprint, bp sim.Blueprint) BlueprintView {
 	return BlueprintView{
 		ID: row.ID, Name: row.Name, Components: variants(bp.Components),
-		Mass: bp.Mass(), Value: bp.Value(),
+		BlueprintStats: blueprintStats(bp),
 	}
 }
 
@@ -505,6 +549,7 @@ func (l *Library) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("DELETE /api/programs/{id}", l.handleDeleteProgram)
 	handle("GET /api/blueprints", l.handleListBlueprints)
 	handle("POST /api/blueprints", l.handleCreateBlueprint)
+	handle("POST /api/blueprints/preview", l.handlePreviewBlueprint)
 }
 
 // programBody is the shape every write endpoint takes.
@@ -630,6 +675,22 @@ func (l *Library) handleCreateBlueprint(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, view)
+}
+
+func (l *Library) handlePreviewBlueprint(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Components []int `json:"components"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	stats, err := l.PreviewBlueprint(body.Components)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
 }
 
 func pathID(r *http.Request) (int64, error) {
