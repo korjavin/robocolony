@@ -277,6 +277,10 @@ func (w *World) StateHash() uint64 {
 	putI(w.Width)
 	putI(w.Height)
 	putU(uint64(w.Seed))
+	// The id allocator is state too: two worlds that allocated a different
+	// number of ids will hand out different ids next, even if no entity of
+	// theirs survives to show it.
+	putI(w.nextID)
 
 	putI(len(w.Cells))
 	for _, c := range w.Cells {

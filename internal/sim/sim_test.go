@@ -117,6 +117,7 @@ func TestStateHashCoversState(t *testing.T) {
 		{"loose coord", func(w *World) { w.Loose[0].Coord.X++ }},
 		{"loose variant", func(w *World) { w.Loose[0].Variant = VariantNone }},
 		{"loose removed", func(w *World) { w.Loose = w.Loose[1:] }},
+		{"id allocator", func(w *World) { w.NextID() }},
 	}
 	base := sampleWorld(t, 7).StateHash()
 	for _, m := range mutations {
