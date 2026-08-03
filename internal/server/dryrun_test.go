@@ -195,6 +195,21 @@ func TestDryRunBounds(t *testing.T) {
 		}
 	})
 
+	// The rate limiter is per-user state keyed by an attacker-influenced count
+	// of identities, so it has to be bounded whatever the traffic looks like.
+	t.Run("the rate-limiter map stays bounded", func(t *testing.T) {
+		d := NewDryRunner(lib)
+		now := time.Now()
+		for i := int64(0); i < dryRunClients*3; i++ {
+			if err := d.allow(i, now); err != nil { // every caller distinct and fresh
+				t.Fatalf("allow(%d) = %v", i, err)
+			}
+			if len(d.last) > dryRunClients {
+				t.Fatalf("after %d callers the map holds %d entries, cap is %d", i+1, len(d.last), dryRunClients)
+			}
+		}
+	})
+
 	t.Run("an invalid program is reported, not run", func(t *testing.T) {
 		d := NewDryRunner(lib)
 		u := newUser(t, database, "invalid")

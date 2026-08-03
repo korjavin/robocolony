@@ -161,6 +161,14 @@ func (d *DryRunner) allow(userID int64, now time.Time) error {
 				delete(d.last, id)
 			}
 		}
+		// Everything left is younger than the interval, so the sweep freed
+		// nothing and the map would grow past its cap. Drop it: this is a
+		// throttle, not a ledger, and the whole cost of resetting it is one
+		// extra run per active caller — cheaper than either growing without a
+		// bound or refusing a legitimate player.
+		if len(d.last) >= dryRunClients {
+			clear(d.last)
+		}
 	}
 	d.last[userID] = now
 	return nil
