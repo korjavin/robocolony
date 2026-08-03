@@ -54,7 +54,11 @@ type PredicateSpec struct {
 	ID    PredicateID `json:"id"`
 	Group string      `json:"group"`
 	Label string      `json:"label"`
-	Arg   ArgKind     `json:"arg"`
+	// Desc is the player-facing meaning, one or two sentences. It lives here
+	// rather than in the editor's JavaScript so it cannot drift from the
+	// evaluator that implements it; TestCatalogueIsDocumented keeps it filled.
+	Desc string  `json:"desc"`
+	Arg  ArgKind `json:"arg"`
 	// Needs lists components without which the predicate can never be true.
 	// A missing component here is a warning, not an error: testing a sensor
 	// you do not have is legal, just pointless.
@@ -66,6 +70,7 @@ type ActionSpec struct {
 	ID    ActionID `json:"id"`
 	Group string   `json:"group"`
 	Label string   `json:"label"`
+	Desc  string   `json:"desc"` // see PredicateSpec.Desc
 	Arg   ArgKind  `json:"arg"`
 	// Primary implements the locked rule action model (AGENTS.md): a primary
 	// action ends the tick, a side effect executes and evaluation continues
@@ -166,70 +171,116 @@ const (
 
 // predicates is data, not a switch. Adding a predicate is adding a row.
 var predicates = []PredicateSpec{
-	{CarryingComponent, GroupSelf, "Carrying a component", ArgNone, nil},
-	{CarryingNothing, GroupSelf, "Carrying nothing", ArgNone, nil},
-	{HealthBelow, GroupSelf, "Health below %", ArgPercent, nil},
-	{HealthAbove, GroupSelf, "Health above %", ArgPercent, nil},
+	{CarryingComponent, GroupSelf, "Carrying a component",
+		"True while the robot is holding a component. It can hold only one at a time.", ArgNone, nil},
+	{CarryingNothing, GroupSelf, "Carrying nothing",
+		"True while the robot's hands are empty. This is how a fresh robot starts.", ArgNone, nil},
+	{HealthBelow, GroupSelf, "Health below %",
+		"True once damage has taken the robot below this share of the health it was built with.", ArgPercent, nil},
+	{HealthAbove, GroupSelf, "Health above %",
+		"True while the robot still has more than this share of the health it was built with.", ArgPercent, nil},
 
-	{AtOwnBase, GroupLocation, "At own base", ArgNone, nil},
-	{AtPoint, GroupLocation, "At point", ArgPoint, nil},
-	{PointIsSet, GroupLocation, "Point is set", ArgPoint, nil},
-	{PointIsEmpty, GroupLocation, "Point is empty", ArgPoint, nil},
+	{AtOwnBase, GroupLocation, "At own base",
+		"True while the robot stands within reach of its own base — where it can deposit cargo.", ArgNone, nil},
+	{AtPoint, GroupLocation, "At point",
+		"True while the robot stands on the coordinate remembered in this point. False whenever the point is empty.", ArgPoint, nil},
+	{PointIsSet, GroupLocation, "Point is set",
+		"True when this memory point holds a coordinate. All three points start empty and are wiped on reprogramming.", ArgPoint, nil},
+	{PointIsEmpty, GroupLocation, "Point is empty",
+		"True when this memory point holds nothing — the opposite of Point is set.", ArgPoint, nil},
 
-	{SeesComponent, GroupVision, "Sees a component", ArgNone, nil},
-	{ComponentInReach, GroupVision, "Component in reach", ArgNone, nil},
-	{SeesEnemyRobot, GroupVision, "Sees an enemy robot", ArgNone, nil},
-	{SeesObstacle, GroupVision, "Sees an obstacle", ArgNone, nil},
-	{VisibleTargetInWpnRange, GroupVision, "Visible target in weapon range", ArgNone, kindList{sim.KindWeapon}},
+	{SeesComponent, GroupVision, "Sees a component",
+		"True when a loose component is anywhere in the forward vision cone, however far away.", ArgNone, nil},
+	{ComponentInReach, GroupVision, "Component in reach",
+		"True only when a loose component is on this cell or right next to it — close enough to pick up.", ArgNone, nil},
+	{SeesEnemyRobot, GroupVision, "Sees an enemy robot",
+		"True when a robot of another colony is in the forward vision cone.", ArgNone, nil},
+	{SeesObstacle, GroupVision, "Sees an obstacle",
+		"True when the cell straight ahead cannot be entered. Pair it with a turn or the robot jams.", ArgNone, nil},
+	{VisibleTargetInWpnRange, GroupVision, "Visible target in weapon range",
+		"True when the nearest robot seen ahead is close enough for a loaded weapon to hit.", ArgNone, kindList{sim.KindWeapon}},
 
-	{RadarDetectsTarget, GroupRadar, "Radar detects a target", ArgNone, kindList{sim.KindRadar}},
-	{DetectedTargetInWpnRange, GroupRadar, "Detected target in weapon range", ArgNone, kindList{sim.KindRadar, sim.KindWeapon}},
+	{RadarDetectsTarget, GroupRadar, "Radar detects a target",
+		"True when the radar reports anything at all. Radar sees in every direction, not just ahead.", ArgNone, kindList{sim.KindRadar}},
+	{DetectedTargetInWpnRange, GroupRadar, "Detected target in weapon range",
+		"True when the nearest enemy robot on radar is close enough for a loaded weapon to hit.", ArgNone, kindList{sim.KindRadar, sim.KindWeapon}},
 
-	{ReceivedComeHere, GroupCommunication, "Received COME_HERE", ArgNone, nil},
-	{ReceivedAvoidHere, GroupCommunication, "Received AVOID_HERE", ArgNone, nil},
+	{ReceivedComeHere, GroupCommunication, "Received COME_HERE",
+		"True for the one tick after a colony mate broadcast COME_HERE. Signals are not remembered — save the position in the same rule or it is gone.", ArgNone, nil},
+	{ReceivedAvoidHere, GroupCommunication, "Received AVOID_HERE",
+		"True for the one tick after a colony mate broadcast AVOID_HERE. Not remembered either.", ArgNone, nil},
 
-	{PathBlocked, GroupReachability, "Path blocked", ArgNone, nil},
-	{TargetReached, GroupReachability, "Target reached", ArgNone, nil},
-	{TargetUnreachable, GroupReachability, "Target unreachable", ArgNone, nil},
+	{PathBlocked, GroupReachability, "Path blocked",
+		"True when the robot's last attempt to move was refused, usually by a wall or another robot.", ArgNone, nil},
+	{TargetReached, GroupReachability, "Target reached",
+		"True on the tick the robot arrives where its last move-to action was heading.", ArgNone, nil},
+	{TargetUnreachable, GroupReachability, "Target unreachable",
+		"True when the last move-to action found no route to its destination at all.", ArgNone, nil},
 
-	{WeaponReady, GroupCombat, "Weapon ready", ArgNone, kindList{sim.KindWeapon}},
+	{WeaponReady, GroupCombat, "Weapon ready",
+		"True while at least one installed weapon has finished reloading.", ArgNone, kindList{sim.KindWeapon}},
 	// has_weapon is the introspection predicate: false on an unarmed
 	// blueprint is the answer, not a mistake, so it declares no Needs.
-	{HasWeapon, GroupCombat, "Has a weapon", ArgNone, nil},
-	{EnemyVisible, GroupCombat, "Enemy visible", ArgNone, nil},
+	{HasWeapon, GroupCombat, "Has a weapon",
+		"True when this blueprint carries a weapon at all. False is a legitimate answer, not a mistake.", ArgNone, nil},
+	{EnemyVisible, GroupCombat, "Enemy visible",
+		"The same test as Sees an enemy robot, spelled the way the combat rules read.", ArgNone, nil},
 }
 
 // actions is data, not a switch. The Primary column is the locked rule action
 // model: exactly the memory and communication rows are side effects.
 var actions = []ActionSpec{
-	{MoveForward, GroupMovement, "Move forward", ArgNone, true, nil},
-	{TurnLeft, GroupMovement, "Turn left", ArgNone, true, nil},
-	{TurnRight, GroupMovement, "Turn right", ArgNone, true, nil},
-	{TurnRandom, GroupMovement, "Turn randomly", ArgNone, true, nil},
-	{Stop, GroupMovement, "Stop", ArgNone, true, nil},
+	{MoveForward, GroupMovement, "Move forward",
+		"Step one cell in the direction the robot is facing.", ArgNone, true, nil},
+	{TurnLeft, GroupMovement, "Turn left",
+		"Turn one step anticlockwise without moving.", ArgNone, true, nil},
+	{TurnRight, GroupMovement, "Turn right",
+		"Turn one step clockwise without moving.", ArgNone, true, nil},
+	{TurnRandom, GroupMovement, "Turn randomly",
+		"Face a random direction. The usual way out of a corner or off a wall.", ArgNone, true, nil},
+	{Stop, GroupMovement, "Stop",
+		"Stand still this tick, abandoning any navigation already under way.", ArgNone, true, nil},
 
-	{MoveToOwnBase, GroupNavigation, "Move to own base", ArgNone, true, nil},
-	{MoveToVisibleTarget, GroupNavigation, "Move to visible target", ArgNone, true, nil},
-	{MoveToRadarTarget, GroupNavigation, "Move to radar target", ArgNone, true, kindList{sim.KindRadar}},
-	{MoveToPoint, GroupNavigation, "Move to point", ArgPoint, true, nil},
-	{MoveAwayFromTarget, GroupNavigation, "Move away from target", ArgNone, true, nil},
-	{MoveAwayFromPoint, GroupNavigation, "Move away from point", ArgPoint, true, nil},
+	{MoveToOwnBase, GroupNavigation, "Move to own base",
+		"Take one step along the route home. Idles if the robot has no base.", ArgNone, true, nil},
+	{MoveToVisibleTarget, GroupNavigation, "Move to visible target",
+		"Take one step towards the nearest thing seen ahead, component or enemy. Idles if nothing is in sight.", ArgNone, true, nil},
+	{MoveToRadarTarget, GroupNavigation, "Move to radar target",
+		"Take one step towards the nearest radar contact. Idles if radar reports nothing.", ArgNone, true, kindList{sim.KindRadar}},
+	{MoveToPoint, GroupNavigation, "Move to point",
+		"Take one step along the route to the coordinate remembered in this point. Idles while the point is empty.", ArgPoint, true, nil},
+	{MoveAwayFromTarget, GroupNavigation, "Move away from target",
+		"Take one step directly away from the nearest thing seen ahead. The retreat action.", ArgNone, true, nil},
+	{MoveAwayFromPoint, GroupNavigation, "Move away from point",
+		"Take one step directly away from the coordinate remembered in this point.", ArgPoint, true, nil},
 
-	{PickUpComponent, GroupInteraction, "Pick up component", ArgNone, true, kindList{sim.KindManipulator}},
-	{DepositComponentAtBase, GroupInteraction, "Deposit component at base", ArgNone, true, kindList{sim.KindManipulator}},
-	{DropComponent, GroupInteraction, "Drop component", ArgNone, true, kindList{sim.KindManipulator}},
+	{PickUpComponent, GroupInteraction, "Pick up component",
+		"Pick up a loose component on this cell or next to it. Needs empty hands and something in reach.", ArgNone, true, kindList{sim.KindManipulator}},
+	{DepositComponentAtBase, GroupInteraction, "Deposit component at base",
+		"Hand the carried component to own base and score its value. Only works while at the base.", ArgNone, true, kindList{sim.KindManipulator}},
+	{DropComponent, GroupInteraction, "Drop component",
+		"Put the carried component down here, leaving it loose for anyone to take.", ArgNone, true, kindList{sim.KindManipulator}},
 
-	{AttackVisibleTarget, GroupCombat, "Attack visible target", ArgNone, true, kindList{sim.KindWeapon}},
-	{AttackRadarTarget, GroupCombat, "Attack radar target", ArgNone, true, kindList{sim.KindRadar, sim.KindWeapon}},
+	{AttackVisibleTarget, GroupCombat, "Attack visible target",
+		"Fire on the nearest enemy robot seen ahead. Loose components are never targets.", ArgNone, true, kindList{sim.KindWeapon}},
+	{AttackRadarTarget, GroupCombat, "Attack radar target",
+		"Fire on the nearest enemy robot the radar reports, even out of sight.", ArgNone, true, kindList{sim.KindRadar, sim.KindWeapon}},
 
-	{SaveCurrentPosition, GroupMemory, "Save current position", ArgPoint, false, nil},
-	{SaveVisibleTarget, GroupMemory, "Save visible target", ArgPoint, false, nil},
-	{SaveRadarTarget, GroupMemory, "Save radar target", ArgPoint, false, kindList{sim.KindRadar}},
-	{SaveSignalPosition, GroupMemory, "Save signal position", ArgPoint, false, nil},
-	{ClearPoint, GroupMemory, "Clear point", ArgPoint, false, nil},
+	{SaveCurrentPosition, GroupMemory, "Save current position",
+		"Remember where the robot is standing in this point, replacing whatever it held.", ArgPoint, false, nil},
+	{SaveVisibleTarget, GroupMemory, "Save visible target",
+		"Remember where the nearest thing seen ahead is. Writes nothing when nothing is in sight.", ArgPoint, false, nil},
+	{SaveRadarTarget, GroupMemory, "Save radar target",
+		"Remember where the nearest radar contact is. Writes nothing when radar reports nothing.", ArgPoint, false, kindList{sim.KindRadar}},
+	{SaveSignalPosition, GroupMemory, "Save signal position",
+		"Remember where the signal this rule matched came from — the only way to keep it past this tick.", ArgPoint, false, nil},
+	{ClearPoint, GroupMemory, "Clear point",
+		"Forget this point, leaving it empty again.", ArgPoint, false, nil},
 
-	{BroadcastComeHere, GroupCommunication, "Broadcast COME_HERE", ArgNone, false, nil},
-	{BroadcastAvoidHere, GroupCommunication, "Broadcast AVOID_HERE", ArgNone, false, nil},
+	{BroadcastComeHere, GroupCommunication, "Broadcast COME_HERE",
+		"Call the whole colony to this position. Every colony mate hears it on the next tick.", ArgNone, false, nil},
+	{BroadcastAvoidHere, GroupCommunication, "Broadcast AVOID_HERE",
+		"Warn the whole colony away from this position. Heard on the next tick.", ArgNone, false, nil},
 }
 
 // Language returns the full catalogue, ready to serialize to the editor.

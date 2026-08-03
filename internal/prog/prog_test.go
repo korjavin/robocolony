@@ -88,8 +88,10 @@ func TestValidate(t *testing.T) {
 		warns    []string
 	}{
 		{"scavenger is clean", scavenger(), blueprint(sim.Manipulator, sim.PartsRadar), nil, nil},
-		{"scout is clean", scout(), blueprint(sim.Manipulator), nil, nil},
-		{"responder is clean", responder(), blueprint(sim.PartsRadar, sim.Laser), nil, nil},
+		// §10.8 and §10.9 only ever react: neither can act on a robot that has
+		// just been built, which is what inert_start exists to say.
+		{"scout warns that it cannot start", scout(), blueprint(sim.Manipulator), nil, []string{"inert_start"}},
+		{"responder warns that it cannot start", responder(), blueprint(sim.PartsRadar, sim.Laser), nil, []string{"inert_start"}},
 		{
 			"radar action without radar",
 			Program{Rules: []Rule{{Pred(CarryingNothing), []Action{Do(MoveToRadarTarget)}}}},
@@ -100,13 +102,13 @@ func TestValidate(t *testing.T) {
 			"pickup without manipulator",
 			Program{Rules: []Rule{{Pred(ComponentInReach), []Action{Do(PickUpComponent)}}}},
 			blueprint(),
-			[]string{"missing_component"}, nil,
+			[]string{"missing_component"}, []string{"inert_start"},
 		},
 		{
 			"two primary actions",
 			Program{Rules: []Rule{{Pred(SeesObstacle), []Action{Do(TurnLeft), Do(MoveForward)}}}},
 			full,
-			[]string{"multiple_primary"}, nil,
+			[]string{"multiple_primary"}, []string{"inert_start"},
 		},
 		{
 			"side effect plus one primary is fine",
@@ -138,7 +140,7 @@ func TestValidate(t *testing.T) {
 				{And(Pred(CarryingComponent), Pred(AtOwnBase)), []Action{Do(DepositComponentAtBase)}},
 			}},
 			full,
-			nil, nil,
+			nil, []string{"inert_start"},
 		},
 		{
 			"radar predicate without radar only warns",
@@ -150,7 +152,7 @@ func TestValidate(t *testing.T) {
 			"unknown identifiers are errors",
 			Program{Rules: []Rule{{Pred("nope"), []Action{Do("also_nope")}}}},
 			full,
-			[]string{"unknown_predicate", "unknown_action"}, nil,
+			[]string{"unknown_predicate", "unknown_action"}, []string{"inert_start"},
 		},
 		{"empty program warns", Program{}, full, nil, []string{"empty_program"}},
 	}
@@ -345,7 +347,9 @@ func TestLanguageIsSerializableAndConsistent(t *testing.T) {
 			t.Errorf("duplicate predicate %q", s.ID)
 		}
 		seenP[s.ID] = true
-		if s.Group == "" || s.Label == "" || s.Arg == "" {
+		// Desc is checked here so a predicate added later cannot ship
+		// undocumented: the editor's inline help is served from this row.
+		if s.Group == "" || s.Label == "" || s.Arg == "" || s.Desc == "" {
 			t.Errorf("predicate %q has an incomplete spec: %+v", s.ID, s)
 		}
 	}
@@ -356,7 +360,7 @@ func TestLanguageIsSerializableAndConsistent(t *testing.T) {
 			t.Errorf("duplicate action %q", s.ID)
 		}
 		seenA[s.ID] = true
-		if s.Group == "" || s.Label == "" || s.Arg == "" {
+		if s.Group == "" || s.Label == "" || s.Arg == "" || s.Desc == "" {
 			t.Errorf("action %q has an incomplete spec: %+v", s.ID, s)
 		}
 		if !s.Primary {
@@ -377,6 +381,59 @@ func TestLanguageIsSerializableAndConsistent(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"needs":["radar"]`)) {
 		t.Errorf("component requirements are not serialized by name: %s", data)
+	}
+}
+
+// TestWarnInertStart pins the two worked examples against each other: §10.7
+// acts on its first tick, §10.8 cannot, and only the second is worth telling
+// the player about.
+func TestWarnInertStart(t *testing.T) {
+	bp := blueprint(sim.Manipulator, sim.PartsRadar, sim.Laser)
+	tests := []struct {
+		name string
+		prog Program
+		want bool
+	}{
+		{"§10.7 scavenger acts from a clean start", scavenger(), false},
+		{"§10.8 scout cannot act from a clean start", scout(), true},
+		{"§10.9 responder only reacts", responder(), true},
+		{"empty program says empty_program instead", Program{}, false},
+		{"a rule on carrying_nothing always starts", Program{Rules: []Rule{
+			{Pred(CarryingNothing), []Action{Do(TurnRandom)}},
+		}}, false},
+		{"at_own_base matches: robots are built at their base", Program{Rules: []Rule{
+			{Pred(AtOwnBase), []Action{Do(TurnRandom)}},
+		}}, false},
+		{"an OR reaching one startable branch is enough", Program{Rules: []Rule{
+			{Or(Pred(SeesEnemyRobot), PredArg(PointIsEmpty, 1)), []Action{Do(TurnRandom)}},
+		}}, false},
+		{"a side-effect-only rule still counts as a match", Program{Rules: []Rule{
+			{Pred(CarryingNothing), []Action{DoArg(SaveCurrentPosition, 1)}},
+		}}, false},
+		{"waiting on a signal cannot start", Program{Rules: []Rule{
+			{Pred(ReceivedComeHere), []Action{Do(MoveToOwnBase)}},
+		}}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := Validate(tt.prog, bp)
+			got := false
+			for _, w := range r.Warnings {
+				if w.Code == "inert_start" {
+					got = true
+					if w.Severity != SevWarning || w.Rule != -1 {
+						t.Errorf("inert_start must be a program-level warning, got %+v", w)
+					}
+				}
+			}
+			if got != tt.want {
+				t.Errorf("inert_start = %v, want %v (warnings %+v)", got, tt.want, r.Warnings)
+			}
+			if !r.OK() {
+				t.Errorf("a clean-start warning blocked the save: %+v", r.Errors)
+			}
+		})
 	}
 }
 
