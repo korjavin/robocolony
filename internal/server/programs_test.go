@@ -167,7 +167,9 @@ func TestValidateEndpoint(t *testing.T) {
 		t.Fatalf("ListPrograms() = %v, %v; want an empty library", list, err)
 	}
 
-	// Warning-only: an empty program is legal, just idle. It must save.
+	// Warning-only: an empty program is legal, just idle. It must save, and it
+	// must come back with an empty rule list rather than a null one — every
+	// reader, the editor included, would otherwise need its own guard.
 	empty := encode(t, prog.Program{V: prog.SchemaVersion, Rules: nil})
 	res, err = lib.ValidateProgram(t.Context(), user.ID, empty, blind.ID)
 	if err != nil {
@@ -176,8 +178,18 @@ func TestValidateEndpoint(t *testing.T) {
 	if !res.OK() || len(res.Warnings) == 0 {
 		t.Fatalf("empty program: errors %v, warnings %v; want warnings only", res.Errors, res.Warnings)
 	}
-	if _, err := lib.SaveProgram(t.Context(), user.ID, 0, "idle", empty, blind.ID); err != nil {
+	saved, err := lib.SaveProgram(t.Context(), user.ID, 0, "idle", empty, blind.ID)
+	if err != nil {
 		t.Fatalf("a warning-only program was refused: %v", err)
+	}
+	var stored struct {
+		Rules []json.RawMessage `json:"rules"`
+	}
+	if err := json.Unmarshal(saved.Program, &stored); err != nil {
+		t.Fatalf("stored program does not parse: %v", err)
+	}
+	if stored.Rules == nil {
+		t.Errorf("stored program is %s, want an empty rule list, not null", saved.Program)
 	}
 }
 

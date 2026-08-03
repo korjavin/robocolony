@@ -235,6 +235,12 @@ func (l *Library) SaveProgram(ctx context.Context, userID, id int64, name string
 		return ProgramView{}, libValidationError(res)
 	}
 	p.Name = name
+	// A nil slice encodes as "rules":null, which every consumer would then have
+	// to guard. An empty program is legal — Validate only warns about it — so
+	// normalise here, once, rather than in each reader.
+	if p.Rules == nil {
+		p.Rules = []prog.Rule{}
+	}
 	encoded, err := p.Encode()
 	if err != nil {
 		return ProgramView{}, err
