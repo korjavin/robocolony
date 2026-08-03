@@ -170,6 +170,27 @@ type Robot struct {
 	PathBlocked       bool
 	TargetReached     bool
 	TargetUnreachable bool
+
+	// Recalled is the player's one and only direct command (design §4.2): the
+	// robot suspends its installed program and walks home on its own. It is
+	// deliberately not an ActionKind — no rule can set it, and nothing clears it
+	// but Reprogram, so the travel delay cannot be shortcut.
+	Recalled bool
+}
+
+// Reprogram installs a new program id and wipes everything a robot must not
+// carry across a reprogram: all three coordinate memory points (design §4.2
+// step 4, §10.6), the recall override, and the navigation flags the suspended
+// program left behind — so the robot leaves base from a clean state (§4.2
+// step 5).
+//
+// It does not check where the robot is: design §4.2 only allows this at the
+// robot's own base, and the caller enforces that with AtOwnBase.
+func (r *Robot) Reprogram(programID string) {
+	r.ProgramID = programID
+	r.Memory = [MemPoints]MemPoint{}
+	r.Recalled = false
+	r.PathBlocked, r.TargetReached, r.TargetUnreachable = false, false, false
 }
 
 // InvEntry is one component stack in a base inventory.
@@ -390,6 +411,7 @@ func (w *World) StateHash() uint64 {
 		putB(r.PathBlocked)
 		putB(r.TargetReached)
 		putB(r.TargetUnreachable)
+		putB(r.Recalled)
 		for _, m := range r.Memory {
 			putC(m.Coord)
 			putB(m.Set)

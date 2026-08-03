@@ -100,6 +100,12 @@ type Robot struct {
 	Program   string `json:"program"`
 	Cooldown  int    `json:"cooldown"`
 
+	// Recalled is design §4.2's one direct command in flight: the robot has
+	// suspended its program and is walking home. With the base coordinate the
+	// renderer already has, it separates "returning" from "at base, awaiting a
+	// program".
+	Recalled bool `json:"recalled"`
+
 	// Memory is the three coordinate registers of design §7.4; an unset one is
 	// null.
 	Memory []*Point `json:"memory"`
@@ -253,6 +259,7 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 			Cargo:     int(r.Cargo),
 			Archetype: r.Blueprint.Name, Blueprint: r.Blueprint.ID,
 			Program: r.ProgramID, Cooldown: r.Cooldown, Memory: mem,
+			Recalled: r.Recalled,
 		}
 		if rt != nil {
 			if tr, ok := rt.Trace(r.ID); ok {
