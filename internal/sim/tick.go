@@ -248,6 +248,10 @@ func (w *World) View(r *Robot, inbox []Signal) RobotView {
 		TargetReached:     r.TargetReached,
 		TargetUnreachable: r.TargetUnreachable,
 	}
+	// A Blueprint is a value, but its Components slice is not: without the
+	// clone a controller could write through the view into live world state,
+	// changing the robot's mass and every hash after it.
+	v.Blueprint.Components = slices.Clone(r.Blueprint.Components)
 	if b := w.baseOf(r.Colony); b != nil {
 		v.Base, v.HasBase = b.Coord, true
 		v.AtBase = r.Coord.Chebyshev(b.Coord) <= interactRange

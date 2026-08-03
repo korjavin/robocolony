@@ -428,6 +428,26 @@ func TestMemoryWritesAreZeroTick(t *testing.T) {
 	}
 }
 
+// A controller must not be able to write through its view into world state.
+func TestViewDoesNotAliasWorldState(t *testing.T) {
+	w := arena(8)
+	r := w.addRobot(0, Coord{3, 3}, North, scavengerBlueprint())
+	before := w.StateHash()
+	w.driveAll(funcController(func(v RobotView) Action {
+		v.Blueprint.Components[0] = Laser
+		v.Memory[0] = MemPoint{Coord: Coord{7, 7}, Set: true}
+		return Action{}
+	}))
+	w.Step()
+
+	if r.Blueprint.Components[0] != Tracks || r.Memory[0].Set {
+		t.Fatal("a controller mutated the robot through its view")
+	}
+	if w.Tick--; w.StateHash() != before {
+		t.Fatal("world state changed under an idling controller")
+	}
+}
+
 // Speed is mass-sensitive (design §6.4) and turns into ticks per cell.
 func TestEffectiveSpeedFallsWithMass(t *testing.T) {
 	light := Blueprint{Components: []Variant{Tracks, MediumArmor}}
