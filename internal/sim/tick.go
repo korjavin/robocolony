@@ -82,6 +82,11 @@ const (
 	// ActAttack fires at Action.Coord. Combat is never automatic (design §8):
 	// this happens only because a rule selected a target and issued an attack.
 	ActAttack
+	// actionKindCount closes the enum. New kinds are appended *above* it, never
+	// inserted: the numbers are wire values. It exists so a test can sweep every
+	// kind — that is how "recall is not expressible as a program rule"
+	// (design §4.2) stays true as kinds are added.
+	actionKindCount
 )
 
 // MemWrite is a zero-tick write to one coordinate register (design §7.4).
@@ -217,6 +222,38 @@ func (w *World) baseOf(colony ColonyID) *Base {
 	return nil
 }
 
+// AtOwnBase reports whether the robot is within reach of its own base. It is
+// the one definition: the at_own_base a program sees and the "only at its own
+// base" gate on reprogramming (design §4.2 step 3) can never disagree.
+func (w *World) AtOwnBase(r *Robot) bool {
+	b := w.baseOf(r.Colony)
+	return b != nil && r.Coord.Chebyshev(b.Coord) <= interactRange
+}
+
+// RobotByID returns the live robot with this id, or nil. Destroyed robots are
+// swept at the end of every tick, so between steps this only ever yields one
+// that is still in the fight.
+func (w *World) RobotByID(id int) *Robot {
+	for _, r := range w.Robots {
+		if r.ID == id {
+			return r
+		}
+	}
+	return nil
+}
+
+// recallAction is what a recalled robot does this tick: walk home over the
+// world's own BFS navigation, then hold position at base. It reuses ActMoveTo
+// rather than a second pathfinder, so recall obeys terrain, speed and
+// path_blocked exactly like any other movement.
+func (w *World) recallAction(r *Robot) Action {
+	b := w.baseOf(r.Colony)
+	if b == nil || w.AtOwnBase(r) {
+		return Action{Kind: ActStop}
+	}
+	return Action{Kind: ActMoveTo, Coord: b.Coord}
+}
+
 // Step advances the world by one tick: every robot that is not mid-action
 // decides and acts, wrecks are swept and salvaged, then every base advances
 // production. Order is fixed — robots in slice order, the sweep, then bases in
@@ -248,6 +285,15 @@ func (w *World) Step() {
 		}
 		if r.Cooldown > 0 {
 			r.Cooldown--
+			continue
+		}
+		// Recall is a system-level override (design §4.2 step 2): the installed
+		// program is suspended — not consulted at all — and the robot navigates
+		// home over ordinary movement, at ordinary speed. That is the point:
+		// reprogramming is delayed by travel, and a blocked or threatened robot
+		// may never arrive.
+		if r.Recalled {
+			w.apply(r, w.recallAction(r))
 			continue
 		}
 		if w.Control == nil {
@@ -303,7 +349,7 @@ func (w *World) View(r *Robot, inbox []Signal) RobotView {
 	v.Blueprint.Components = slices.Clone(r.Blueprint.Components)
 	if b := w.baseOf(r.Colony); b != nil {
 		v.Base, v.HasBase = b.Coord, true
-		v.AtBase = r.Coord.Chebyshev(b.Coord) <= interactRange
+		v.AtBase = w.AtOwnBase(r)
 	}
 
 	v.VisibleComponents, v.VisibleEnemies = w.look(r)

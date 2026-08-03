@@ -128,6 +128,7 @@ func TestStateHashCoversState(t *testing.T) {
 		{"robot target unreachable", func(w *World) {
 			w.Robots[0].TargetUnreachable = !w.Robots[0].TargetUnreachable
 		}},
+		{"robot recalled", func(w *World) { w.Robots[0].Recalled = !w.Robots[0].Recalled }},
 		{"match duration", func(w *World) { w.Duration = 500 }},
 		{"colony collected", func(w *World) { w.Bases[0].Stats.Collected++ }},
 		{"colony losses", func(w *World) { w.Bases[0].Stats.Losses++ }},

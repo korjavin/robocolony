@@ -76,7 +76,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(authHandler, lobbies),
+		Handler:           routes(authHandler, lobbies, database),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).
@@ -121,7 +121,7 @@ func run() error {
 	return nil
 }
 
-func routes(a *auth.Handler, lobbies *lobby.Service) http.Handler {
+func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	a.Routes(mux)
@@ -131,6 +131,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service) http.Handler {
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
 	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry())))
+	server.NewRobots(lobbies.Registry(), database).Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))
 	return mux
