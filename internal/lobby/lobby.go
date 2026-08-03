@@ -316,10 +316,6 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 	if err != nil {
 		return Info{}, notFound(err, "lobby")
 	}
-	set, err := decodeSettings(lobby.SettingsJSON)
-	if err != nil {
-		return Info{}, err
-	}
 	if err := s.db.StartLobby(ctx, id, userID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Info{}, err
@@ -330,11 +326,22 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 		return Info{}, errf(http.StatusConflict, "the match has already started")
 	}
 
-	// Membership is read *after* the flip on purpose: joining and leaving are
-	// both gated on state = 'open', so from here the seats cannot move, and
-	// the colonies in the match are exactly the rows in lobby_members. Reading
-	// first would let a join land in the gap and get a seat but no colony.
-	members, err := s.db.LobbyMembers(ctx, id)
+	// Everything the match is built from is read *after* the flip on purpose.
+	// Joining, leaving and SetAI are all gated on state = 'open', so from here
+	// neither the seats nor the AI list can move, and the colonies in the match
+	// are exactly the members plus exactly the profiles in the stored settings.
+	// Reading first would let a join land in the gap and get a seat but no
+	// colony — or, worse, let a SetAI land in it and leave a running world with
+	// one colony list and the row a restart replays from with another.
+	lobby, err = s.db.LobbyByID(ctx, id)
+	var set Settings
+	if err == nil {
+		set, err = decodeSettings(lobby.SettingsJSON)
+	}
+	var members []db.Member
+	if err == nil {
+		members, err = s.db.LobbyMembers(ctx, id)
+	}
 	if err == nil && len(members) == 0 {
 		err = errf(http.StatusConflict, "the lobby is empty")
 	}

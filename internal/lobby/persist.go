@@ -152,7 +152,11 @@ func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) 
 //
 //   - the state hash of a fixed mini-match, run for a fixed number of ticks.
 //     Generation, the tick loop, navigation, scavenging, base production, the
-//     starter kit and the program evaluator all feed it.
+//     starter kit and the program evaluator all feed it. Every AI profile is
+//     seated in it as well (design §12 P2): an AI colony records no commands,
+//     so its whole contribution to a replayed world is its kit and its
+//     programs, and a mini-match without one would let a retuned profile
+//     replay an old log into a world its players never saw.
 //   - the component catalogue, which is where the balance numbers live —
 //     including for the rows the mini-match never exercises, such as weapons.
 //
@@ -162,8 +166,10 @@ func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) 
 // ever conflict.
 var fingerprint = sync.OnceValue(func() string {
 	// Fixed, not DefaultSettings: retuning the lobby defaults must not
-	// invalidate every log in flight.
-	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 2, Seed: 0x5eed}
+	// invalidate every log in flight. Profiles() is not fixed in the same way —
+	// but adding or removing a profile *is* a change to what a stored AI match
+	// replays into, so it belongs in the fingerprint rather than outside it.
+	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 2, Seed: 0x5eed, AI: Profiles()}
 	members := []db.Member{{UserID: 1, DisplayName: "a"}, {UserID: 2, DisplayName: "b"}}
 
 	h := fnv.New64a()

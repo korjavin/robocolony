@@ -89,7 +89,12 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 	}
 
 	rt := prog.NewRuntime()
-	w.Control = rt.Control
+	// Forget is the pairing prog.Runtime documents: without it the runtime keeps
+	// an evaluator per robot ever built for the length of the match. Nothing in
+	// the runtime is simulation state, so this changes no world and no state
+	// hash — but the aggressive profile makes wrecks common for the first time,
+	// which makes the leak worth closing.
+	w.Control, w.OnDestroy = rt.Control, rt.Forget
 
 	m := &Match{
 		ID:       lobby.ID,

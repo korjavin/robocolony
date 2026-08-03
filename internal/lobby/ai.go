@@ -30,20 +30,41 @@ import (
 
 // Profile is an AI colony's canned strategy. The strings are stored in the
 // lobby settings JSON; never repurpose one.
+//
+// The four are a difficulty ladder, not a list, and the rungs are measured
+// rather than asserted: each line below is 16 seeds × 6000 ticks of the profile
+// against one colony running the default starter kit and the §10.7 program —
+// the loadout a player actually begins with. "Wiped" is the human colony at
+// zero live robots at any point; its base is indestructible either way (§5.3),
+// so a wipe is a setback, not an elimination.
+//
+//	tutorial     0/16 wiped, 0 human losses, human out-collects it 1376 to 471
+//	peaceful     0/16 wiped, 0 human losses, human out-collects it 1096 to 790
+//	defensive    5/16 wiped, never before tick 4629, human still ahead 1174 to 766
+//	aggressive  16/16 wiped, avg tick 1079, earliest 636, human behind 510 to 1111
+//
+// Retuning a profile means moving its rung, so re-measure when you do.
 type Profile string
 
 const (
-	// ProfileTutorial is the sparring partner: half a colony's robots, a
+	// ProfileTutorial is the sparring partner: two robots instead of three, a
 	// radar-less body and a program that only chases what it can see. It
-	// competes for parts without ever threatening anything.
+	// competes for parts without ever threatening anything — it carries no
+	// weapon in any blueprint, so it cannot take a robot off the board at all.
 	ProfileTutorial Profile = "tutorial"
 	// ProfilePeaceful is the economic rival: the reference §10.7 scavenger
-	// colony, unarmed, playing the same opening a human does.
+	// colony, unarmed, playing the same opening a human does. It is the first
+	// profile that actually competes, and still the second that cannot fight.
 	ProfilePeaceful Profile = "peaceful"
 	// ProfileDefensive scavenges and keeps armed responders (§10.9) that its
-	// scavengers can call in over the colony signal channel.
+	// scavengers can call in over the colony signal channel. It hurts a player
+	// who walks into it and does not go looking — the wipes it manages land in
+	// the last quarter of a match, not the first.
 	ProfileDefensive Profile = "defensive"
-	// ProfileAggressive scavenges to fund gunners that hunt on enemy radar.
+	// ProfileAggressive scavenges to fund gunners that hunt on enemy radar. It
+	// is brutal on purpose and it is the profile a player opts into: against
+	// the unarmed starter kit it clears the board inside the first fifth of a
+	// match, every seed. See the ladder above before softening anything here.
 	ProfileAggressive Profile = "aggressive"
 )
 

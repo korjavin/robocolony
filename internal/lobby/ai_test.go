@@ -64,6 +64,38 @@ func TestAIKitsAreValid(t *testing.T) {
 	}
 }
 
+// The profile names are a difficulty ladder (see the Profile doc comment), and
+// its bottom two rungs are load-bearing: a solo player's first match is against
+// one of them, and the default starter kit has no answer to an armed colony —
+// PR #30 measured it dying in 380-900 ticks of 6000 on 16 of 16 seeds. So
+// tutorial and peaceful must not be able to fight *at all*, which is a property
+// of their parts lists rather than of a run: no weapon anywhere in the kit.
+// The top two must be able to, or they are misnamed the other way.
+func TestProfileLadderIsArmedInOrder(t *testing.T) {
+	armed := func(profile Profile) bool {
+		k, ok := profile.kit()
+		if !ok {
+			t.Fatalf("no kit for %q", profile)
+		}
+		for _, bp := range k.blueprints {
+			if bp.Has(sim.KindWeapon) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, profile := range []Profile{ProfileTutorial, ProfilePeaceful} {
+		if armed(profile) {
+			t.Errorf("%s can build a weapon: it is the rung a new player meets first", profile)
+		}
+	}
+	for _, profile := range []Profile{ProfileDefensive, ProfileAggressive} {
+		if !armed(profile) {
+			t.Errorf("%s can build no weapon at all", profile)
+		}
+	}
+}
+
 // A profile that does nothing is this bead's failure mode, and nothing about it
 // shows up in a unit test of its rules: the robots simply never leave the base.
 // So run each profile against a human colony for a few thousand ticks and
