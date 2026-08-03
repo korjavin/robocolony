@@ -250,8 +250,15 @@ func LanguageDoc() Language {
 // ponytail: seeded on read for the same reason ListBlueprints seeds blueprints
 // — there is no first-login hook to hang it on — and idempotent for the same
 // reason: the (user_id, name) unique index turns a concurrent double-seed into
-// a duplicate name, which is skipped rather than doubled. A player who deletes
-// one of them keeps it deleted; only a wholly empty library re-seeds.
+// a duplicate name, which is skipped rather than doubled.
+//
+// "The first time" is therefore really "whenever it is empty": a player who
+// deletes one starter keeps it deleted, but one who deletes all of them gets
+// them back on the next read. That is deliberate — the worked programs are the
+// design's documentation, not the player's data, and it means nobody can strand
+// a robot at its base with nothing to install. Remembering that a library was
+// once seeded would take a migration and a flag to protect a state nobody
+// asked for. Add it if the starters ever become editable in place.
 //
 // These rows go in through db.CreateProgram rather than SaveProgram: they are
 // built from prog's own types in this binary, not untrusted input, and the

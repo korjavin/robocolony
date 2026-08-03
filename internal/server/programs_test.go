@@ -498,6 +498,24 @@ func TestProgramLibraryIsSeeded(t *testing.T) {
 	if len(third) != len(first)-1 {
 		t.Fatalf("after deleting one, the library has %d programs, want %d", len(third), len(first)-1)
 	}
+
+	// Deleting *all* of them does bring them back, and that is on purpose: the
+	// worked programs are the design's documentation, not the player's data, and
+	// a player must not be able to strand a recalled robot with nothing to
+	// install. See the note on ListPrograms.
+	for _, p := range third {
+		if err := lib.DeleteProgram(t.Context(), user.ID, p.ID); err != nil {
+			t.Fatalf("DeleteProgram() = %v", err)
+		}
+	}
+	again, err := lib.ListPrograms(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListPrograms() = %v", err)
+	}
+	if len(again) != len(starterPrograms()) {
+		t.Fatalf("an emptied library has %d programs, want the %d starters back",
+			len(again), len(starterPrograms()))
+	}
 }
 
 // TestSeededLibraryIsPerUser: seeded rows are owned like every other row, and

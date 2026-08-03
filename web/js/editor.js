@@ -432,13 +432,13 @@ function renderLibrary() {
   const host = $("library");
   host.replaceChildren();
   if (programs.length === 0) {
-    // A new library is seeded with the three worked programs, so this is the
-    // player who deleted every one of them — and the install picker in a match
-    // has nothing to offer until something here is saved.
+    // Reachable only if a read ever comes back empty: the library seeds the
+    // three worked programs whenever it has none, so a player cannot strand
+    // themselves by deleting everything. This says what to do about it anyway,
+    // because a robot at its base can only be given a program from here.
     host.append(el("li", {
       className: "meta",
-      textContent: "Empty — every program deleted. Start from a template, import a file, "
-        + "or add rules and Save. A robot at its base can only be given a program from this library.",
+      textContent: "Empty. Start from a template, import a file, or add rules and Save.",
     }));
   }
   for (const p of programs) {
