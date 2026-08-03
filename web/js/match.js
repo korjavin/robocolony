@@ -397,6 +397,136 @@ function renderRoster() {
   }
 }
 
+// ---------------------------------------------------------------- history
+//
+// Design §10.10's trace history: every rule that matched, which one took the
+// tick, the action and its target, memory changes and signals received — for
+// ticks that have already gone by.
+//
+// It is polled from its own endpoint rather than carried on the tick frame, and
+// asking for it is what makes the server record it. The frame stays the size it
+// was, and the ~160 robots nobody has selected are not recorded at all; see
+// internal/server/trace.go.
+//
+// The list is append-only and never rebuilt. New decisions prepend; a run of
+// identical consecutive decisions extends the top entry's tick range in place
+// instead of adding a row, which is what turns a 10Hz firehose into something
+// readable. Entries carrying a memory change or a signal never collapse — those
+// are the ones a player is looking for.
+
+const HISTORY_POLL_MS = 500;
+const HISTORY_ROWS = 60;
+
+let histRobot = undefined; // robot the list belongs to; undefined = never set
+let histSince = 0;         // newest tick already displayed
+let histRun = null;        // {key, row} of the top entry, for run collapsing
+let histRows = 0;
+let histBusy = false;      // one poll in flight; see pollHistory
+
+// histKey is what makes two consecutive decisions "the same". Null means the
+// event stands alone.
+function histKey(e) {
+  if ((e.memory && e.memory.length) || (e.signals && e.signals.length)) return null;
+  const at = e.target ? `${e.target.x},${e.target.y}` : "";
+  return [e.rule, e.action || "", e.reason || "", at, (e.matched || []).join(" ")].join("|");
+}
+
+function histEntry(e) {
+  const node = el("div", "hist" + (e.idle ? " idle" : " acted"));
+  const when = el("div", "when");
+  const head = el("div", "head");
+  head.append(el("span", "idx", e.rule < 0 ? "no rule matched" : `rule ${e.rule + 1}`),
+    el("span", "act", e.action || "idle"));
+  // The cell the action aimed at. It cannot be worked out from the arena later:
+  // the component or enemy it was aimed at has moved or is gone.
+  if (e.target) head.append(el("span", "at", `→ ${e.target.x}, ${e.target.y}`));
+  node.append(when, head);
+  if (e.reason) node.append(el("div", "why", e.reason));
+
+  // The rules that matched but did not take the tick. Without this the player
+  // sees the winner and never the field it beat — and a rule of nothing but
+  // memory writes runs every tick while looking completely dead.
+  const also = (e.matched || []).filter((i) => i !== e.rule);
+  if (also.length) {
+    const hidden = (e.matched_total || 0) - (e.matched || []).length;
+    node.append(el("div", "also", `also matched: ${also.map((i) => `rule ${i + 1}`).join(", ")}`
+      + (hidden > 0 ? ` and ${hidden} more` : "")));
+  }
+  for (const m of e.memory || []) {
+    node.append(el("div", "chip mem",
+      m.cleared ? `cleared point ${m.point}` : `point ${m.point} set to ${m.x}, ${m.y}`));
+  }
+  for (const s of e.signals || []) {
+    node.append(el("div", "chip sig", `heard “${s.kind}” from #${s.from} at ${s.x}, ${s.y}`));
+  }
+  const rest = (e.signals_total || 0) - (e.signals || []).length;
+  if (rest > 0) node.append(el("div", "chip sig", `and ${rest} more signal${rest > 1 ? "s" : ""}`));
+
+  // Text-only updates from here on: extending a run touches one text node.
+  let to = e.tick, n = 1;
+  const stamp = () => setText(when, n > 1 ? `ticks ${e.tick}–${to} · ${n} decisions` : `tick ${e.tick}`);
+  stamp();
+  return { node, extend: (next) => { to = next.tick; n++; stamp(); } };
+}
+
+function histAdd(events) {
+  const list = $("history-list");
+  // Prepending shifts everything down. Anyone who has scrolled away from the
+  // top is reading something; keep it under their eye.
+  const before = list.scrollHeight;
+  for (const e of events) {
+    const key = histKey(e);
+    if (key !== null && histRun && histRun.key === key) { histRun.row.extend(e); continue; }
+    const row = histEntry(e);
+    list.insertBefore(row.node, list.firstChild);
+    histRun = key === null ? null : { key, row };
+    histRows++;
+  }
+  while (histRows > HISTORY_ROWS && list.lastChild) { list.lastChild.remove(); histRows--; }
+  if (list.scrollTop > 0) list.scrollTop += list.scrollHeight - before;
+}
+
+function histReset() {
+  $("history-list").replaceChildren();
+  histSince = 0;
+  histRun = null;
+  histRows = 0;
+  setText($("history-note"), selected === null
+    ? "Select a robot to start recording why it acts."
+    : `Recording robot #${selected} from now on.`);
+}
+
+// Polls are strictly serialised. Three things call this — the interval, a new
+// selection, and the end frame — so two could otherwise be in flight with the
+// same since=, and the slower reply would append ticks already on screen and
+// wind histSince backwards.
+async function pollHistory() {
+  const robot = selected;
+  if (robot === null || !matchID || histBusy) return;
+  histBusy = true;
+  let data = null;
+  try {
+    data = await api("GET",
+      `/api/matches/${encodeURIComponent(matchID)}/robots/${robot}/trace?since=${histSince}`);
+  } catch { /* robot destroyed, match gone: keep what is on screen */ }
+  finally { histBusy = false; }
+
+  // A selection changed mid-flight would append another robot's decisions to
+  // this one's list.
+  if (!data || robot !== selected) return;
+  const fresh = data.events.filter((e) => e.tick > histSince);
+  if (fresh.length) {
+    histSince = fresh[fresh.length - 1].tick;
+    histAdd(fresh);
+  }
+  const secs = Math.round(data.window / (init?.tick_rate || 10));
+  setText($("history-note"), histRows === 0
+    ? `Recording robot #${robot} from now on — history is only kept while a robot is selected.`
+    : `Last ${secs}s of decisions, newest first. Only the selected robot is recorded.`);
+}
+
+setInterval(() => { if (!over) pollHistory(); }, HISTORY_POLL_MS);
+
 // ---------------------------------------------------------------- commands
 //
 // Design §4.2: recall a robot, wait for it to walk home, install a program
@@ -615,6 +745,13 @@ function renderClock() {
 }
 
 function render() {
+  // A new selection starts a new history, and polls at once so the server
+  // begins recording from this tick rather than from the next poll.
+  if (selected !== histRobot) {
+    histRobot = selected;
+    histReset();
+    pollHistory();
+  }
   draw();
   renderClock();
   renderInspector();
@@ -664,6 +801,7 @@ function connect() {
     const e = JSON.parse(ev.data);
     source.close();
     source = null;
+    pollHistory(); // the final ticks, before the poll loop stops for good
     // The last board and the standing stay on screen: freezing without saying
     // so is indistinguishable from a stalled simulation.
     render();

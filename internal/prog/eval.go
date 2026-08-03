@@ -21,6 +21,11 @@ type Evaluator struct {
 	programID string
 	revision  int
 	trace     Trace
+
+	// hist is the retained trace ring for a robot someone is watching, and nil
+	// — the normal case — for every other robot. See history.go: recording is
+	// opt-in precisely so that a fleet nobody has selected costs nothing.
+	hist *history
 }
 
 // Trace is which rule controlled the tick and why. Deliberately fixed-size:
@@ -129,6 +134,7 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 	}
 
 	e.trace = tr
+	e.record(tr, v, act)
 	return act
 }
 

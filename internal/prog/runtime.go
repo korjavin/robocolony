@@ -12,6 +12,11 @@ import "github.com/korjavin/robocolony/internal/sim"
 type Runtime struct {
 	programs map[string]installed
 	robots   map[int]*Evaluator
+
+	// watched is the trace history of the robots an observer has selected, and
+	// only those (design §10.10, history.go). Empty in a match nobody is
+	// inspecting, which is the normal case.
+	watched map[int]*history
 }
 
 // installed is a program plus the revision it was installed at. A player who
@@ -24,7 +29,11 @@ type installed struct {
 
 // NewRuntime returns an empty runtime.
 func NewRuntime() *Runtime {
-	return &Runtime{programs: map[string]installed{}, robots: map[int]*Evaluator{}}
+	return &Runtime{
+		programs: map[string]installed{},
+		robots:   map[int]*Evaluator{},
+		watched:  map[int]*history{},
+	}
 }
 
 // Install registers a program under the id blueprints and robots refer to.
@@ -44,15 +53,20 @@ func (rt *Runtime) Control(r *sim.Robot) sim.Controller {
 		delete(rt.robots, r.ID)
 		return nil
 	}
+	// A watch outlives the evaluator: a reprogrammed robot builds a new one
+	// below, and the observer watching it must not silently stop recording. nil
+	// for every unwatched robot, which is the whole fleet in most matches.
+	h := rt.watched[r.ID]
 	old, seen := rt.robots[r.ID]
 	if seen && old.programID == r.ProgramID && old.revision == cur.revision {
+		old.hist = h
 		return old
 	}
 	if seen {
 		ClearMemory(r)
 	}
 	e := New(cur.program)
-	e.programID, e.revision = r.ProgramID, cur.revision
+	e.programID, e.revision, e.hist = r.ProgramID, cur.revision, h
 	rt.robots[r.ID] = e
 	return e
 }
@@ -72,4 +86,11 @@ func (rt *Runtime) Trace(robotID int) (Trace, bool) {
 // removal:
 //
 //	w.Control, w.OnDestroy = rt.Control, rt.Forget
-func (rt *Runtime) Forget(robotID int) { delete(rt.robots, robotID) }
+//
+// It also releases any retained trace history: a destroyed robot cannot be
+// inspected further, and the ring is the one part of this runtime that is not
+// a handful of bytes.
+func (rt *Runtime) Forget(robotID int) {
+	delete(rt.robots, robotID)
+	delete(rt.watched, robotID)
+}
