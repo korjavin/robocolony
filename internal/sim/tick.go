@@ -218,10 +218,17 @@ func (w *World) baseOf(colony ColonyID) *Base {
 }
 
 // Step advances the world by one tick: every robot that is not mid-action
-// decides and acts, then every base advances production. Order is fixed —
-// robots in slice order, then bases in slice order — so two worlds with equal
-// state take equal steps. Nothing here iterates a map.
+// decides and acts, wrecks are swept and salvaged, then every base advances
+// production. Order is fixed — robots in slice order, the sweep, then bases in
+// slice order — so two worlds with equal state take equal steps. Nothing here
+// iterates a map.
+//
+// A finished match (design §9) does not step at all: the world freezes exactly
+// as it was and stays readable.
 func (w *World) Step() {
+	if w.Ended() {
+		return
+	}
 	inbox := w.signals
 	var next []Signal
 
@@ -248,8 +255,17 @@ func (w *World) Step() {
 		next = append(next, w.apply(r, a)...)
 	}
 
-	// Bases last, so a robot produced this tick first acts on the next one.
+	// Combat only ever clamps health at zero; removal happens here, once, after
+	// the loop above has finished walking the robot slice.
+	w.sweepDestroyed()
+
+	// Bases last, so a robot produced this tick first acts on the next one —
+	// and so a colony wiped out this tick can already start rebuilding from
+	// inventory (design §5.3).
 	for _, b := range w.Bases {
+		if w.hasRobots(b.Colony) {
+			b.Stats.TicksActive++
+		}
 		w.produce(b)
 	}
 
@@ -445,10 +461,14 @@ func readyWeapon(r *Robot, dist int) (slot int, spec WeaponSpec, ok bool) {
 // stack of them resolves the same way every run. Friendly robots are invisible
 // to this: design §12 P1 leaves friendly fire open and the POC answer is no
 // friendly fire. Bases are indestructible (design §5.3) and are not targets.
+//
+// A robot already at zero health is not a target either. It is still in the
+// slice until the end-of-tick sweep, and without this a second shooter later in
+// the same tick would shoot the wreck and be credited a second kill for it.
 func (w *World) enemyAt(colony ColonyID, at Coord) *Robot {
 	var best *Robot
 	for _, o := range w.Robots {
-		if o.Colony == colony || o.Coord != at {
+		if o.Colony == colony || o.Coord != at || isDestroyed(o) {
 			continue
 		}
 		if best == nil || o.ID < best.ID {
@@ -463,8 +483,8 @@ func (w *World) enemyAt(colony ColonyID, at Coord) *Robot {
 // wasted tick — never an error, never a panic, and never an rng draw, so an
 // idle attack cannot shift the random stream.
 //
-// Health may reach zero here. Destruction and salvage are E5.2's; nothing in
-// this package removes a robot yet.
+// Health may reach zero here; the robot itself is removed by the end-of-tick
+// sweep, never mid-loop.
 func (w *World) attack(r *Robot, at Coord) int {
 	target := w.enemyAt(r.Colony, at)
 	if target == nil {
@@ -479,6 +499,13 @@ func (w *World) attack(r *Robot, at Coord) int {
 	// whole package to break determinism.
 	if w.rng.Intn(100) < spec.Accuracy {
 		target.Health = max(target.Health-spec.Damage, 0)
+		// Credited on the killing blow only: enemyAt refuses a target that is
+		// already at zero, so no second shooter can claim the same wreck.
+		if isDestroyed(target) {
+			if s := w.statsOf(r.Colony); s != nil {
+				s.Kills++
+			}
+		}
 	}
 	return attackTicks
 }
@@ -528,6 +555,7 @@ func (w *World) deposit(r *Robot) {
 		b.Inventory = map[Variant]int{}
 	}
 	b.Inventory[r.Cargo]++
+	b.Stats.Collected++
 	r.Cargo = VariantNone
 }
 
@@ -537,7 +565,7 @@ func (w *World) drop(r *Robot) {
 	if r.Cargo == VariantNone {
 		return
 	}
-	w.Loose = append(w.Loose, &LooseComponent{ID: w.NextID(), Coord: r.Coord, Variant: r.Cargo})
+	w.dropAt(r.Coord, r.Cargo)
 	r.Cargo = VariantNone
 }
 

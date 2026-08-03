@@ -2,6 +2,8 @@ package sim
 
 import (
 	"math/rand"
+	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -810,5 +812,305 @@ func TestPathIsAShortestRoute(t *testing.T) {
 	}
 	if p := w.path(Coord{1, 1}, Coord{20, 20}, Tracks); p != nil {
 		t.Fatalf("path off the map = %v, want nil", p)
+	}
+}
+
+// --- destruction, salvage, match end and scoring, design §8.2 / §9 ---------
+
+// wreck kills one scavenger with an autogun and returns the world, the victim
+// (already removed from w.Robots), the cell it died on and the ids OnDestroy
+// reported. The victim is dropped to 1 health so the first hit finishes it.
+func wreck(t *testing.T, seed int64) (w *World, victim *Robot, at Coord, forgotten []int) {
+	t.Helper()
+	w = arena(12)
+	w.rng = rand.New(rand.NewSource(seed))
+	w.addBase(0, Coord{0, 11})
+	w.addBase(1, Coord{11, 0})
+	w.OnDestroy = func(id int) { forgotten = append(forgotten, id) }
+
+	at = Coord{5, 5}
+	victim = w.addRobot(0, at, North, scavengerBlueprint())
+	victim.Cargo = Laser
+	victim.Health = 1
+	// Behind the victim, which faces north, so the victim never sees it and the
+	// fight stays one-sided and stationary.
+	w.addRobot(1, Coord{5, 7}, North, gunnerBlueprint())
+	w.driveAll(duellist)
+
+	for i := 0; i < 200 && len(w.Robots) > 1; i++ {
+		w.Step()
+	}
+	if len(w.Robots) != 1 {
+		t.Fatalf("victim survived 200 ticks at 1 health (seed %d)", seed)
+	}
+	return w, victim, at, forgotten
+}
+
+// TestDropsOnDeath: the wreck leaves between one component and everything it
+// was built from plus what it carried, all on the cell where it died, and the
+// robot itself is gone.
+func TestDropsOnDeath(t *testing.T) {
+	for seed := int64(1); seed <= 25; seed++ {
+		w, victim, at, forgotten := wreck(t, seed)
+
+		if slices.Contains(w.Robots, victim) {
+			t.Fatalf("seed %d: destroyed robot is still in the world", seed)
+		}
+		if len(forgotten) != 1 || forgotten[0] != victim.ID {
+			t.Fatalf("seed %d: OnDestroy reported %v, want [%d]", seed, forgotten, victim.ID)
+		}
+
+		// A component leaves the robot exactly once: never more of any variant
+		// than the wreck was built from plus the one it was hauling.
+		budget := map[Variant]int{Laser: 1} // the cargo
+		for _, v := range victim.Blueprint.Components {
+			budget[v]++
+		}
+		got := map[Variant]int{}
+		for _, l := range w.Loose {
+			if l.Coord != at {
+				t.Fatalf("seed %d: salvage landed at %v, not on the wreck at %v", seed, l.Coord, at)
+			}
+			got[l.Variant]++
+		}
+		for v, n := range got {
+			if n > budget[v] {
+				t.Fatalf("seed %d: %d x %v dropped, wreck only held %d", seed, n, v, budget[v])
+			}
+		}
+		if total := len(w.Loose); total < 1 || total > len(victim.Blueprint.Components)+1 {
+			t.Fatalf("seed %d: %d components dropped, want 1..%d",
+				seed, total, len(victim.Blueprint.Components)+1)
+		}
+		// Cargo is not an installed component and is not rolled for: the robot
+		// was hauling it, so it always falls.
+		if got[Laser] != 1 {
+			t.Fatalf("seed %d: carried laser dropped %d times, want 1", seed, got[Laser])
+		}
+		if victim.Cargo != VariantNone {
+			t.Fatalf("seed %d: wreck still holds its cargo", seed)
+		}
+
+		if k := w.Bases[1].Stats.Kills; k != 1 {
+			t.Fatalf("seed %d: killer credited %d kills, want 1", seed, k)
+		}
+		if l := w.Bases[0].Stats.Losses; l != 1 {
+			t.Fatalf("seed %d: victim colony recorded %d losses, want 1", seed, l)
+		}
+	}
+}
+
+// The salvage subset must be rolled from the world's rng and consume it: the
+// same seed wrecks the same way, a different seed eventually does not. This is
+// the check that fails when the roll is swapped to math/rand — the seed stops
+// deciding what drops.
+func TestSalvageRollsComeFromTheWorldRand(t *testing.T) {
+	drops := func(seed int64) []Variant {
+		w, _, _, _ := wreck(t, seed)
+		var out []Variant
+		for _, l := range w.Loose {
+			out = append(out, l.Variant)
+		}
+		slices.Sort(out)
+		return out
+	}
+	first := drops(1)
+	if again := drops(1); !slices.Equal(again, first) {
+		t.Fatalf("the same seed dropped %v then %v", first, again)
+	}
+	differs := false
+	for seed := int64(2); seed < 40 && !differs; seed++ {
+		differs = !slices.Equal(drops(seed), first)
+	}
+	if !differs {
+		t.Fatalf("every seed dropped exactly %v: the salvage subset is not rolled", first)
+	}
+}
+
+// TestSalvageRoundTrip: salvage is an ordinary loose component, so a colony
+// that had nothing to do with the kill can find it, collect it and bank it in
+// its own base (design §8.2).
+func TestSalvageRoundTrip(t *testing.T) {
+	w, victim, _, _ := wreck(t, 7)
+	loot := w.Loose[0].Variant
+
+	scavBase := w.addBase(2, Coord{6, 2})
+	w.addRobot(2, Coord{6, 3}, North, scavengerBlueprint())
+	// The surviving gunner has no manipulator and no target left, so from here
+	// the only robot doing anything is the third colony's scavenger.
+	w.driveAll(scavenger)
+
+	for i := 0; i < 400 && scavBase.Stats.Collected == 0; i++ {
+		w.Step()
+	}
+	if scavBase.Stats.Collected != 1 {
+		t.Fatalf("third colony banked %d components in 400 ticks", scavBase.Stats.Collected)
+	}
+	if scavBase.Inventory[loot] != 1 {
+		t.Fatalf("base inventory = %v, want one %v", scavBase.Inventory, loot)
+	}
+	if scavBase.Colony == victim.Colony {
+		t.Fatal("the test collected its own salvage")
+	}
+}
+
+// skirmish is a whole fixed-length match: two producing bases, and two wounded
+// gunners shooting each other to pieces in the middle.
+func skirmish(seed int64) *World {
+	w := arena(16)
+	w.rng = rand.New(rand.NewSource(seed))
+	w.Duration = 300
+	for i, at := range []Coord{{1, 1}, {14, 14}} {
+		b := w.addBase(ColonyID(i), at)
+		b.Blueprints = []Blueprint{gunnerBlueprint()}
+		for _, v := range gunnerBlueprint().Components {
+			b.Inventory[v] += 3
+		}
+	}
+	for i, at := range []Coord{{7, 8}, {9, 8}} {
+		r := w.addRobot(ColonyID(i), at, [2]Heading{East, West}[i], gunnerBlueprint())
+		r.Health = 30 // so the fight actually resolves inside the clock
+	}
+	w.driveAll(duellist)
+	for !w.Ended() {
+		w.Step()
+	}
+	return w
+}
+
+// TestScoreDeterministic: one seed, two runs, identical final score. Robots die
+// in this match, so the salvage roll is on the path — a roll taken from the
+// global math/rand diverges here immediately.
+func TestScoreDeterministic(t *testing.T) {
+	a, b := skirmish(11), skirmish(11)
+
+	if a.StateHash() != b.StateHash() {
+		t.Fatalf("two identical matches diverged: %d != %d", a.StateHash(), b.StateHash())
+	}
+	if !reflect.DeepEqual(a.Leaderboard(), b.Leaderboard()) {
+		t.Fatalf("leaderboards differ:\n%+v\n%+v", a.Leaderboard(), b.Leaderboard())
+	}
+	for i := 0; i < 16; i++ {
+		if x, y := a.Rand().Int63(), b.Rand().Int63(); x != y {
+			t.Fatalf("rng streams diverged at draw %d: %d != %d", i, x, y)
+		}
+	}
+
+	// The match must have contained a destruction, or this proves nothing about
+	// salvage determinism.
+	losses := 0
+	for _, res := range a.Leaderboard() {
+		losses += res.Losses
+	}
+	if losses == 0 {
+		t.Fatal("nobody died: the salvage roll was never exercised")
+	}
+	if len(a.Loose) == 0 {
+		t.Fatal("no salvage on the battlefield after a lethal match")
+	}
+}
+
+// Design §9, by hand: colony_score is the summed value of the installed
+// components of every surviving robot, and nothing else.
+func TestScoreIsFleetValue(t *testing.T) {
+	w := skirmish(11)
+	lb := w.Leaderboard()
+	for _, res := range lb {
+		want, count := 0, 0
+		for _, r := range w.Robots {
+			if r.Colony == res.Colony {
+				want += r.Blueprint.Value()
+				count++
+			}
+		}
+		if res.Score != want || res.Robots != count {
+			t.Fatalf("colony %d scored %d over %d robots, want %d over %d",
+				res.Colony, res.Score, res.Robots, want, count)
+		}
+	}
+	// Best first, then colony id: the ordering must be as reproducible as the
+	// simulation that produced it.
+	for i := 1; i < len(lb); i++ {
+		if lb[i-1].Score < lb[i].Score || (lb[i-1].Score == lb[i].Score && lb[i-1].Colony > lb[i].Colony) {
+			t.Fatalf("leaderboard is not sorted: %+v", lb)
+		}
+	}
+}
+
+// TestMatchEnds: the match stops at its duration and the finished world stays
+// readable and frozen — the observer still has to render the final board.
+func TestMatchEnds(t *testing.T) {
+	w := skirmish(11)
+	if !w.Ended() || w.Tick != w.Duration {
+		t.Fatalf("tick %d of %d, ended = %v", w.Tick, w.Duration, w.Ended())
+	}
+
+	frozen := w.StateHash()
+	for i := 0; i < 25; i++ {
+		w.Step()
+	}
+	if w.Tick != w.Duration || w.StateHash() != frozen {
+		t.Fatalf("a finished match kept simulating: tick %d, hash %d != %d", w.Tick, w.StateHash(), frozen)
+	}
+
+	// Still readable: board, telemetry and leaderboard all survive the end.
+	if len(w.Cells) != w.Width*w.Height || len(w.Bases) != 2 {
+		t.Fatal("the world was torn down at match end")
+	}
+	lb := w.Leaderboard()
+	if len(lb) != 2 {
+		t.Fatalf("leaderboard has %d colonies, want 2", len(lb))
+	}
+	for _, res := range lb {
+		if res.TicksActive == 0 || res.TicksActive > w.Duration {
+			t.Fatalf("colony %d active for %d of %d ticks", res.Colony, res.TicksActive, w.Duration)
+		}
+		want := 0
+		for _, e := range w.baseOf(res.Colony).SortedInventory() {
+			c, _ := Lookup(e.Variant)
+			want += c.Value * e.Count
+		}
+		if res.InventoryValue != want {
+			t.Fatalf("colony %d inventory value %d, want %d", res.Colony, res.InventoryValue, want)
+		}
+	}
+
+	// A zero-duration world is the open-ended sandbox and never ends.
+	if sandbox := arena(4); sandbox.Ended() {
+		t.Fatal("a match with no duration reported itself finished")
+	}
+}
+
+// Design §5.3: losing every robot is not elimination. The base is
+// indestructible and rebuilds from inventory, so a wiped-out colony comes back.
+func TestWipedColonyRebuilds(t *testing.T) {
+	w := arena(10)
+	w.rng = rand.New(rand.NewSource(2))
+	bp := gunnerBlueprint()
+	b := w.addBase(0, Coord{4, 4})
+	b.Blueprints = []Blueprint{bp}
+	for _, v := range bp.Components {
+		b.Inventory[v]++
+	}
+	doomed := w.addRobot(0, Coord{6, 6}, North, bp)
+	doomed.Health = 0
+	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActStop} }))
+
+	w.Step()
+	if len(w.Robots) != 0 {
+		t.Fatal("the wreck was not swept")
+	}
+	for i := 0; i < buildTicks(bp)+2 && len(w.Robots) == 0; i++ {
+		w.Step()
+	}
+	if len(w.Robots) != 1 || w.Robots[0].Colony != 0 {
+		t.Fatalf("a colony with no robots but a stocked base did not rebuild: %d robots", len(w.Robots))
+	}
+	if b.Stats.Losses != 1 {
+		t.Fatalf("losses = %d, want 1", b.Stats.Losses)
+	}
+	// It had no unit for a while, and the time-active counter says so.
+	if b.Stats.TicksActive >= w.Tick {
+		t.Fatalf("time active %d covers all %d ticks despite the gap", b.Stats.TicksActive, w.Tick)
 	}
 }

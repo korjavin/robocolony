@@ -178,13 +178,29 @@ type InvEntry struct {
 	Count   int
 }
 
-// Base is a colony's single indestructible base (design §5).
+// Stats is one colony's running telemetry. Design §9's score is provisional and
+// E7.8 revisits it; these are the inputs the candidate formulas listed there
+// need (collected resources, destroyed enemy value, survival, time active), so
+// they are recorded during the match rather than reconstructed from it later.
+//
+// Mutable state: every field here is in StateHash.
+type Stats struct {
+	Collected   int    // components deposited into this colony's base
+	Losses      int    // own robots destroyed
+	Kills       int    // enemy robots this colony destroyed
+	TicksActive uint64 // ticks this colony ended with at least one live robot
+}
+
+// Base is a colony's single indestructible base (design §5). It is also where
+// per-colony bookkeeping lives, because it is the colony's only singleton — a
+// colony with zero robots still has one (design §5.3).
 type Base struct {
 	Colony     ColonyID
 	Coord      Coord
 	Inventory  map[Variant]int
 	Blueprints []Blueprint // approved for automatic production
 	Build      BuildOrder  // current assembly job; zero when idle
+	Stats      Stats
 }
 
 // SortedInventory returns the inventory in variant order. Anything that feeds
@@ -219,11 +235,23 @@ type World struct {
 	Tick          uint64
 	Seed          int64
 
+	// Duration is the match length in ticks (design §9: a match ends after a
+	// fixed simulation duration). Zero is an open-ended sandbox that never
+	// ends. Set it before the first Step; it is hashed, so two worlds with
+	// different clocks are different worlds.
+	Duration uint64
+
 	// Control resolves a robot's controller each tick. It is an *input*, not
 	// state: StateHash ignores it, and two worlds driven by equivalent
 	// controllers must still hash equal. A nil Control, or a nil result, idles
 	// the robot. E3 plugs the program runtime in here.
 	Control func(*Robot) Controller
+
+	// OnDestroy is called with the id of every robot removed from the world,
+	// once, just before it goes. Like Control it is an input, not state: it
+	// exists so a controller layer can drop per-robot bookkeeping (internal/prog
+	// wires Runtime.Forget here) without sim importing that package.
+	OnDestroy func(robotID int)
 
 	// signals are the broadcasts heard this tick — sent during the previous
 	// one. State, and hashed.
@@ -305,6 +333,7 @@ func (w *World) StateHash() uint64 {
 	}
 
 	putU(w.Tick)
+	putU(w.Duration)
 	putI(w.Width)
 	putI(w.Height)
 	putU(uint64(w.Seed))
@@ -336,6 +365,10 @@ func (w *World) StateHash() uint64 {
 		}
 		putI(b.Build.Ticks)
 		putBP(b.Build.Blueprint)
+		putI(b.Stats.Collected)
+		putI(b.Stats.Losses)
+		putI(b.Stats.Kills)
+		putU(b.Stats.TicksActive)
 	}
 
 	robots := slices.Clone(w.Robots)
