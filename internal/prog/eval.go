@@ -19,6 +19,7 @@ import "github.com/korjavin/robocolony/internal/sim"
 type Evaluator struct {
 	program   Program
 	programID string
+	revision  int
 	trace     Trace
 }
 

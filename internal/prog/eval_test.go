@@ -394,6 +394,16 @@ func TestReprogramClearsMemory(t *testing.T) {
 	if r.Memory[0].Set {
 		t.Fatalf("Point 1 survived a reprogram: %+v", r.Memory[0])
 	}
+
+	// Editing a program keeps its id (design §4.2), so reinstalling under the
+	// same id must reach a robot already running it — and counts as a reprogram.
+	rt.Install("prog-b", Program{Rules: []Rule{
+		{When: Pred(CarryingNothing), Then: []Action{DoArg(SaveCurrentPosition, 2), Do(Stop)}},
+	}})
+	w.Step()
+	if !r.Memory[1].Set {
+		t.Fatal("reinstalling a program under the same id did not reach the running robot")
+	}
 }
 
 // TestDecideNeverPanics feeds the evaluator programs no editor would produce.
