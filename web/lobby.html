@@ -74,6 +74,19 @@ async function api(method, path, body) {
 
 let me = null;
 let matchID = null;
+// The caller's own library, fetched once: the menu the loadout picker offers.
+// Reading /api/blueprints also seeds the starter designs for a new player, so
+// the picker is never empty for somebody who has not opened the editor yet.
+let library = { blueprints: [], programs: [] };
+
+// A library that will not load costs the player the picker, not the page: they
+// can still join and start a match on the built-in kit.
+async function loadLibrary() {
+  try {
+    const [b, p] = await Promise.all([api("GET", "/api/blueprints"), api("GET", "/api/programs")]);
+    library = { blueprints: (b && b.blueprints) || [], programs: (p && p.programs) || [] };
+  } catch (e) { err(e.message); }
+}
 
 async function refresh() {
   const data = await api("GET", "/api/lobbies");
@@ -99,9 +112,10 @@ async function refresh() {
       + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`;
     li.append(head, meta);
 
-    const joined = me && l.members.some((m) => m.user_id === me.id);
-    if (!joined) li.append(button("Join", () => act(`/api/lobbies/${l.id}/join`)));
+    const seat = me && l.members.find((m) => m.user_id === me.id);
+    if (!seat) li.append(button("Join", () => act(`/api/lobbies/${l.id}/join`)));
     else if (l.owner_id !== me.id) li.append(button("Leave", () => act(`/api/lobbies/${l.id}/leave`)));
+    if (seat) li.append(loadoutPicker(l, seat));
     if (me && l.owner_id === me.id) {
       // A colony you can play against without finding another human. The server
       // gates this on ownership and an open lobby; this control only avoids
@@ -113,22 +127,90 @@ async function refresh() {
   }
 }
 
+// loadoutPicker is design §2.1 step 3: which of *your own* blueprints your
+// colony approves for production, and which program each one runs. It is your
+// seat's choice, not the lobby's, so every member gets their own — and the
+// server refuses an id that is not yours and a lobby that has already started.
+//
+// Approving nothing is a real answer: the colony starts from the built-in kit,
+// which is what every colony did before there was anything to choose.
+function loadoutPicker(l, seat) {
+  const wrap = document.createElement("div");
+  const entries = (seat.loadout && seat.loadout.entries) || [];
+
+  const line = document.createElement("div");
+  line.className = "meta";
+  line.textContent = entries.length
+    ? "Your colony builds: " + entries.map((e) => `${e.blueprint_name} running ${e.program_name}`).join(", ")
+    : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.";
+  wrap.append(line);
+
+  if (!library.blueprints.length || !library.programs.length) {
+    const hint = document.createElement("div");
+    hint.className = "meta";
+    hint.append("Design a robot and write a program in the ", link("/editor", "editor"), " to choose your own.");
+    wrap.append(hint);
+    return wrap;
+  }
+
+  // Only legal parts lists: the server refuses the rest anyway, and an entry
+  // the picker offers but the server rejects reads as a bug.
+  const bp = picker("Blueprint to approve", library.blueprints.filter((b) => b.ok),
+    (b) => [b.id, `${b.name} (value ${b.value})`]);
+  const pr = picker("Program it runs", library.programs, (p) => [p.id, p.name]);
+
+  const put = async (list) => {
+    err("");
+    try { await api("PUT", `/api/lobbies/${l.id}/loadout`, { entries: list }); await refresh(); }
+    catch (e) { err(e.message); }
+  };
+  const kept = entries.map((e) => ({ blueprint_id: e.blueprint_id, program_id: e.program_id }));
+  wrap.append(bp, pr, button("Approve", () =>
+    put(kept.concat({ blueprint_id: Number(bp.value), program_id: Number(pr.value) }))));
+  if (entries.length) wrap.append(button("Use the starter kit", () => put([])));
+
+  const note = document.createElement("div");
+  note.className = "meta";
+  // The equal-budget half of §2.1 step 4. Say it here rather than let a player
+  // wonder why approving a gunner opened with two robots instead of three.
+  note.textContent = "The colony starts with the first approved design, as many"
+    + " as the starting budget buys — every colony gets the same budget, so an"
+    + " armed body means fewer robots. The rest are for the base to build.";
+  wrap.append(note);
+  return wrap;
+}
+
+// picker is a labelled <select> over a list, with [value, text] pulled out of
+// each item.
+function picker(label, items, of) {
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", label);
+  for (const item of items) {
+    const [value, text] = of(item);
+    const o = document.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    sel.append(o);
+  }
+  return sel;
+}
+
+function link(href, text) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.textContent = text;
+  return a;
+}
+
 // aiPicker seats one more AI colony of the chosen profile. Profiles come from
 // the server's ai_profiles menu, so the ladder cannot drift from the code.
 function aiPicker(l, profiles) {
   const wrap = document.createElement("span");
   wrap.className = "ai-picker";
-  const sel = document.createElement("select");
-  sel.setAttribute("aria-label", "AI opponent profile");
   // ai_profiles is a plain array of profile names; the ladder runs
   // tutorial -> peaceful -> defensive -> aggressive, so server order is the
   // order to show. Only aggressive reliably wipes a default starter kit.
-  for (const p of profiles) {
-    const o = document.createElement("option");
-    o.value = p;
-    o.textContent = p;
-    sel.append(o);
-  }
+  const sel = picker("AI opponent profile", profiles, (p) => [p, p]);
   wrap.append(sel, button("Add AI opponent", async () => {
     const next = (l.settings.ai || []).concat(sel.value);
     err("");
@@ -226,6 +308,7 @@ $("create").addEventListener("submit", async (ev) => {
 });
 
 me = await api("GET", "/api/me");
+await loadLibrary();
 await refresh();
 </script>
 </body>

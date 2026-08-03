@@ -67,11 +67,15 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 		return nil, errors.New("lobby: cannot start a match with no members")
 	}
 	// Colony kits are resolved before anything is generated: an unknown profile
-	// in a stored settings row must fail the start, not leave a base standing
-	// with nothing approved.
+	// in a stored settings row, or a loadout this build cannot rebuild, must
+	// fail the start rather than leave a base standing with nothing approved.
 	kits := make([]kit, 0, s.Colonies(len(members)))
-	for range members {
-		kits = append(kits, humanKit())
+	for _, m := range members {
+		k, err := memberKit(m)
+		if err != nil {
+			return nil, err
+		}
+		kits = append(kits, k)
 	}
 	for _, p := range s.AI {
 		k, ok := p.kit()
