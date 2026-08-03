@@ -71,7 +71,7 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 	// fail the start rather than leave a base standing with nothing approved.
 	kits := make([]kit, 0, s.Colonies(len(members)))
 	for _, m := range members {
-		k, err := memberKit(m)
+		k, err := memberKit(m, s.budget())
 		if err != nil {
 			return nil, err
 		}

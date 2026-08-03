@@ -23,6 +23,13 @@ type Settings struct {
 	MaxPlayers  int     `json:"max_players"`
 	Seed        int64   `json:"seed"`
 
+	// StartingBudget is design §2.1 step 4's "same known starting budget" in
+	// component value: what every colony, human or AI, is worth on tick one.
+	// Zero means "unset" and budget() supplies the default — settings rows
+	// written before this field existed decode that way and still have to
+	// replay (persist.go).
+	StartingBudget int `json:"starting_budget,omitempty"`
+
 	// AI is the computer colonies seated alongside the players (design §12 P2),
 	// one entry per colony, in the order they take their bases after the human
 	// seats. It lives in the settings rather than in lobby_members because a
@@ -44,6 +51,13 @@ const (
 	maxSpawnPerMin                 = 120
 	minPlayers, maxPlayers         = 1, 8
 
+	// The floor is the price of one built-in scavenger, so the default kit
+	// always fields at least one robot and no host can create a lobby that
+	// cannot be started (see startingRoster). The ceiling is ten times the
+	// default: enough for a rich skirmish, and it bounds the leftover
+	// conversion at a few hundred components per base (see spendRemainder).
+	minStartingBudget, maxStartingBudget = 115, 3450
+
 	// The arena is fixed for the POC: design §2.3 has no size setting, and
 	// generation needs room for maxPlayers bases (Generate caps colonies at
 	// width*height/16).
@@ -58,7 +72,19 @@ func DefaultSettings() Settings {
 		Richness:    0.02,
 		SpawnPerMin: 6,
 		MaxPlayers:  4,
+
+		StartingBudget: defaultStartingBudget(),
 	}
+}
+
+// budget is the starting budget this match equips its colonies from. Zero is
+// the default rather than an error so that a settings row from before the
+// setting existed, and the fixed fingerprint settings, keep the old opening.
+func (s Settings) budget() int {
+	if s.StartingBudget <= 0 {
+		return defaultStartingBudget()
+	}
+	return s.StartingBudget
 }
 
 // Validate reports the first out-of-range setting. Zero is not treated as
@@ -71,6 +97,10 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("richness must be %g..%g, got %g", minRichness, maxRichness, s.Richness)
 	case !(s.SpawnPerMin >= 0) || s.SpawnPerMin > maxSpawnPerMin:
 		return fmt.Errorf("spawn_per_min must be 0..%d, got %g", maxSpawnPerMin, s.SpawnPerMin)
+	case s.StartingBudget != 0 && (s.StartingBudget < minStartingBudget || s.StartingBudget > maxStartingBudget):
+		// Zero alone is exempt: it means "unset", and budget() reads it as the
+		// default. Anything else the client sends is held to the range.
+		return fmt.Errorf("starting_budget must be %d..%d, got %d", minStartingBudget, maxStartingBudget, s.StartingBudget)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:
