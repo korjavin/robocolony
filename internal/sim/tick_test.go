@@ -46,7 +46,7 @@ func (w *World) addRobot(colony ColonyID, at Coord, h Heading, bp Blueprint) *Ro
 		Colony:    colony,
 		Coord:     at,
 		Heading:   h,
-		Health:    startingHealth(bp),
+		Health:    StartingHealth(bp),
 		Blueprint: bp,
 		ProgramID: bp.ProgramID,
 	}
@@ -293,8 +293,8 @@ func TestAutoBuild(t *testing.T) {
 	if r.ProgramID != bp.ProgramID {
 		t.Fatalf("robot program = %q, want the blueprint default %q", r.ProgramID, bp.ProgramID)
 	}
-	if r.Health != startingHealth(bp) {
-		t.Fatalf("robot health = %d, want %d", r.Health, startingHealth(bp))
+	if r.Health != StartingHealth(bp) {
+		t.Fatalf("robot health = %d, want %d", r.Health, StartingHealth(bp))
 	}
 
 	// Nothing is buildable now, so the base must simply wait (design §5.2.3).

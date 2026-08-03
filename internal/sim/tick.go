@@ -75,6 +75,10 @@ const (
 	ActPickUp
 	ActDeposit
 	ActDrop
+	// ActTurnRandom is design §10.4's turn_random. It lives here rather than in
+	// the controller because randomness must come from the world's seeded rng —
+	// a controller that rolled its own would break the determinism guard.
+	ActTurnRandom
 )
 
 // MemWrite is a zero-tick write to one coordinate register (design §7.4).
@@ -178,8 +182,10 @@ func moveTicks(bp Blueprint) int {
 	return max(1, (speedScale+s-1)/s)
 }
 
-// startingHealth derives durability from the armoured body (design §6.1).
-func startingHealth(bp Blueprint) int {
+// StartingHealth derives durability from the armoured body (design §6.1). It is
+// exported because it is also the denominator of the health_below/health_above
+// predicates (design §10.3), which are evaluated outside this package.
+func StartingHealth(bp Blueprint) int {
 	armour := 0
 	for _, v := range bp.Components {
 		if c, ok := Lookup(v); ok && c.Kind == KindArmor {
@@ -303,6 +309,10 @@ func (w *World) primary(r *Robot, a Action) int {
 
 	case ActTurnRight:
 		r.Heading = r.Heading.Turn(1)
+		return turnTicks
+
+	case ActTurnRandom:
+		r.Heading = Heading(w.rng.Intn(int(headingCount)))
 		return turnTicks
 
 	case ActMoveTo:
@@ -498,7 +508,7 @@ func (w *World) spawn(b *Base, bp Blueprint) {
 		Colony:    b.Colony,
 		Coord:     b.Coord,
 		Heading:   Heading(w.rng.Intn(int(headingCount))),
-		Health:    startingHealth(bp),
+		Health:    StartingHealth(bp),
 		Blueprint: bp,
 		ProgramID: bp.ProgramID,
 	})
