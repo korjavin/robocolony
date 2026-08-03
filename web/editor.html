@@ -67,9 +67,9 @@
   navigating, picking up, attacking — is the robot's move for that tick and
   <strong>ends the tick</strong>: no further rule is checked. The seven
   <strong>side effects</strong> (five memory writes and two broadcasts) cost no
-  time: they run and checking <strong>continues</strong> down the list, which is
-  how a rule can remember something and let a later rule act on it in the same
-  tick.</p>
+  time: they run and checking <strong>continues</strong> down the list, so a rule
+  can remember something and a lower rule still gets to act on the same tick.
+  What was remembered can be read from the next tick onwards.</p>
 
   <p class="err" id="err"></p>
 
