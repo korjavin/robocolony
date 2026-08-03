@@ -103,6 +103,23 @@
   dd { margin: 0; }
   code { font-family: ui-monospace, monospace; font-size: .9em; }
   ul.tight { list-style: none; padding: 0; margin: .2rem 0; font-size: .92rem; }
+
+  /* Recall and reprogramming (design §4.2). Same controls as the lobby page:
+     one visual language, not two. */
+  button, select { font: inherit; padding: .3rem .8rem; border-radius: .4rem;
+                   cursor: pointer; }
+  button[disabled], select[disabled] { cursor: not-allowed; opacity: .5; }
+  .cmd { display: grid; gap: .4rem; }
+  .cmd .row { display: flex; gap: .4rem; }
+  .cmd .row select { flex: 1 1 auto; min-width: 0; }
+  .cmd .state { font-size: .92rem; }
+  .cmd .state.back { color: #c98a00; font-weight: 600; }
+  .cmd .state.home { color: #2f8f4e; font-weight: 600; }
+  .cmd .note { margin: 0; font-size: .9rem; min-height: 1.2em; }
+  .cmd .note.ok  { color: #2f8f4e; font-weight: 600; }
+  .cmd .note.bad { color: #c0392b; font-weight: 600; }
+  /* Design §13, criterion 6 is verified by eye right here. */
+  ul.tight.cleared { border-left: .2rem solid #2f8f4e; padding-left: .5rem; }
 </style>
 </head>
 <body>
