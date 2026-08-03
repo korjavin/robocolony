@@ -254,6 +254,31 @@ func TestDecodeAcceptsOmittedVersion(t *testing.T) {
 	}
 }
 
+func TestDecodeTooWideCondition(t *testing.T) {
+	// Deep nesting is not the only way to be huge: one flat group can be wide.
+	of := make([]Condition, MaxCondNodes+1)
+	for i := range of {
+		of[i] = Pred(AtOwnBase)
+	}
+	p := Program{V: SchemaVersion, Rules: []Rule{{And(of...), []Action{Do(Stop)}}}}
+	data, err := p.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(data); err == nil {
+		t.Error("over-wide condition decoded, want error")
+	}
+	// One node under the cap (the AND itself counts) still decodes.
+	ok := Program{V: SchemaVersion, Rules: []Rule{{And(of[:MaxCondNodes-1]...), []Action{Do(Stop)}}}}
+	data, err = ok.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(data); err != nil {
+		t.Errorf("condition at the limit rejected: %v", err)
+	}
+}
+
 func TestDecodeTooManyRules(t *testing.T) {
 	r := Rule{Pred(AtOwnBase), []Action{Do(Stop)}}
 	p := Program{V: SchemaVersion, Rules: make([]Rule, MaxRules+1)}

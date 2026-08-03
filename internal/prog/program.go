@@ -26,6 +26,7 @@ const (
 	MaxRules          = 256
 	MaxActionsPerRule = 8
 	MaxCondDepth      = 16
+	MaxCondNodes      = 256 // per rule, counting groups and predicates alike
 )
 
 // PredicateID and ActionID are catalogue identifiers (design §10.3, §10.4).
@@ -58,9 +59,15 @@ type Action struct {
 	Arg int      `json:"arg,omitempty"`
 }
 
-// Rule is WHEN condition THEN actions. Per the locked rule action model
-// (AGENTS.md) a rule holds at most one primary action; any number of side
-// effects (memory writes, broadcasts) may precede it.
+// Rule is WHEN condition THEN actions.
+//
+// Per the locked rule action model (AGENTS.md) a rule holds at most one
+// primary action; any number of side effects (memory writes, broadcasts) may
+// accompany it. Execution order is settled here so that E3.2 has nothing to
+// decide: when a rule matches, every action in Then runs in slice order, and
+// the primary one — wherever it sits in the slice — ends the tick, so rule
+// evaluation stops at this rule. A rule with no primary action runs its side
+// effects and evaluation continues down the list.
 type Rule struct {
 	When Condition `json:"when"`
 	Then []Action  `json:"then"`
@@ -144,7 +151,8 @@ func structure(p Program) []Issue {
 		return out
 	}
 	for i, r := range p.Rules {
-		checkCond(&out, i, r.When, 0)
+		budget := MaxCondNodes
+		checkCond(&out, i, r.When, 0, &budget)
 		switch {
 		case len(r.Then) == 0:
 			add(i, "no_action", "rule %s has no action", ordinal(i))
@@ -165,12 +173,23 @@ func structure(p Program) []Issue {
 	return out
 }
 
-// checkCond walks a condition tree, bailing out at MaxCondDepth so that a
-// hostile deeply-nested program cannot blow the stack here.
-func checkCond(out *[]Issue, rule int, c Condition, depth int) {
+// checkCond walks a condition tree. Depth is capped at MaxCondDepth so a
+// hostile deeply-nested program cannot blow the stack here, and the shared
+// budget caps total nodes so it cannot go wide instead. budget goes negative
+// once the overflow has been reported, so siblings stay quiet.
+func checkCond(out *[]Issue, rule int, c Condition, depth int, budget *int) {
 	add := func(code, format string, a ...any) {
 		*out = append(*out, Issue{SevError, code, rule, fmt.Sprintf(format, a...)})
 	}
+	if *budget < 0 {
+		return
+	}
+	if *budget == 0 {
+		*budget = -1
+		add("too_large", "rule %s: condition has more than %d nodes", ordinal(rule), MaxCondNodes)
+		return
+	}
+	*budget--
 	if depth >= MaxCondDepth {
 		add("too_deep", "rule %s: condition nested deeper than %d levels", ordinal(rule), MaxCondDepth)
 		return
@@ -191,7 +210,7 @@ func checkCond(out *[]Issue, rule int, c Condition, depth int) {
 			return
 		}
 		for _, k := range c.Of {
-			checkCond(out, rule, k, depth+1)
+			checkCond(out, rule, k, depth+1, budget)
 		}
 	default:
 		add("unknown_op", "rule %s: unknown condition operator %q", ordinal(rule), c.Op)
