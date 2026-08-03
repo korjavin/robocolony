@@ -225,10 +225,15 @@ function defs(pairs) {
 function renderInspector() {
   const box = $("inspector");
   box.replaceChildren();
-  if (selected === null) { box.append(el("p", "meta", "No robot selected.")); return; }
+  if (selected === null) {
+    box.append(el("p", "meta", "No robot selected."));
+    renderCommand(null);
+    return;
+  }
   const r = snap?.robots.find((x) => x.id === selected);
   if (!r) {
     box.append(el("p", "meta", `Robot #${selected} is gone — destroyed, or salvaged.`));
+    renderCommand(null);
     return;
   }
 
@@ -270,17 +275,30 @@ function renderInspector() {
   });
   box.append(mem);
 
-  if (r.colony === myColony()) {
-    box.append(el("h3", null, "Command"));
-    if (cmdFor !== r.id) { // rebuilt only on a new selection, see commandBox
-      note = null;
-      cmd = commandBox(r);
-      cmdFor = r.id;
-      loadPrograms();
-    }
-    cmd.update(r);
-    box.append(cmd.node);
+  renderCommand(r);
+}
+
+// renderCommand keeps the command controls in their own panel, never inside
+// #inspector. renderInspector clears that panel with replaceChildren() on every
+// tick, which detaches whatever is in it — and a detached <select> loses an open
+// dropdown, so the program picker closed itself ~100ms after the player opened
+// it. Building the controls once was not enough; the node has to stay attached.
+function renderCommand(r) {
+  const host = $("command");
+  if (!r || r.colony !== myColony()) {
+    host.hidden = true;
+    if (cmdFor !== null) { host.replaceChildren(); cmd = null; cmdFor = null; }
+    return;
   }
+  if (cmdFor !== r.id) { // a different robot: new controls, nothing to preserve
+    note = null;
+    cmd = commandBox(r);
+    cmdFor = r.id;
+    host.replaceChildren(el("h3", null, "Command"), cmd.node);
+    loadPrograms();
+  }
+  host.hidden = false;
+  cmd.update(r); // in place: never detaches cmd.node
 }
 
 function ruleBox(r) {
