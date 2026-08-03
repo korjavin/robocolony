@@ -20,6 +20,10 @@ const (
 	turnTicks     = 1
 	interactTicks = 2
 	idleTicks     = 1
+	// Firing occupies the robot for one tick; the reload is per weapon module
+	// and lives in the weapon table (component.go), which is why a two-weapon
+	// robot can fire on consecutive ticks and a one-weapon robot cannot.
+	attackTicks = 1
 
 	// Forward vision, design §7.1.
 	visionRange = 6
@@ -37,10 +41,6 @@ const (
 	// Base production, design §5.2.
 	buildTicksBase         = 20
 	buildTicksPerComponent = 5
-
-	// Starting durability. E2 owns combat; this only sets the initial value.
-	healthBase         = 20
-	healthPerArmorMass = 2
 )
 
 // SignalKind is one of the two shared-channel signals (design §7.5).
@@ -79,6 +79,9 @@ const (
 	// the controller because randomness must come from the world's seeded rng —
 	// a controller that rolled its own would break the determinism guard.
 	ActTurnRandom
+	// ActAttack fires at Action.Coord. Combat is never automatic (design §8):
+	// this happens only because a rule selected a target and issued an attack.
+	ActAttack
 )
 
 // MemWrite is a zero-tick write to one coordinate register (design §7.4).
@@ -134,6 +137,13 @@ type RobotView struct {
 	RadarTargets      []Sighting // radar only, omnidirectional, nearest first
 	Signals           []Signal   // heard this tick, own colony, never own
 
+	// WeaponReady is true when at least one installed weapon is off cooldown.
+	// WeaponRange is the longest range installed — a capability, not a
+	// readiness test, so a rule can ask "is it in range" and "can I shoot yet"
+	// separately.
+	WeaponReady bool
+	WeaponRange int
+
 	ObstacleAhead     bool // the cell straight ahead is impassable
 	ComponentInReach  bool // a loose component is co-located or adjacent
 	AtBase            bool // within reach of own base
@@ -182,17 +192,19 @@ func moveTicks(bp Blueprint) int {
 	return max(1, (speedScale+s-1)/s)
 }
 
-// StartingHealth derives durability from the armoured body (design §6.1). It is
-// exported because it is also the denominator of the health_below/health_above
-// predicates (design §10.3), which are evaluated outside this package.
+// StartingHealth derives durability from the armoured body (design §6.1),
+// reading the armor tier table rather than a formula so E7.3 can make heavy
+// armor tough without also making it heavy. It is exported because it is also
+// the denominator of the health_below/health_above predicates (design §10.3),
+// which are evaluated outside this package.
 func StartingHealth(bp Blueprint) int {
-	armour := 0
+	health := healthBase
 	for _, v := range bp.Components {
-		if c, ok := Lookup(v); ok && c.Kind == KindArmor {
-			armour += c.Mass
+		if k, ok := v.Kind(); ok && k == KindArmor {
+			health += armorHealth(v)
 		}
 	}
-	return healthBase + armour*healthPerArmorMass
+	return health
 }
 
 // baseOf returns the colony's base.
@@ -214,6 +226,13 @@ func (w *World) Step() {
 	var next []Signal
 
 	for _, r := range w.Robots {
+		// Weapons reload while the robot is busy with something else, so this
+		// runs before the action cooldown check, not after it.
+		for i := range r.WeaponCooldown {
+			if r.WeaponCooldown[i] > 0 {
+				r.WeaponCooldown[i]--
+			}
+		}
 		if r.Cooldown > 0 {
 			r.Cooldown--
 			continue
@@ -265,6 +284,7 @@ func (w *World) View(r *Robot, inbox []Signal) RobotView {
 
 	v.VisibleComponents, v.VisibleEnemies = w.look(r)
 	v.RadarTargets = w.radar(r)
+	v.WeaponReady, v.WeaponRange = weaponry(r)
 	v.ObstacleAhead = !w.Passable(add(r.Coord, r.Heading.Delta()), locomotionOf(r.Blueprint))
 	v.ComponentInReach = w.componentInReach(r) != nil
 
@@ -317,6 +337,9 @@ func (w *World) primary(r *Robot, a Action) int {
 
 	case ActMoveTo:
 		return w.moveTo(r, a.Coord)
+
+	case ActAttack:
+		return w.attack(r, a.Coord)
 
 	case ActPickUp:
 		w.pickUp(r)
@@ -373,6 +396,87 @@ func (w *World) moveTo(r *Robot, dest Coord) int {
 	cost := w.step(r, path[0])
 	r.TargetReached = r.Coord == dest
 	return cost
+}
+
+// weaponry reports whether any installed weapon is off cooldown, and the
+// longest range installed. Slots past MaxWeapons are ignored: Validate rejects
+// them, and a hand-built blueprint must not index past the cooldown array.
+func weaponry(r *Robot) (ready bool, reach int) {
+	for i, v := range r.Blueprint.Weapons() {
+		if i >= MaxWeapons {
+			break
+		}
+		spec, ok := WeaponStats(v)
+		if !ok {
+			continue
+		}
+		reach = max(reach, spec.Range)
+		ready = ready || r.WeaponCooldown[i] == 0
+	}
+	return ready, reach
+}
+
+// readyWeapon picks the weapon that fires at a target dist cells away: the
+// first one in slot order that is both reloaded and long enough to reach.
+//
+// ponytail: slot order, not "best weapon for the shot". Design §12 P1 leaves
+// selection open and E7.9 owns it; the smallest deterministic rule is first
+// ready in slot order, and a player who wants the cannon to fire first installs
+// it first.
+func readyWeapon(r *Robot, dist int) (slot int, spec WeaponSpec, ok bool) {
+	for i, v := range r.Blueprint.Weapons() {
+		if i >= MaxWeapons {
+			break
+		}
+		s, known := WeaponStats(v)
+		if !known || r.WeaponCooldown[i] > 0 || dist > s.Range {
+			continue
+		}
+		return i, s, true
+	}
+	return 0, WeaponSpec{}, false
+}
+
+// enemyAt returns the hostile robot standing on a cell, lowest id first so a
+// stack of them resolves the same way every run. Friendly robots are invisible
+// to this: design §12 P1 leaves friendly fire open and the POC answer is no
+// friendly fire. Bases are indestructible (design §5.3) and are not targets.
+func (w *World) enemyAt(colony ColonyID, at Coord) *Robot {
+	var best *Robot
+	for _, o := range w.Robots {
+		if o.Colony == colony || o.Coord != at {
+			continue
+		}
+		if best == nil || o.ID < best.ID {
+			best = o
+		}
+	}
+	return best
+}
+
+// attack resolves one shot at a cell (design §8). A missing target, no weapon,
+// a reloading weapon or a target out of every weapon's range all come out as a
+// wasted tick — never an error, never a panic, and never an rng draw, so an
+// idle attack cannot shift the random stream.
+//
+// Health may reach zero here. Destruction and salvage are E5.2's; nothing in
+// this package removes a robot yet.
+func (w *World) attack(r *Robot, at Coord) int {
+	target := w.enemyAt(r.Colony, at)
+	if target == nil {
+		return idleTicks
+	}
+	slot, spec, ok := readyWeapon(r, r.Coord.Chebyshev(at))
+	if !ok {
+		return idleTicks
+	}
+	r.WeaponCooldown[slot] = spec.Cooldown
+	// The world's rng, never math/rand: this roll is the easiest place in the
+	// whole package to break determinism.
+	if w.rng.Intn(100) < spec.Accuracy {
+		target.Health = max(target.Health-spec.Damage, 0)
+	}
+	return attackTicks
 }
 
 // componentInReach returns the nearest loose component the robot could pick up,
