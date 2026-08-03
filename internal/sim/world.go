@@ -161,6 +161,11 @@ type Robot struct {
 	// turns into time.
 	Cooldown int
 
+	// WeaponCooldown is the reload left on each weapon module, by slot order
+	// in Blueprint.Weapons(). Independent of Cooldown: weapons reload while
+	// the robot is doing something else.
+	WeaponCooldown [MaxWeapons]int
+
 	// Perception flags for the next evaluation cycle (design §10.3).
 	PathBlocked       bool
 	TargetReached     bool
@@ -346,6 +351,9 @@ func (w *World) StateHash() uint64 {
 		putBP(r.Blueprint)
 		putS(r.ProgramID)
 		putI(r.Cooldown)
+		for _, cd := range r.WeaponCooldown {
+			putI(cd)
+		}
 		putB(r.PathBlocked)
 		putB(r.TargetReached)
 		putB(r.TargetUnreachable)

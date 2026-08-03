@@ -200,15 +200,36 @@ func (m *matcher) pred(id PredicateID, arg int) bool {
 	case HasWeapon:
 		return v.Blueprint.Has(sim.KindWeapon)
 	case WeaponReady:
-		// No reload model yet, so an installed weapon is always ready. E5.1
-		// replaces this with the cooldown test.
-		return v.Blueprint.Has(sim.KindWeapon)
-	case VisibleTargetInWpnRange, DetectedTargetInWpnRange:
-		// Weapon ranges arrive with E5.1. Until then these are honestly false
-		// rather than guessed at.
-		return false
+		return v.WeaponReady
+	case VisibleTargetInWpnRange:
+		return inWeaponRange(v, v.VisibleEnemies)
+	case DetectedTargetInWpnRange:
+		s, ok := radarEnemy(*v)
+		return ok && s.Distance <= v.WeaponRange
 	}
 	return false // unknown predicate: never true, never a panic
+}
+
+// inWeaponRange reports whether the nearest of a sighting list is reachable by
+// a weapon that is loaded right now. The lists arrive nearest-first, and an
+// unarmed or fully reloading blueprint has range 0 while every sighting is at
+// least one cell away, so this is false without a special case.
+func inWeaponRange(v *sim.RobotView, s []sim.Sighting) bool {
+	return len(s) > 0 && s[0].Distance <= v.WeaponRange
+}
+
+// radarEnemy is the nearest radar contact that is a robot rather than a loose
+// component (sim.Sighting carries VariantNone for a robot). The POC's only
+// radar is the parts radar, so this is empty in practice — which is the point:
+// an attack must not aim at loot and waste the tick. E7.2's enemy-robot radar
+// starts filling it with no change here.
+func radarEnemy(v sim.RobotView) (sim.Sighting, bool) {
+	for _, s := range v.RadarTargets {
+		if s.Variant == sim.VariantNone {
+			return s, true
+		}
+	}
+	return sim.Sighting{}, false
 }
 
 // hear reports whether a signal of this kind arrived, latching the first one so
@@ -394,8 +415,21 @@ func resolvePrimary(a Action, v sim.RobotView) (sim.ActionKind, sim.Coord, strin
 	case DropComponent:
 		return sim.ActDrop, sim.Coord{}, ""
 
-	case AttackVisibleTarget, AttackRadarTarget:
-		return idle("combat is not implemented yet")
+	// Attacks aim at a cell, and only ever at an enemy the robot perceived this
+	// tick: sim shoots at whatever hostile stands there, or wastes the tick.
+	// Note attack_visible_target reads VisibleEnemies, not nearestVisible — a
+	// loose component is not a target.
+	case AttackVisibleTarget:
+		if len(v.VisibleEnemies) == 0 {
+			return idle("no enemy is visible to attack")
+		}
+		return sim.ActAttack, v.VisibleEnemies[0].Coord, ""
+	case AttackRadarTarget:
+		s, ok := radarEnemy(v)
+		if !ok {
+			return idle("radar reports no enemy to attack")
+		}
+		return sim.ActAttack, s.Coord, ""
 	}
 	return idle("unknown action")
 }

@@ -514,6 +514,213 @@ func TestDropAndPickUpAgain(t *testing.T) {
 	}
 }
 
+// --- combat, design §8 -----------------------------------------------------
+
+func gunnerBlueprint() Blueprint {
+	return Blueprint{ID: "bp-gunner", Name: "gunner", Components: []Variant{Tracks, MediumArmor, AutoGun}}
+}
+
+// duellist attacks the nearest enemy it can see, every tick it is asked. Combat
+// is never automatic (design §8) — this controller is the "rule selected a
+// target and issued an attack" half of it.
+var duellist = funcController(func(v RobotView) Action {
+	if len(v.VisibleEnemies) == 0 {
+		return Action{Kind: ActStop}
+	}
+	return Action{Kind: ActAttack, Coord: v.VisibleEnemies[0].Coord}
+})
+
+// duel is two autogun robots three cells apart, facing each other, shooting for
+// ticks ticks. It returns the world and the two robots.
+func duel(seed int64, ticks int) (*World, *Robot, *Robot) {
+	w := arena(12)
+	w.rng = rand.New(rand.NewSource(seed))
+	a := w.addRobot(0, Coord{3, 5}, East, gunnerBlueprint())
+	b := w.addRobot(1, Coord{6, 5}, West, gunnerBlueprint())
+	w.driveAll(duellist)
+	for i := 0; i < ticks; i++ {
+		w.Step()
+	}
+	return w, a, b
+}
+
+// TestCombatDeterministic: the same seed fights the same fight, twice, down to
+// the state hash and the rng stream. Accuracy is 45%, so every shot's outcome
+// depends on a draw — an accuracy roll taken from the global math/rand instead
+// of w.rng diverges here immediately, because the two worlds interleave their
+// draws on a shared stream.
+func TestCombatDeterministic(t *testing.T) {
+	const ticks = 60
+	wa, a1, b1 := duel(4, ticks)
+	wb, a2, b2 := duel(4, ticks)
+
+	if wa.StateHash() != wb.StateHash() {
+		t.Fatalf("two identical duels diverged: %d != %d", wa.StateHash(), wb.StateHash())
+	}
+	if a1.Health != a2.Health || b1.Health != b2.Health {
+		t.Fatalf("health differs between runs: %d/%d vs %d/%d", a1.Health, b1.Health, a2.Health, b2.Health)
+	}
+	for i := 0; i < 16; i++ {
+		if x, y := wa.Rand().Int63(), wb.Rand().Int63(); x != y {
+			t.Fatalf("rng streams diverged at draw %d: %d != %d", i, x, y)
+		}
+	}
+
+	// The fight has to have been a fight, with both hits and misses in it —
+	// otherwise the accuracy roll is not being exercised and the check above
+	// proves nothing.
+	spec, _ := WeaponStats(AutoGun)
+	shots := ticks / spec.Cooldown
+	full := StartingHealth(gunnerBlueprint())
+	for _, r := range []*Robot{a1, b1} {
+		switch {
+		case r.Health == full:
+			t.Fatalf("robot %d took no damage in %d ticks: nothing was resolved", r.ID, ticks)
+		case r.Health <= full-shots*spec.Damage:
+			t.Fatalf("robot %d was hit by every shot: the accuracy roll is doing nothing", r.ID)
+		}
+	}
+}
+
+// The accuracy roll must come from the world's rng and consume it: same seed,
+// same wounds; a different seed eventually differs. This is the check that
+// fails when a roll is swapped to math/rand — the seed stops mattering.
+func TestCombatRollsComeFromTheWorldRand(t *testing.T) {
+	damage := func(seed int64) int {
+		_, _, b := duel(seed, 40)
+		return StartingHealth(gunnerBlueprint()) - b.Health
+	}
+	first := damage(1)
+	if again := damage(1); again != first {
+		t.Fatalf("the same seed dealt %d then %d damage", first, again)
+	}
+	differs := false
+	for seed := int64(2); seed < 40 && !differs; seed++ {
+		differs = damage(seed) != first
+	}
+	if !differs {
+		t.Fatal("every seed dealt the same damage: accuracy is not rolled")
+	}
+}
+
+// A target beyond every installed weapon's range is a wasted tick: no damage,
+// no reload started, no panic.
+func TestOutOfRange(t *testing.T) {
+	spec, _ := WeaponStats(AutoGun)
+	w := arena(16)
+	shooter := w.addRobot(0, Coord{2, 2}, East, gunnerBlueprint())
+	far := Coord{X: 2 + spec.Range + 1, Y: 2}
+	target := w.addRobot(1, far, West, gunnerBlueprint())
+	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActAttack, Coord: far} }))
+
+	full := target.Health
+	for i := 0; i < 10; i++ {
+		w.Step()
+	}
+	if target.Health != full {
+		t.Fatalf("target at range %d lost %d health to a range-%d weapon",
+			shooter.Coord.Chebyshev(far), full-target.Health, spec.Range)
+	}
+	if shooter.WeaponCooldown[0] != 0 {
+		t.Fatalf("an out-of-range shot started a reload: cooldown %d", shooter.WeaponCooldown[0])
+	}
+}
+
+// A weaponless robot with an attack rule idles instead of doing anything.
+func TestNoWeapon(t *testing.T) {
+	w := arena(8)
+	unarmed := w.addRobot(0, Coord{3, 3}, East, scavengerBlueprint())
+	target := w.addRobot(1, Coord{4, 3}, West, gunnerBlueprint())
+	w.Control = func(r *Robot) Controller {
+		return funcController(func(v RobotView) Action {
+			if v.ID != unarmed.ID {
+				return Action{Kind: ActStop}
+			}
+			return Action{Kind: ActAttack, Coord: target.Coord}
+		})
+	}
+	full := target.Health
+	for i := 0; i < 10; i++ {
+		w.Step()
+	}
+	if w.Tick != 10 {
+		t.Fatalf("tick loop stalled at %d", w.Tick)
+	}
+	if target.Health != full {
+		t.Fatalf("an unarmed robot dealt %d damage", full-target.Health)
+	}
+}
+
+// Design §12 P1 leaves friendly fire open; the POC answer is that there is
+// none, and a robot ordered to shoot its own colony simply wastes the tick.
+func TestNoFriendlyFire(t *testing.T) {
+	w := arena(8)
+	shooter := w.addRobot(0, Coord{3, 3}, East, gunnerBlueprint())
+	friend := w.addRobot(0, Coord{4, 3}, West, gunnerBlueprint())
+	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActAttack, Coord: friend.Coord} }))
+
+	full := friend.Health
+	for i := 0; i < 10; i++ {
+		w.Step()
+	}
+	if friend.Health != full {
+		t.Fatalf("friendly fire dealt %d damage", full-friend.Health)
+	}
+	if shooter.WeaponCooldown[0] != 0 {
+		t.Fatal("shooting at a friendly started a reload")
+	}
+}
+
+// Two weapon modules fire independently: the first ready one in slot order
+// takes the shot, so a reloading module hands the next tick to its neighbour.
+func TestTwoWeaponsFireInSlotOrder(t *testing.T) {
+	cannon, _ := WeaponStats(Cannon)
+	gun, _ := WeaponStats(AutoGun)
+	bp := Blueprint{ID: "bp-twin", Components: []Variant{Tracks, MediumArmor, Cannon, AutoGun}}
+	if err := bp.Validate(); err != nil {
+		t.Fatalf("twin-weapon blueprint invalid: %v", err)
+	}
+
+	w := arena(12)
+	shooter := w.addRobot(0, Coord{3, 5}, East, bp)
+	target := w.addRobot(1, Coord{6, 5}, West, gunnerBlueprint())
+	target.Health = 10_000 // this test is about slot order, not about dying
+	w.Control = func(r *Robot) Controller {
+		return funcController(func(v RobotView) Action {
+			if v.ID != shooter.ID {
+				return Action{Kind: ActStop}
+			}
+			return Action{Kind: ActAttack, Coord: target.Coord}
+		})
+	}
+
+	w.Step()
+	if shooter.WeaponCooldown != [MaxWeapons]int{cannon.Cooldown, 0} {
+		t.Fatalf("after one shot cooldowns are %v, want the slot-0 cannon reloading", shooter.WeaponCooldown)
+	}
+	w.Step()
+	if got := shooter.WeaponCooldown[1]; got != gun.Cooldown {
+		t.Fatalf("slot-1 gun cooldown = %d, want %d: the reloading cannon did not hand over", got, gun.Cooldown)
+	}
+	if got, want := shooter.WeaponCooldown[0], cannon.Cooldown-1; got != want {
+		t.Fatalf("slot-0 cooldown = %d, want %d: weapons must reload every tick", got, want)
+	}
+
+	// With both modules reloading the robot reports no reach at all: what a
+	// program is told about weapon range must be what attack can actually do,
+	// or a rule picks a shot the tick then wastes.
+	v := w.View(shooter, nil)
+	if v.WeaponReady || v.WeaponRange != 0 {
+		t.Fatalf("view says ready=%v range=%d while both weapons reload", v.WeaponReady, v.WeaponRange)
+	}
+	// The short weapon back first: reported reach is the gun's, not the
+	// still-reloading cannon's.
+	shooter.WeaponCooldown = [MaxWeapons]int{cannon.Cooldown, 0}
+	if v := w.View(shooter, nil); !v.WeaponReady || v.WeaponRange != gun.Range {
+		t.Fatalf("view says ready=%v range=%d, want the reloaded gun's %d", v.WeaponReady, v.WeaponRange, gun.Range)
+	}
+}
+
 // The tick loop must not smuggle in nondeterminism: two worlds with the same
 // seed, driven by the same controller, stay bit-identical for a long run that
 // exercises movement, vision, scavenging, deposits and production.

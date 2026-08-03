@@ -121,6 +121,8 @@ func TestStateHashCoversState(t *testing.T) {
 		{"robot memory coord", func(w *World) { w.Robots[0].Memory[0].Coord.X++ }},
 		{"robot program", func(w *World) { w.Robots[0].ProgramID += "!" }},
 		{"robot cooldown", func(w *World) { w.Robots[0].Cooldown++ }},
+		{"robot weapon cooldown", func(w *World) { w.Robots[0].WeaponCooldown[0]++ }},
+		{"robot second weapon cooldown", func(w *World) { w.Robots[0].WeaponCooldown[MaxWeapons-1]++ }},
 		{"robot path blocked", func(w *World) { w.Robots[0].PathBlocked = !w.Robots[0].PathBlocked }},
 		{"robot target reached", func(w *World) { w.Robots[0].TargetReached = !w.Robots[0].TargetReached }},
 		{"robot target unreachable", func(w *World) {

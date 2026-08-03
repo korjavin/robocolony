@@ -372,6 +372,143 @@ func TestNearestVisibleBreaksTiesOnID(t *testing.T) {
 	}
 }
 
+// The combat predicates E3.2 left returning false now answer from the view.
+func TestCombatPredicates(t *testing.T) {
+	armed := sim.RobotView{
+		Blueprint:      defenderBlueprint(),
+		WeaponReady:    true,
+		WeaponRange:    8,
+		VisibleEnemies: []sim.Sighting{{ID: 2, Coord: sim.Coord{X: 5, Y: 2}, Distance: 3}},
+		// Variant zero is sim's "this sighting is a robot"; a parts radar
+		// reports components instead, and those are not targets.
+		RadarTargets: []sim.Sighting{{ID: 3, Coord: sim.Coord{X: 9, Y: 9}, Distance: 12}},
+	}
+	unarmed := armed
+	unarmed.Blueprint, unarmed.WeaponReady, unarmed.WeaponRange = scavengerBlueprint(), false, 0
+
+	// Range is the reach of the weapons that are loaded, so a robot mid-reload
+	// reports no reach at all.
+	reloading := armed
+	reloading.WeaponReady, reloading.WeaponRange = false, 0
+
+	radarLoot := armed
+	radarLoot.RadarTargets = []sim.Sighting{{ID: 3, Variant: sim.Laser, Distance: 2}}
+
+	farEnemy := armed
+	farEnemy.VisibleEnemies = []sim.Sighting{{ID: 2, Distance: 9}}
+
+	closeRadar := armed
+	closeRadar.RadarTargets = []sim.Sighting{{ID: 3, Distance: 8}}
+
+	for _, tc := range []struct {
+		name string
+		pred PredicateID
+		v    sim.RobotView
+		want bool
+	}{
+		{"has weapon", HasWeapon, armed, true},
+		{"has no weapon", HasWeapon, unarmed, false},
+		{"weapon ready", WeaponReady, armed, true},
+		{"weapon reloading", WeaponReady, reloading, false},
+		{"visible target in range", VisibleTargetInWpnRange, armed, true},
+		{"visible target too far", VisibleTargetInWpnRange, farEnemy, false},
+		{"visible target but unarmed", VisibleTargetInWpnRange, unarmed, false},
+		{"visible target while reloading", VisibleTargetInWpnRange, reloading, false},
+		{"radar target too far", DetectedTargetInWpnRange, armed, false},
+		{"radar target in range", DetectedTargetInWpnRange, closeRadar, true},
+		{"radar sees loot, not an enemy", DetectedTargetInWpnRange, radarLoot, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := matcher{v: tc.v}
+			if got := m.pred(tc.pred, 0); got != tc.want {
+				t.Fatalf("%s = %v, want %v", tc.pred, got, tc.want)
+			}
+		})
+	}
+}
+
+// An attack aims at an enemy, never at the nearest thing in sight: a loose
+// component sitting closer must not steal the shot.
+func TestAttackTargetsEnemiesOnly(t *testing.T) {
+	v := sim.RobotView{
+		Blueprint:         defenderBlueprint(),
+		WeaponRange:       8,
+		VisibleComponents: []sim.Sighting{{ID: 1, Coord: sim.Coord{X: 1, Y: 1}, Distance: 1}},
+		VisibleEnemies:    []sim.Sighting{{ID: 2, Coord: sim.Coord{X: 5, Y: 5}, Distance: 4}},
+		RadarTargets:      []sim.Sighting{{ID: 3, Coord: sim.Coord{X: 9, Y: 9}, Distance: 6}},
+	}
+	for _, tc := range []struct {
+		do   ActionID
+		want sim.Coord
+	}{
+		{AttackVisibleTarget, sim.Coord{X: 5, Y: 5}},
+		{AttackRadarTarget, sim.Coord{X: 9, Y: 9}},
+	} {
+		kind, at, why := resolvePrimary(Do(tc.do), v)
+		if kind != sim.ActAttack || at != tc.want {
+			t.Fatalf("%s resolved to %v at %v (%s), want an attack at %v", tc.do, kind, at, why, tc.want)
+		}
+	}
+
+	// Nothing to shoot at is a reasoned idle, not a shot into an empty cell.
+	empty := sim.RobotView{Blueprint: defenderBlueprint(), WeaponRange: 8}
+	for _, do := range []ActionID{AttackVisibleTarget, AttackRadarTarget} {
+		kind, _, why := resolvePrimary(Do(do), empty)
+		if kind != sim.ActNone || why == "" {
+			t.Fatalf("%s with no target = %v (%q), want a reasoned idle", do, kind, why)
+		}
+	}
+
+	// A parts radar reports loose components. Shooting at those would burn the
+	// primary action and stop the rule scan, so they are not targets either.
+	loot := empty
+	loot.RadarTargets = []sim.Sighting{{ID: 4, Variant: sim.Cannon, Coord: sim.Coord{X: 2, Y: 2}, Distance: 2}}
+	if kind, _, why := resolvePrimary(Do(AttackRadarTarget), loot); kind != sim.ActNone || why == "" {
+		t.Fatalf("attack_radar_target aimed at a loose component: %v (%q)", kind, why)
+	}
+}
+
+// The design §10.9 defender, unmodified, hurts an enemy that walks into range —
+// the end-to-end proof that the predicates, the action and sim's damage
+// resolution line up.
+func TestDefenderShootsAnEnemy(t *testing.T) {
+	w := flatWorld(t, 5, 16)
+	bp := defenderBlueprint()
+	mustValidate(t, defensiveProgram(), bp)
+	d := addRobot(w, sim.Coord{X: 4, Y: 8}, sim.East, bp)
+
+	enemyBP := bp
+	enemyBP.ID, enemyBP.ProgramID = "bp-enemy", "prog-none"
+	enemy := &sim.Robot{
+		ID:        w.NextID(),
+		Colony:    1,
+		Coord:     sim.Coord{X: 7, Y: 8},
+		Heading:   sim.West,
+		Health:    sim.StartingHealth(enemyBP),
+		Blueprint: enemyBP,
+		ProgramID: enemyBP.ProgramID, // not installed: the enemy just stands there
+	}
+	w.Robots = append(w.Robots, enemy)
+
+	rt := NewRuntime()
+	rt.Install(bp.ProgramID, defensiveProgram())
+	w.Control = rt.Control
+
+	full := enemy.Health
+	for i := 0; i < 30; i++ {
+		w.Step()
+	}
+	if enemy.Health >= full {
+		t.Fatalf("enemy health %d of %d: the defender never landed a shot", enemy.Health, full)
+	}
+	if d.Coord != (sim.Coord{X: 4, Y: 8}) {
+		t.Fatalf("the defender wandered to %v instead of shooting", d.Coord)
+	}
+	if d.Health != sim.StartingHealth(bp) {
+		t.Fatalf("the defender lost health with nothing shooting back: %d", d.Health)
+	}
+}
+
 // TestReprogramClearsMemory is design §10.6's last bullet, which E6.3 relies on.
 func TestReprogramClearsMemory(t *testing.T) {
 	w := flatWorld(t, 13, 16)
