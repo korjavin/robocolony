@@ -68,9 +68,10 @@ func run() error {
 	}
 
 	lobbies := lobby.New(database)
-	// Live match state is in-memory (AGENTS.md): anything still marked running
-	// belongs to a process that is gone.
-	if err := lobbies.ReapStaleLobbies(ctx); err != nil {
+	// Before the listener, and design §2.2's whole point: a match left running
+	// by the previous process is replayed back to where it was, and one that
+	// cannot be replayed is finished rather than left as a ghost.
+	if err := lobbies.Restore(ctx); err != nil {
 		return err
 	}
 
@@ -109,9 +110,9 @@ func run() error {
 	}
 	// After the listener, so a request cannot start a match into a registry
 	// that is already draining. Its own deadline, because a slow request drain
-	// must not leave the tick drivers unstopped. Running matches die here: the
-	// POC keeps live match state in memory only (AGENTS.md); E7.6 owns
-	// persisting it.
+	// must not leave the tick drivers unstopped. Each driver saves its match's
+	// replay record on the way out, so a match suspended here resumes where it
+	// stopped when the next process calls Restore.
 	matchCtx, cancelMatches := context.WithTimeout(context.Background(), matchStopGrace)
 	defer cancelMatches()
 	if err := lobbies.Shutdown(matchCtx); err != nil {

@@ -1,10 +1,12 @@
 // Package lobby is how a player gets from "logged in" to "a match is running":
 // lobby lifecycle (create, join, leave, start), server-side validation of the
-// match settings, the in-memory registry of running matches, and the per-match
-// tick driver.
+// match settings, the registry of running matches, and the per-match tick
+// driver.
 //
-// Live match state is in-memory only for the POC (AGENTS.md, "Persistence").
-// Lobby rows are persisted; a server restart ends every running match.
+// The live world lives in memory, but it is not lost on a restart: every match
+// records the seed it was generated from and the player commands applied since
+// (persist.go), and Restore replays them at startup. Design §2.2 has a colony
+// keep running while its player is away, and a deploy is not an exception.
 package lobby
 
 import (
@@ -30,9 +32,11 @@ type Service struct {
 }
 
 // New wires a lobby service to the database. Nothing ticks until a match
-// starts.
+// starts, and nothing is restored until Restore runs.
 func New(database *db.DB) *Service {
-	return &Service{db: database, reg: NewRegistry()}
+	s := &Service{db: database}
+	s.reg = NewRegistry(s.save, s.forget)
+	return s
 }
 
 // Registry exposes the running matches, for E4.1's world stream.
@@ -41,21 +45,109 @@ func (s *Service) Registry() *Registry { return s.reg }
 // Shutdown stops every running match's tick driver.
 func (s *Service) Shutdown(ctx context.Context) error { return s.reg.Shutdown(ctx) }
 
-// ReapStaleLobbies finishes lobbies left "running" by a previous process.
-// Their matches died with that process, so leaving the rows running would show
-// players a match nobody can ever observe.
-func (s *Service) ReapStaleLobbies(ctx context.Context) error {
+// Restore brings back the matches a previous process was running, replaying
+// each one's recorded input log (persist.go). Call it once, before the
+// listener: a request that started a match into a half-restored registry could
+// collide with the match being restored under the same id.
+//
+// A match whose record is missing, corrupt, or written by a build that
+// simulates differently is finished instead — the reaping this used to do
+// unconditionally, now the fallback rather than the rule. A bad record must
+// never keep the server from coming up, so only a database failure is returned.
+func (s *Service) Restore(ctx context.Context) error {
 	running, err := s.db.ListLobbies(ctx, db.LobbyRunning)
 	if err != nil {
 		return err
 	}
+	// ponytail: sequential, and each replay costs CPU proportional to how far
+	// its match has run (worst case ~7s, see persist.go). Restore them
+	// concurrently if a host ever carries enough long matches for startup to
+	// outlast the deploy's patience.
 	for _, l := range running {
+		rerr := s.restore(ctx, l)
+		if rerr == nil {
+			continue
+		}
+		slog.Warn("could not restore a running match, finishing it", "lobby_id", l.ID, "err", rerr)
 		if err := s.db.SetLobbyState(ctx, l.ID, db.LobbyFinished); err != nil {
 			return err
 		}
-		slog.Warn("lobby was running before restart, marking finished", "lobby_id", l.ID)
+		if err := s.db.DeleteMatchLog(ctx, l.ID); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// restore replays one match and puts a tick driver back behind it.
+func (s *Service) restore(ctx context.Context, lobby db.Lobby) error {
+	rec, err := s.db.MatchLogByID(ctx, lobby.ID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("no replay record: the match predates match persistence")
+		}
+		return err
+	}
+	if rec.Fingerprint != fingerprint() {
+		return fmt.Errorf("recorded by a build that simulates differently (%s, this build is %s)", rec.Fingerprint, fingerprint())
+	}
+	set, err := decodeSettings(lobby.SettingsJSON)
+	if err != nil {
+		return err
+	}
+	members, err := s.db.LobbyMembers(ctx, lobby.ID)
+	if err != nil {
+		return err
+	}
+	started := time.Now()
+	match, err := replay(lobby, set, members, rec)
+	if err != nil {
+		return err
+	}
+	if err := s.reg.Start(match, s.matchEnded); err != nil {
+		return err
+	}
+	slog.Info("match restored", "match_id", match.ID, "tick", rec.Tick,
+		"commands", len(match.log), "replay_ms", time.Since(started).Milliseconds())
+	return nil
+}
+
+// save writes a match's replay record. It runs on the tick driver's goroutine,
+// with no lock held: Match.record copies under the match lock and this writes
+// afterwards, so the simulation never waits on the disk.
+//
+// A failed save is logged, not propagated: the match keeps running, and the
+// worst it costs is the rewind of a restart that never happens.
+func (s *Service) save(m *Match) {
+	tick, log, finished := m.record()
+	if finished {
+		return // forget removes the record instead
+	}
+	commands, err := json.Marshal(log)
+	if err != nil {
+		slog.Error("could not encode a match command log", "match_id", m.ID, "err", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.db.SaveMatchLog(ctx, db.MatchLog{
+		LobbyID:     m.ID,
+		Fingerprint: fingerprint(),
+		Tick:        int64(tick),
+		StartedAt:   m.Started,
+		Commands:    string(commands),
+	}); err != nil {
+		slog.Error("could not save a match replay record", "match_id", m.ID, "err", err)
+	}
+}
+
+// forget drops the replay record of a match that has ended.
+func (s *Service) forget(m *Match) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.db.DeleteMatchLog(ctx, m.ID); err != nil {
+		slog.Error("could not delete a finished match's replay record", "match_id", m.ID, "err", err)
+	}
 }
 
 // statusError carries the HTTP status a domain failure maps to, so the handlers
@@ -235,7 +327,8 @@ func (s *Service) Match(ctx context.Context, id int64) (Info, error) {
 	if m, ok := s.reg.Get(id); ok {
 		return m.Info(), nil
 	}
-	// Not in memory: either it never started, or a restart ate it.
+	// Not in memory: either it never started, or it is over — Restore puts a
+	// running match back at startup, and finishes the ones it cannot replay.
 	lobby, err := s.db.LobbyByID(ctx, id)
 	if err != nil {
 		return Info{}, notFound(err, "match")
@@ -243,7 +336,7 @@ func (s *Service) Match(ctx context.Context, id int64) (Info, error) {
 	if lobby.State == db.LobbyOpen {
 		return Info{}, errf(http.StatusNotFound, "the match has not started yet")
 	}
-	return Info{}, errf(http.StatusGone, "this match is no longer running: live match state does not survive a server restart")
+	return Info{}, errf(http.StatusGone, "this match is over")
 }
 
 // matchEnded settles the lobby row when a match reaches its duration. It runs
