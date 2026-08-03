@@ -93,16 +93,56 @@ async function refresh() {
     head.textContent = l.name;
     const meta = document.createElement("div");
     meta.className = "meta";
+    const ai = l.settings.ai || [];
     meta.textContent = `${l.members.length}/${l.settings.max_players} players: ${names}`
+      + (ai.length ? ` · AI: ${ai.join(", ")}` : "")
       + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`;
     li.append(head, meta);
 
     const joined = me && l.members.some((m) => m.user_id === me.id);
     if (!joined) li.append(button("Join", () => act(`/api/lobbies/${l.id}/join`)));
     else if (l.owner_id !== me.id) li.append(button("Leave", () => act(`/api/lobbies/${l.id}/leave`)));
-    if (me && l.owner_id === me.id) li.append(button("Start match", () => start(l.id)));
+    if (me && l.owner_id === me.id) {
+      // A colony you can play against without finding another human. The server
+      // gates this on ownership and an open lobby; this control only avoids
+      // offering an action that would be refused.
+      li.append(aiPicker(l, data.ai_profiles || []));
+      li.append(button("Start match", () => start(l.id)));
+    }
     list.append(li);
   }
+}
+
+// aiPicker seats one more AI colony of the chosen profile. Profiles come from
+// the server's ai_profiles menu, so the ladder cannot drift from the code.
+function aiPicker(l, profiles) {
+  const wrap = document.createElement("span");
+  wrap.className = "ai-picker";
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "AI opponent profile");
+  // ai_profiles is a plain array of profile names; the ladder runs
+  // tutorial -> peaceful -> defensive -> aggressive, so server order is the
+  // order to show. Only aggressive reliably wipes a default starter kit.
+  for (const p of profiles) {
+    const o = document.createElement("option");
+    o.value = p;
+    o.textContent = p;
+    sel.append(o);
+  }
+  wrap.append(sel, button("Add AI opponent", async () => {
+    const next = (l.settings.ai || []).concat(sel.value);
+    err("");
+    try { await api("PUT", `/api/lobbies/${l.id}/ai`, { profiles: next }); await refresh(); }
+    catch (e) { err(e.message); }
+  }));
+  if ((l.settings.ai || []).length) {
+    wrap.append(button("Clear AI", async () => {
+      err("");
+      try { await api("PUT", `/api/lobbies/${l.id}/ai`, { profiles: [] }); await refresh(); }
+      catch (e) { err(e.message); }
+    }));
+  }
+  return wrap;
 }
 
 function button(label, onClick) {
