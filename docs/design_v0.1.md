@@ -161,7 +161,13 @@ Build time may be constant or depend on component count and mass; this remains T
 
 ## 5.3 Recovery after losses
 
-The base cannot be destroyed. If a colony has no active robots but retains every component required by an approved blueprint, it can build a new robot and re-enter active play. A colony with no robots and insufficient inventory is effectively inactive because it has no unit able to retrieve more components, unless a future mechanic allows components to appear within collectible range of the base.
+The base cannot be destroyed, and that does not make a colony unkillable. **Annihilation is elimination.** A colony with no active robots and no approved blueprint fully covered by its base inventory is out of the match permanently: it has no unit able to retrieve another component, so its inventory can never change again, and a stock that covers no blueprint this tick covers none for the rest of the match.
+
+The one recovery path is narrow. If a colony loses every robot while its base still holds every component of an approved blueprint, the base starts a replacement on the next tick and the colony re-enters active play. This is the exception, not the rule: measurement found that a wiped colony has normally spent its stock on the robots it just lost, so it stays wiped. The generous reading — that a zero-robot colony can usually rebuild — is wrong and was removed.
+
+This is an accepted rule rather than a balance accident, so the interface must say so. A colony with no robots whose base reports nothing buildable is labelled **out** in the colony standing and in the base panel, not *idle*. A colony momentarily at zero robots with a build already running is not out.
+
+There is no elimination path in the simulation: the rule is "cannot build", not "was wiped", and nothing destroys a base or removes a colony. A future mechanic that lets components appear within collectible range of a base would reopen recovery without any other change.
 
 # 6. Robot Construction
 

@@ -23,7 +23,8 @@ const css = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 };
-const colonyColor = (id) => css(`--colony-${((id % 8) + 8) % 8}`, "#888");
+const colonyVar = (id) => `--colony-${((id % 8) + 8) % 8}`;
+const colonyColor = (id) => css(colonyVar(id), "#888");
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
 let init = null;       // init frame
@@ -67,6 +68,42 @@ function bakeTerrain() {
   for (let i = 0; i <= init.height; i++) {
     t.beginPath(); t.moveTo(0, i * cell + .5); t.lineTo(terrain.width, i * cell + .5); t.stroke();
   }
+}
+
+// ---------------------------------------------------------------- legend
+//
+// Built once from the init frame, into its own container under the canvas —
+// never inside #inspector, which is cleared with replaceChildren() every tick.
+//
+// A swatch carries `var(--…)`, not a resolved colour: it is then literally the
+// same custom property bakeTerrain and drawLoose read, so the legend cannot
+// disagree with the map and it follows the theme with no re-render. Duplicating
+// a colour as a literal here is exactly how a legend goes quietly wrong.
+//
+// Terrain and component kinds are built from the wire, not from a list of four
+// and a list of five: a terrain class or a catalogue kind added server-side
+// appears in the legend with no client change.
+
+function legendList(host, items) {
+  host.replaceChildren(...items.map(([label, color]) => {
+    const li = el("li");
+    const sw = el("span", "swatch");
+    sw.style.background = color;
+    li.append(sw, document.createTextNode(label));
+    return li;
+  }));
+}
+
+function buildLegend() {
+  legendList($("lg-terrain"), init.terrain_legend.map((n) =>
+    [n, `var(--terrain-${slug(n)}, var(--terrain-unknown))`]));
+
+  const kinds = [...new Set(init.components.map((c) => c.kind))].sort();
+  legendList($("lg-kinds"), kinds.map((k) =>
+    [k, `var(--kind-${slug(k)}, var(--kind-unknown))`]));
+
+  legendList($("lg-colonies"), init.colonies.map((c) =>
+    [c.display_name, `var(${colonyVar(c.id)})`]));
 }
 
 // ---------------------------------------------------------------- drawing
@@ -685,6 +722,25 @@ function commandBox(r) {
   return { node, update };
 }
 
+// ------------------------------------------------------------ elimination
+//
+// Design §5.3: the base is indestructible, but a colony with no robots left and
+// no approved blueprint its base can cover is out of the match for good — it
+// has no unit able to fetch another component, so its inventory can never
+// change again, and a stock that covers nothing this tick covers nothing for
+// the rest of the match. Calling that "idle" reads as a pause between builds.
+//
+// Derived here rather than sent: both facts are already on the wire. `robots`
+// is the colony's own count from the snapshot, and the server sets idle_reason
+// exactly when the base started no build this tick (sim.Base.IdleReason). A
+// colony temporarily at zero robots whose inventory *does* cover a blueprint
+// has a build running — b.build is set — and is deliberately not out.
+const isOut = (colony) => {
+  const st = snap?.colonies.find((c) => c.colony === colony);
+  const b = snap?.bases.find((x) => x.colony === colony);
+  return !!st && st.robots === 0 && !!b && !b.build && !!b.idle_reason;
+};
+
 function renderStats() {
   const t = $("stats");
   t.replaceChildren();
@@ -705,19 +761,30 @@ function renderStats() {
     const sw = el("span", "swatch");
     sw.style.background = colonyColor(c.colony);
     name.append(sw, document.createTextNode(colonyName(c.colony)));
+    if (isOut(c.colony)) {
+      tr.classList.add("outrow");
+      name.append(el("span", "out", "out"));
+      tr.title = "no robots left and nothing the base can build — design §5.3";
+    }
     tr.append(name, el("td", null, String(c.robots)), el("td", null, String(c.score)),
       el("td", null, String(c.fleet_value)), el("td", null, String(c.inventory)));
     t.append(tr);
   });
 }
 
+// baseColony is the colony the base panel last showed. It sticks: without it
+// the panel jumps back to the first base the instant the selected robot dies —
+// which is exactly the moment its colony may be going out, and a colony with no
+// robots left has nothing to select, so its base would be unreachable.
+let baseColony = null;
+
 function renderBase() {
   const box = $("base");
   box.replaceChildren();
   if (!snap) return;
   const sel = snap.robots.find((r) => r.id === selected);
-  const colony = sel ? sel.colony : snap.bases[0]?.colony;
-  const b = snap.bases.find((x) => x.colony === colony);
+  if (sel) baseColony = sel.colony;
+  const b = snap.bases.find((x) => x.colony === baseColony) || snap.bases[0];
   if (!b) { box.append(el("p", "meta", "No base.")); return; }
 
   const head = el("div");
@@ -739,6 +806,13 @@ function renderBase() {
     box.append(el("div", null, b.build.blueprint), bar,
       el("div", "meta", `${b.build.ticks_left} ticks left · `
         + b.build.components.map(compName).join(", ")));
+  } else if (isOut(b.colony)) {
+    // Not idle: out. Design §5.3 — the base survives, the colony does not.
+    const p = el("p", "meta");
+    p.append(el("span", "out", "out"), document.createTextNode(
+      ` — no robots left and ${b.idle_reason}. Nothing can fetch another`
+      + " component, so this colony cannot build again."));
+    box.append(p);
   } else {
     // idle_reason (from the server) distinguishes a base that is merely between
     // builds from one that is blocked — a silent stall reads as a bug.
@@ -813,6 +887,7 @@ function connect() {
     $("subtitle").textContent = `${init.name} — ${init.width}×${init.height}, seed ${init.seed}`;
     document.title = `${init.name} — robocolony`;
     bakeTerrain();
+    buildLegend();
     render();
   });
 

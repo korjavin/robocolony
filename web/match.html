@@ -90,6 +90,31 @@
   .swatch { display: inline-block; width: .7rem; height: .7rem;
             border-radius: .2rem; margin-right: .35rem; }
 
+  /* Map legend. Every swatch takes its colour from the same custom property
+     the canvas reads — via var(), never a literal — so the legend cannot drift
+     from what is drawn, and it follows the theme without a re-render. Marks
+     that are a shape rather than a flat colour (the heading notch, the vision
+     wedge) are drawn as SVG rather than described in prose. */
+  .legend { margin-top: .5rem; font-size: .85rem; }
+  .legend > summary { cursor: pointer; opacity: .7; }
+  .legend h4 { margin: .5rem 0 .1rem; font-size: .72rem; font-weight: 700;
+               text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+  ul.lg { list-style: none; margin: 0; padding: 0;
+          display: flex; flex-wrap: wrap; gap: .1rem .9rem; }
+  ul.lg > li { display: flex; align-items: center; gap: .3rem; min-width: 0; }
+  ul.lg .swatch { margin: 0; }
+  ul.lg svg { display: block; width: 1.15rem; height: 1.15rem; flex: none;
+              border-radius: .2rem; }
+  ul.lg .note { opacity: .65; }
+
+  /* A colony with no robots and nothing its base can build is out for good
+     (design §5.3). It must not read as merely between builds. */
+  .out { font-size: .72rem; font-weight: 700; text-transform: uppercase;
+         letter-spacing: .06em; color: #c0392b; border: 1px solid currentColor;
+         border-radius: .3rem; padding: 0 .25rem; margin-left: .35rem; }
+  .out:first-child { margin-left: 0; }
+  #stats tr.outrow td { opacity: .6; }
+
   .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
         overflow: hidden; margin: .2rem 0 .4rem; }
   .hp > i { display: block; height: 100%; background: #2f8f4e; }
@@ -186,8 +211,85 @@
     <div class="arena">
       <canvas id="arena" width="256" height="256"></canvas>
       <p class="meta">Click near a robot &mdash; or pick one from the roster
-      &mdash; to inspect it. The wedge is that robot's forward vision &mdash;
-      the only thing its program can see.</p>
+      &mdash; to inspect it.</p>
+
+      <!-- The legend lives here, under the canvas, in its own container: not
+           inside #inspector, which is cleared with replaceChildren() every
+           tick. The three lists below are filled once from the init frame; the
+           marks are static because the renderer draws them unconditionally. -->
+      <details class="legend" id="legend" open>
+        <summary>Legend</summary>
+
+        <h4>Terrain</h4>
+        <ul class="lg" id="lg-terrain"></ul>
+
+        <h4>Loose components, by kind</h4>
+        <ul class="lg" id="lg-kinds"></ul>
+
+        <h4>Colonies</h4>
+        <ul class="lg" id="lg-colonies"></ul>
+
+        <h4>Marks</h4>
+        <ul class="lg">
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect x=".5" y=".5" width="15" height="15" stroke="#000"
+                    style="fill: var(--colony-0)"/>
+              <text x="8" y="8.6" text-anchor="middle" fill="#fff" stroke="#0008"
+                    stroke-width=".6" font-size="11" font-weight="700"
+                    font-family="system-ui, sans-serif">B</text>
+            </svg>
+            Base <span class="note">&mdash; one per colony, indestructible</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
+              <text x="8" y="8.4" text-anchor="middle" fill="#fff" stroke="#0008"
+                    stroke-width=".5" font-size="9" font-weight="700"
+                    font-family="system-ui, sans-serif">S</text>
+            </svg>
+            Robot <span class="note">&mdash; letter is its blueprint's initial</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
+              <path d="M8 8 L13 3" stroke="#000" stroke-width="2.6" fill="none"/>
+            </svg>
+            Heading notch <span class="note">&mdash; where it faces, and all it can see</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect width="16" height="16" style="fill: var(--terrain-open)"/>
+              <path d="M8 13 L-4 1 H20 Z" fill-opacity=".18" style="fill: var(--colony-1)"/>
+              <circle cx="8" cy="13" r="2.8" style="fill: var(--colony-1)"/>
+              <path d="M8 13 L8 8.5" stroke="#000" stroke-width="1.4" fill="none"/>
+            </svg>
+            Vision wedge <span class="note">&mdash; drawn for the selected robot only</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect y="12" width="16" height="4" fill="#0006"/>
+              <rect y="12" width="6" height="4" fill="#c0392b"/>
+            </svg>
+            Health bar <span class="note">&mdash; only on a damaged robot</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
+              <circle cx="13" cy="3" r="2.9" style="fill: var(--kind-weapon)"/>
+            </svg>
+            Cargo <span class="note">&mdash; the component it is carrying, by kind</span>
+          </li>
+          <li>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.2" style="fill: var(--colony-1)"/>
+              <circle cx="8" cy="8" r="6.6" fill="none" stroke="#fff" stroke-width="1.6"/>
+              <circle cx="8" cy="8" r="7.4" fill="none" stroke="#000" stroke-width=".8"/>
+            </svg>
+            Selected <span class="note">&mdash; the robot the panels describe</span>
+          </li>
+        </ul>
+      </details>
     </div>
 
     <div class="side">
