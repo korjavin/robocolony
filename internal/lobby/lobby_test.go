@@ -292,29 +292,45 @@ func TestSeedIsServerChosen(t *testing.T) {
 	}
 }
 
-// TestDefaultKitIsPlayable: the built-in blueprint every POC player starts
-// with must be legal, and the §10.7 scavenger must be clean on it — including
-// the parts radar, without which move_to_radar_target is an error and the
-// program is a blind random walk.
+// TestDefaultKitIsPlayable: every built-in blueprint a POC player starts with
+// must be legal and must be clean under the program it actually runs — errors
+// *and* warnings, because inert_start on a starter blueprint is a robot that
+// stands at its base for the whole match.
+//
+// Every scavenger must carry the parts radar, without which
+// move_to_radar_target is an error and §10.7 is a blind random walk. The guards
+// deliberately carry none (see guardKit), so that check is per fan-out rather
+// than over the whole set.
 func TestDefaultKitIsPlayable(t *testing.T) {
+	k := humanKit()
+	programs := map[string]prog.Program{}
+	for _, np := range k.programs {
+		programs[np.id] = np.p
+	}
 	seen := map[string]bool{}
 	for _, bp := range DefaultBlueprints() {
 		if err := bp.Validate(); err != nil {
 			t.Fatalf("blueprint %q Validate() = %v", bp.ID, err)
 		}
-		if !bp.Has(sim.KindRadar) {
-			t.Errorf("blueprint %q has no radar", bp.ID)
-		}
 		if seen[bp.ID] {
 			t.Errorf("duplicate starter blueprint id %q", bp.ID)
 		}
 		seen[bp.ID] = true
-		res := prog.Validate(DefaultProgram(), bp)
+		p, installed := programs[bp.ProgramID]
+		if !installed {
+			t.Fatalf("blueprint %q names program %q, which the kit never installs", bp.ID, bp.ProgramID)
+		}
+		res := prog.Validate(p, bp)
 		if !res.OK() {
-			t.Fatalf("DefaultProgram() on %q: %+v", bp.ID, res.Errors)
+			t.Fatalf("program %q on %q: %+v", bp.ProgramID, bp.ID, res.Errors)
 		}
 		if len(res.Warnings) != 0 {
-			t.Errorf("DefaultProgram() on %q warnings = %+v, want none", bp.ID, res.Warnings)
+			t.Errorf("program %q on %q warnings = %+v, want none", bp.ProgramID, bp.ID, res.Warnings)
+		}
+	}
+	for _, bp := range scavengerKit() {
+		if !bp.Has(sim.KindRadar) {
+			t.Errorf("scavenger %q has no radar", bp.ID)
 		}
 	}
 	if !seen[DefaultBlueprint().ID] {
@@ -346,6 +362,40 @@ func TestDefaultKitIsPlayable(t *testing.T) {
 		for _, armor := range variantsOfKind(sim.KindArmor) {
 			if !want[loco][armor] {
 				t.Errorf("no starter blueprint pairs %v with %v", loco, armor)
+			}
+		}
+	}
+}
+
+// The starter guard exists so that a first match against an armed colony is not
+// over by tick 900 (rc-w9s.15), and the bead's landmine is the other half of the
+// job: a default strong enough that designing a better one stops mattering is a
+// worse outcome than one that dies too fast. The balance itself is measured, not
+// asserted — see the ladder in ai.go — but the three properties the measurement
+// rests on are structural, and this is what stops one of them being tuned away
+// by accident.
+func TestStarterGuardCannotHunt(t *testing.T) {
+	for _, bp := range guardKit() {
+		if bp.Has(sim.KindRadar) {
+			t.Errorf("guard %q carries a radar: it could find a target instead of waiting for one", bp.ID)
+		}
+		if bp.Has(sim.KindManipulator) {
+			t.Errorf("guard %q carries a manipulator: it is supposed to cost the colony economy, not add to it", bp.ID)
+		}
+		for _, w := range bp.Weapons() {
+			// The cheapest weapon in the catalogue, and by design §8.1 the
+			// shortest-ranged: a guard must not out-range the vision cone that
+			// aims it, or it stops being a guard.
+			if w != sim.AutoGun {
+				t.Errorf("guard %q carries %v, want the automatic gun", bp.ID, w)
+			}
+		}
+	}
+	for i, r := range guardProgram().Rules {
+		for _, a := range r.Then {
+			switch a.Do {
+			case prog.MoveToVisibleTarget, prog.MoveToRadarTarget, prog.MoveForward:
+				t.Errorf("guard rule %d does %v: a guard that searches or pursues is a hunter", i+1, a.Do)
 			}
 		}
 	}

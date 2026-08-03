@@ -44,23 +44,86 @@ const (
 func DefaultBlueprint() sim.Blueprint { return canonicalOf(DefaultBlueprintID, scavengerKit()) }
 
 // DefaultBlueprints is the *set* a colony starts with approved for production
-// (design §5.1 has the player approve one or more): one scavenger per
-// (locomotion, armor) pair in the catalogue. That is the point of the set — the
-// §5.2 build scan needs a blueprint's exact components, so a colony approving
-// only the medium-armor tracks variant stalls forever the moment either medium
-// armor or tracks runs out, however much light armor and how many legs it has
-// scavenged. A locomotion or armor row added to the catalogue gets starter
-// blueprints here for free.
+// (design §5.1 has the player approve one or more): one scavenger and one base
+// guard per (locomotion, armor) pair in the catalogue. That is the point of the
+// set — the §5.2 build scan needs a blueprint's exact components, so a colony
+// approving only the medium-armor tracks variant stalls forever the moment
+// either medium armor or tracks runs out, however much light armor and how many
+// legs it has scavenged. A locomotion or armor row added to the catalogue gets
+// starter blueprints here for free.
 //
-// Nine blueprints, and §5.2 picks uniformly among the *buildable* ones, so the
-// count only widens what a colony can do with what it actually holds: a colony
-// with one armor tier and one locomotion unit in stock still has exactly one
-// choice. What it buys is that no single component ever stalls production.
-func DefaultBlueprints() []sim.Blueprint { return scavengerKit() }
+// Eighteen blueprints, and §5.2 picks uniformly among the *buildable* ones, so
+// the count only widens what a colony can do with what it actually holds: a
+// colony with one armor tier, one locomotion unit and no weapon in stock still
+// has exactly one choice. What it buys is that no single component ever stalls
+// production — measured (see guardKit): before the guard, a colony out of parts
+// radars sat on tracks, armor and a manipulator and never built again.
+func DefaultBlueprints() []sim.Blueprint { return append(scavengerKit(), guardKit()...) }
 
 // scavengerKit is the §10.7 scavenger body fanned out over the catalogue.
 func scavengerKit() []sim.Blueprint {
 	return fanOut(DefaultBlueprintID, "scavenger", DefaultProgramID, sim.Manipulator, sim.PartsRadar)
+}
+
+// The base guard, and the answer to rc-w9s.15: measured over 16 seeds × 6000
+// ticks, the unarmed starter kit was annihilated by the aggressive AI profile on
+// 16 seeds of 16 — and, once at zero robots, never came back, because a colony
+// with no robot can collect nothing and its base stalls on the first component
+// row it runs out of.
+//
+// Three properties make this a starting point rather than an answer, and all
+// three are deliberate:
+//
+//   - The cheapest weapon in the catalogue (design §8.1: range 4, 45% accuracy)
+//     and no radar at all. A guard cannot find anything; it shoots what walks in
+//     front of it, inside a six-cell vision cone (design §7.1).
+//   - It never leaves the base. guardProgram has no search and no pursuit, so a
+//     guard contests nothing on the map and cannot farm an unarmed colony.
+//   - No manipulator: it earns nothing. Every guard the base builds is
+//     production a scavenger did not get.
+//
+// A player who designs a laser + enemy-radar hunter still beats it decisively,
+// which is the line this must not cross: the default has to lose to a thoughtful
+// design. See the measured ladder in ai.go for what it does to each profile.
+//
+// The weapon axis is deliberately *not* fanned out, unlike locomotion and armor,
+// which means a colony holding only lasers still cannot build a guard. That is a
+// stall of exactly the kind fanOut exists to prevent, and it is kept on purpose:
+// fanning the guard over all three weapons was measured (16 seeds × 6000 ticks)
+// and it broke the game the other way — the default kit came out ahead of the
+// *aggressive* profile (1136 collected to 850, 216 robots left to 60, wiped on 2
+// seeds instead of 16), and the laser-hunter design above stopped beating the
+// default at all, winning 7 of 16 rather than 12.
+// A salvaged laser the starter kit cannot use is a reason to open the blueprint
+// editor, which is the game.
+func guardKit() []sim.Blueprint {
+	return fanOut(guardBlueprintID, "guard", guardProgramID, sim.AutoGun)
+}
+
+const (
+	guardBlueprintID = "bp-default-guard"
+	guardProgramID   = "prog-default-guard"
+)
+
+// guardProgram is a sentry: shoot what is in range, hold the base, walk back to
+// it otherwise. Three rules, every one of them in design §10's catalogue, and
+// nothing a player could not have written on their first afternoon — which is
+// the point of shipping it as a default rather than a stronger body.
+//
+// turn_random at the base is the scan: forward vision is a 90° wedge (design
+// §7.1), so a sentry that stood still would cover one quarter of the approaches
+// and let a hunter shoot it in the back. It is also what keeps the program out
+// of prog.Validate's inert_start warning — a fresh guard standing at its base
+// matches this rule on tick one.
+func guardProgram() prog.Program {
+	return prog.Program{V: prog.SchemaVersion, Name: "base guard", Rules: []prog.Rule{
+		{When: prog.And(prog.Pred(prog.SeesEnemyRobot), prog.Pred(prog.VisibleTargetInWpnRange)),
+			Then: []prog.Action{prog.Do(prog.AttackVisibleTarget)}},
+		{When: prog.Pred(prog.AtOwnBase),
+			Then: []prog.Action{prog.Do(prog.TurnRandom)}},
+		{When: prog.Pred(prog.CarryingNothing),
+			Then: []prog.Action{prog.Do(prog.MoveToOwnBase)}},
+	}}
 }
 
 // canonicalOf returns the member of a fan-out that kept the bare prefix as its
@@ -145,11 +208,18 @@ type namedProgram struct {
 }
 
 // humanKit is the design §2.1 equal starting budget for a player's colony.
+//
+// The opening is unchanged by the guard: three scavengers, 345 in component
+// value, exactly what startingBudget is defined as. A guard is something the
+// base builds later, out of a weapon the colony had to scavenge first.
 func humanKit() kit {
 	return kit{
 		blueprints: DefaultBlueprints(),
-		programs:   []namedProgram{{DefaultProgramID, DefaultProgram()}},
-		start:      repeat(DefaultBlueprint(), startingRobots),
+		programs: []namedProgram{
+			{DefaultProgramID, DefaultProgram()},
+			{guardProgramID, guardProgram()},
+		},
+		start: repeat(DefaultBlueprint(), startingRobots),
 	}
 }
 

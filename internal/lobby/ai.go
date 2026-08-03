@@ -43,6 +43,21 @@ import (
 //	defensive    5/16 wiped, never before tick 4629, human still ahead 1174 to 766
 //	aggressive  16/16 wiped, avg tick 1079, earliest 636, human behind 510 to 1111
 //
+// Re-measured after rc-w9s.15 gave the starter kit a base guard (starter.go).
+// Same harness, same 16 seeds; "dead at end" is the number that matters, because
+// a colony that reaches zero robots collects nothing and therefore never
+// recovers — before the guard, wiped and dead-at-end were the same 16 seeds.
+//
+//	tutorial     0/16 wiped, 0/16 dead at end, human out-collects it 1390 to 451
+//	peaceful     0/16 wiped, 0/16 dead at end, human out-collects it 1129 to 805
+//	defensive    1/16 wiped, 1/16 dead at end, not before tick 4898, human ahead 1168 to 774
+//	aggressive   8/16 wiped, 8/16 dead at end, avg tick 1692, earliest 631, human behind 848 to 1010
+//
+// The aggressive rung is still the brutal one and still the one a player opts
+// into: it out-collects the default colony, out-fields it two to one, and takes
+// the board off it on half the seeds. What changed is that the other half now
+// have a colony left to play.
+//
 // Retuning a profile means moving its rung, so re-measure when you do.
 type Profile string
 
@@ -122,9 +137,17 @@ func (p Profile) kit() (kit, bool) {
 		}, true
 
 	case ProfilePeaceful:
-		// Exactly the human opening: same blueprints, same §10.7 program, same
-		// three robots. The colony a solo player is actually racing.
-		return humanKit(), true
+		// The human opening with its base guards left out: same scavengers, same
+		// §10.7 program, same three robots. It was literally humanKit until the
+		// starter kit gained a guard (rc-w9s.15), and it is spelled out here
+		// rather than reusing humanKit because this rung of the ladder is defined
+		// by being unable to fight at all — a peaceful colony that shoots anyone
+		// who walks past its base is a different rung.
+		return kit{
+			blueprints: scavengerKit(),
+			programs:   []namedProgram{{DefaultProgramID, DefaultProgram()}},
+			start:      repeat(DefaultBlueprint(), startingRobots),
+		}, true
 
 	case ProfileDefensive:
 		// Scavengers that shout when they see trouble, plus heavy responders
