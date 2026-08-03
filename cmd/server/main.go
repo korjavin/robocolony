@@ -17,11 +17,16 @@ import (
 	"github.com/korjavin/robocolony/internal/auth"
 	"github.com/korjavin/robocolony/internal/config"
 	"github.com/korjavin/robocolony/internal/db"
+	"github.com/korjavin/robocolony/internal/lobby"
 	"github.com/korjavin/robocolony/web"
 )
 
 // shutdownGrace is how long in-flight requests get to finish after a signal.
 const shutdownGrace = 30 * time.Second
+
+// matchStopGrace is how long the tick drivers get to notice the shutdown. They
+// only have to finish the tick they are in, so this is generous.
+const matchStopGrace = 5 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -61,9 +66,16 @@ func run() error {
 		return err
 	}
 
+	lobbies := lobby.New(database)
+	// Live match state is in-memory (AGENTS.md): anything still marked running
+	// belongs to a process that is gone.
+	if err := lobbies.ReapStaleLobbies(ctx); err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(authHandler),
+		Handler:           routes(authHandler, lobbies),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).
@@ -94,17 +106,29 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
+	// After the listener, so a request cannot start a match into a registry
+	// that is already draining. Its own deadline, because a slow request drain
+	// must not leave the tick drivers unstopped. Running matches die here: the
+	// POC keeps live match state in memory only (AGENTS.md); E7.6 owns
+	// persisting it.
+	matchCtx, cancelMatches := context.WithTimeout(context.Background(), matchStopGrace)
+	defer cancelMatches()
+	if err := lobbies.Shutdown(matchCtx); err != nil {
+		return err
+	}
 	log.Info("shutdown complete")
 	return nil
 }
 
-func routes(a *auth.Handler) http.Handler {
+func routes(a *auth.Handler, lobbies *lobby.Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	a.Routes(mux)
 	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
+	mux.HandleFunc("GET /lobby", lobbyPage)
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
+	lobbies.Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))
 	return mux
@@ -120,6 +144,12 @@ func health(w http.ResponseWriter, _ *http.Request) {
 
 func loginPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "login.html")
+}
+
+// lobbyPage is the static shell; it fetches everything it shows from /api,
+// which is where the session is actually required.
+func lobbyPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "lobby.html")
 }
 
 // me is the smallest authenticated endpoint: it tells the client who it is,
