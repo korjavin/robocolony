@@ -59,12 +59,16 @@ type PredicateSpec struct {
 	// evaluator that implements it; TestCatalogueIsDocumented keeps it filled.
 	Desc string  `json:"desc"`
 	Arg  ArgKind `json:"arg"`
-	// World marks a predicate that reads the world outside the robot — what it
-	// sees, what radar reports, what it was told, what it bumped into. The rest
-	// read the robot's own state: cargo, health, hardware, memory points, and
-	// standing at its own base. warnInertStart uses the split to tell a program
-	// that is merely waiting for a stimulus from one that nothing outside it can
-	// ever unblock. It is a per-predicate label, not reachability analysis.
+	// World marks a predicate something outside the robot can make true while
+	// the robot does nothing at all: what walks into view, what radar picks up,
+	// what a colony mate broadcasts. The rest answer from the robot's own
+	// state — cargo, health, hardware, memory points, standing at its own base
+	// — or only from what the robot itself did, which for a robot that is not
+	// acting is the same thing.
+	//
+	// warnInertStart uses the split to tell a program merely waiting for a
+	// stimulus from one nothing outside it can ever unblock. It is a
+	// per-predicate label, not reachability analysis.
 	World bool `json:"world"`
 	// Needs lists components without which the predicate can never be true.
 	// A missing component here is a warning, not an error: testing a sensor
@@ -218,16 +222,17 @@ var predicates = []PredicateSpec{
 	{ReceivedAvoidHere, GroupCommunication, "Received AVOID_HERE",
 		"True for the one tick after a colony mate broadcast AVOID_HERE. Not remembered either.", ArgNone, true, nil},
 
-	// The reachability group is feedback from the world about a move the robot
-	// attempted: a wall, a robot in the way, a route that does not exist. It
-	// counts as world-observable, which errs towards the neutral note — a
-	// missed warning is the status quo, a false one is what rc-tad.5 is about.
+	// The reachability group looks like world observation but is not: sim raises
+	// all three only as a consequence of a move the robot itself attempted
+	// (internal/sim/tick.go step and moveTo). A robot that matches no rule never
+	// moves, so no amount of world change sets them — self-state, for the one
+	// question World is asked.
 	{PathBlocked, GroupReachability, "Path blocked",
-		"True when the robot's last attempt to move was refused, usually by a wall or another robot.", ArgNone, true, nil},
+		"True when the robot's last attempt to move was refused, usually by a wall or another robot.", ArgNone, false, nil},
 	{TargetReached, GroupReachability, "Target reached",
-		"True on the tick the robot arrives where its last move-to action was heading.", ArgNone, true, nil},
+		"True on the tick the robot arrives where its last move-to action was heading.", ArgNone, false, nil},
 	{TargetUnreachable, GroupReachability, "Target unreachable",
-		"True when the last move-to action found no route to its destination at all.", ArgNone, true, nil},
+		"True when the last move-to action found no route to its destination at all.", ArgNone, false, nil},
 
 	// weapon_ready and has_weapon read the robot's own hardware, not the world.
 	{WeaponReady, GroupCombat, "Weapon ready",

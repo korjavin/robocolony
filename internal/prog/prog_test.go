@@ -402,7 +402,9 @@ func TestPredicateWorldColumn(t *testing.T) {
 		SeesObstacle: true, VisibleTargetInWpnRange: true, EnemyVisible: true,
 		RadarDetectsTarget: true, DetectedTargetInWpnRange: true,
 		ReceivedComeHere: true, ReceivedAvoidHere: true,
-		PathBlocked: true, TargetReached: true, TargetUnreachable: true,
+		// path_blocked and the target_* pair are deliberately absent: sim only
+		// raises them after a move the robot itself attempted, so a robot that
+		// matches no rule can never see one.
 	}
 	for _, s := range Language().Predicates {
 		if s.World != world[s.ID] {
@@ -445,6 +447,11 @@ func TestWarnInertStart(t *testing.T) {
 		}}, "reactive_start"},
 		{"waiting on a point nothing writes is stuck", Program{Rules: []Rule{
 			{PredArg(PointIsSet, 1), []Action{DoArg(MoveToPoint, 1)}},
+		}}, "inert_start"},
+		// A robot that never matches a rule never moves, so nothing can ever
+		// block its path: reachability is not a stimulus the world supplies.
+		{"waiting on path_blocked is stuck, not reactive", Program{Rules: []Rule{
+			{Pred(PathBlocked), []Action{Do(TurnRandom)}},
 		}}, "inert_start"},
 		{"a world predicate ANDed with unset self-state is still stuck", Program{Rules: []Rule{
 			{And(Pred(SeesEnemyRobot), Pred(CarryingComponent)), []Action{Do(AttackVisibleTarget)}},
