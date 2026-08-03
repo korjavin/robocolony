@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lobbies &mdash; robocolony</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto; padding: 2.5rem 1.25rem; max-width: 52rem;
+    font: 16px/1.6 system-ui, sans-serif;
+  }
+  h1 { font-size: 1.8rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+  .tag { margin: 0 0 2rem; opacity: .65; }
+  fieldset { border: 1px solid; border-radius: .5rem; opacity: .95; }
+  label { display: inline-block; margin: .25rem .75rem .25rem 0; }
+  input { width: 8rem; font: inherit; padding: .15rem .3rem; }
+  input[name=name] { width: 16rem; }
+  button { font: inherit; padding: .3rem .8rem; border-radius: .4rem; cursor: pointer; }
+  ul { list-style: none; padding: 0; }
+  li { border: 1px solid; border-radius: .5rem; padding: .6rem .8rem; margin: .5rem 0; }
+  .meta { font-size: .85rem; opacity: .7; }
+  .err { color: #c0392b; font-weight: 600; min-height: 1.6em; }
+  table { border-collapse: collapse; }
+  td, th { padding: .15rem .8rem .15rem 0; text-align: left; }
+  footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
+</style>
+</head>
+<body>
+  <h1>Lobbies</h1>
+  <p class="tag">Create a lobby, wait for players, start the match. A match keeps
+  running while you are away.</p>
+
+  <p class="err" id="err"></p>
+
+  <h2>Open lobbies</h2>
+  <ul id="lobbies"></ul>
+
+  <h2>New lobby</h2>
+  <form id="create">
+    <fieldset>
+      <legend>Settings</legend>
+      <label>Name <input name="name" required maxlength="64" value="my colony"></label><br>
+      <label>Duration (s) <input name="duration_sec" type="number" min="60" max="7200" value="600"></label>
+      <label>Richness <input name="richness" type="number" step="0.001" min="0.001" max="0.25" value="0.02"></label>
+      <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
+      <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
+      <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
+      <button type="submit">Create</button>
+    </fieldset>
+  </form>
+
+  <h2>Match</h2>
+  <div id="match"><p class="meta">No match selected.</p></div>
+
+  <footer><a href="/">home</a> &middot; <a href="/login">sign in</a></footer>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const err = (m) => { $("err").textContent = m || ""; };
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { location.href = "/login"; return null; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+let me = null;
+let matchID = null;
+
+async function refresh() {
+  const data = await api("GET", "/api/lobbies");
+  if (!data) return;
+  const list = $("lobbies");
+  list.replaceChildren();
+  if (data.lobbies.length === 0) {
+    const li = document.createElement("li");
+    li.className = "meta";
+    li.textContent = "Nothing open yet. Create one below.";
+    list.append(li);
+  }
+  for (const l of data.lobbies) {
+    const li = document.createElement("li");
+    const names = l.members.map((m) => m.display_name).join(", ");
+    const head = document.createElement("div");
+    head.textContent = l.name;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${l.members.length}/${l.settings.max_players} players: ${names}`
+      + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`;
+    li.append(head, meta);
+
+    const joined = me && l.members.some((m) => m.user_id === me.id);
+    if (!joined) li.append(button("Join", () => act(`/api/lobbies/${l.id}/join`)));
+    else if (l.owner_id !== me.id) li.append(button("Leave", () => act(`/api/lobbies/${l.id}/leave`)));
+    if (me && l.owner_id === me.id) li.append(button("Start match", () => start(l.id)));
+    list.append(li);
+  }
+}
+
+function button(label, onClick) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+async function act(path) {
+  err("");
+  try { await api("POST", path); await refresh(); }
+  catch (e) { err(e.message); }
+}
+
+async function start(id) {
+  err("");
+  try {
+    const info = await api("POST", `/api/lobbies/${id}/start`);
+    matchID = info.id;
+    renderMatch(info);
+    await refresh();
+  } catch (e) { err(e.message); }
+}
+
+function renderMatch(info) {
+  const el = $("match");
+  el.replaceChildren();
+  const h = document.createElement("p");
+  const secs = Math.round(info.tick / info.tick_rate);
+  const total = Math.round(info.end_tick / info.tick_rate);
+  h.textContent = `${info.name} — ${info.state}, tick ${info.tick}/${info.end_tick} (${secs}/${total}s), seed ${info.seed}`;
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const c of ["Colony", "Player", "Robots", "Inventory"]) {
+    const th = document.createElement("th");
+    th.textContent = c;
+    head.append(th);
+  }
+  table.append(head);
+  for (const c of info.colonies) {
+    const tr = document.createElement("tr");
+    for (const v of [c.id, c.display_name, c.robots, c.inventory]) {
+      const td = document.createElement("td");
+      td.textContent = v;
+      tr.append(td);
+    }
+    table.append(tr);
+  }
+  el.append(h, table);
+}
+
+// Polling, not SSE: the live world stream is E4.1. This only refreshes the
+// scoreboard, which is why one second is plenty.
+setInterval(async () => {
+  if (matchID === null) return;
+  try { renderMatch(await api("GET", `/api/matches/${matchID}`)); }
+  catch (e) { err(e.message); matchID = null; }
+}, 1000);
+
+$("create").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  err("");
+  const f = new FormData(ev.target);
+  const num = (k) => Number(f.get(k));
+  try {
+    await api("POST", "/api/lobbies", {
+      name: f.get("name"),
+      settings: {
+        duration_sec: num("duration_sec"),
+        richness: num("richness"),
+        spawn_per_min: num("spawn_per_min"),
+        max_players: num("max_players"),
+      },
+    });
+    await refresh();
+  } catch (e) { err(e.message); }
+});
+
+me = await api("GET", "/api/me");
+await refresh();
+</script>
+</body>
+</html>

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/korjavin/robocolony/internal/auth"
+	"github.com/korjavin/robocolony/internal/lobby"
 )
 
 func TestRoutes(t *testing.T) {
@@ -26,11 +27,17 @@ func TestRoutes(t *testing.T) {
 		// to the login page.
 		{path: "/api/me", accept: "application/json", wantCode: http.StatusUnauthorized},
 		{path: "/api/me", accept: "text/html", wantCode: http.StatusFound},
+		// The lobby API is behind the same middleware; its static shell is not,
+		// because the page fetches everything it shows from /api.
+		{path: "/api/lobbies", accept: "application/json", wantCode: http.StatusUnauthorized},
+		{path: "/api/matches/1", accept: "application/json", wantCode: http.StatusUnauthorized},
+		{path: "/lobby", wantCode: http.StatusOK, wantBody: "Open lobbies"},
 	}
 
 	// The zero Handler registers the routes and authenticates nobody, which is
-	// all this wiring test needs; internal/auth covers the flow itself.
-	h := routes(&auth.Handler{})
+	// all this wiring test needs; internal/auth covers the flow itself. The
+	// lobby service never reaches its database on these paths.
+	h := routes(&auth.Handler{}, lobby.New(nil))
 	for _, tt := range tests {
 		t.Run(tt.path+" "+tt.accept, func(t *testing.T) {
 			rec := httptest.NewRecorder()
