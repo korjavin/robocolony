@@ -57,7 +57,11 @@ func (w *World) look(r *Robot) (components, enemies []Sighting) {
 		}
 	}
 	for _, o := range w.Robots {
-		if o.Colony == r.Colony {
+		// A robot destroyed earlier in this tick is out of the fight even though
+		// the end-of-tick sweep has not reached it yet: enemyAt refuses it as a
+		// target, so reporting it here would only make later robots spend their
+		// turn aiming at a wreck.
+		if o.Colony == r.Colony || isDestroyed(o) {
 			continue
 		}
 		if d, ok := inCone(r.Coord, r.Heading, o.Coord); ok {

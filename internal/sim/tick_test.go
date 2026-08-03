@@ -1132,3 +1132,22 @@ func TestDestroyedRobotDoesNotAct(t *testing.T) {
 			wreckage.Coord, wreckage.WeaponCooldown[0])
 	}
 }
+
+// ...and it is not a sighting either, so nobody else spends the rest of the
+// tick aiming at it.
+func TestDestroyedRobotIsNotSeen(t *testing.T) {
+	w := arena(8)
+	wreckage := w.addRobot(0, Coord{4, 2}, South, gunnerBlueprint())
+	wreckage.Health = 0
+	seen := 0
+	w.addRobot(1, Coord{4, 5}, North, gunnerBlueprint())
+	w.driveAll(funcController(func(v RobotView) Action {
+		seen += len(v.VisibleEnemies)
+		return Action{Kind: ActStop}
+	}))
+
+	w.Step()
+	if seen != 0 {
+		t.Fatalf("a wreck was reported as a visible enemy %d times", seen)
+	}
+}
