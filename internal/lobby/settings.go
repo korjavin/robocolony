@@ -22,7 +22,19 @@ type Settings struct {
 	SpawnPerMin float64 `json:"spawn_per_min"`
 	MaxPlayers  int     `json:"max_players"`
 	Seed        int64   `json:"seed"`
+
+	// AI is the computer colonies seated alongside the players (design §12 P2),
+	// one entry per colony, in the order they take their bases after the human
+	// seats. It lives in the settings rather than in lobby_members because a
+	// replay rebuilds a match from the lobby row: the profile list has to come
+	// back with the seed or a restart would rebuild a world with fewer colonies
+	// in it. See ai.go.
+	AI []Profile `json:"ai,omitempty"`
 }
+
+// Colonies is how many bases the match generates: one per seat plus one per AI
+// profile.
+func (s Settings) Colonies(members int) int { return members + len(s.AI) }
 
 // Legal ranges. Wide enough to be worth tuning, narrow enough that no setting
 // can turn one match into a denial of service for the whole server.
@@ -61,6 +73,16 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("spawn_per_min must be 0..%d, got %g", maxSpawnPerMin, s.SpawnPerMin)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
+	case s.MaxPlayers+len(s.AI) > maxPlayers:
+		// maxPlayers is the cap on *colonies*, not on humans: an AI colony
+		// takes a base and costs a tick's simulation exactly like a human one.
+		return fmt.Errorf("%d player seats and %d AI colonies is %d colonies, the limit is %d",
+			s.MaxPlayers, len(s.AI), s.MaxPlayers+len(s.AI), maxPlayers)
+	}
+	for _, p := range s.AI {
+		if !p.Valid() {
+			return fmt.Errorf("unknown AI profile %q", p)
+		}
 	}
 	return nil
 }

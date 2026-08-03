@@ -46,6 +46,9 @@ type Colony struct {
 	ID          int    `json:"id"`
 	UserID      int64  `json:"user_id"`
 	DisplayName string `json:"display_name"`
+	// AI is the profile driving a computer colony (design §12 P2), and empty
+	// for a human seat. UserID is 0 alongside it.
+	AI string `json:"ai,omitempty"`
 }
 
 // Component is one catalogue row.
@@ -217,7 +220,9 @@ func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World) Init {
 
 	seats := make([]Colony, 0, len(colonies))
 	for _, c := range colonies {
-		seats = append(seats, Colony{ID: int(c.ID), UserID: c.UserID, DisplayName: c.DisplayName})
+		seats = append(seats, Colony{
+			ID: int(c.ID), UserID: c.UserID, DisplayName: c.DisplayName, AI: string(c.AI),
+		})
 	}
 
 	return Init{

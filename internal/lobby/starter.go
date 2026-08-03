@@ -9,8 +9,10 @@ import (
 
 // The POC starting kit. Design §2.1 has every player prepare a colony from an
 // equal budget out of their own library; E6.1 builds that library, so until
-// then every colony starts from the same blueprint and the same robot count,
-// which is equal by construction.
+// then every human colony starts from the same blueprint set and the same robot
+// count, which is equal by construction. An AI colony starts from a canned kit
+// of the same shape (ai.go) — the same blueprints, the same rule language, the
+// same production, never a privileged controller.
 const (
 	DefaultBlueprintID = "bp-default-scavenger"
 	DefaultProgramID   = "prog-default-scavenger"
@@ -24,9 +26,14 @@ const (
 	headings = 8
 )
 
-// defaultArmor is the tier the canonical starter blueprint wears; the other
-// tiers come from the catalogue in DefaultBlueprints.
-const defaultArmor = sim.MediumArmor
+// The canonical body: the (locomotion, armor) pair whose blueprint keeps the
+// bare id in every fan-out below. The rest of the catalogue's rows are
+// suffixed. internal/server/programs.go seeds the player library against the
+// canonical scavenger, so its id is load-bearing.
+const (
+	defaultArmor = sim.MediumArmor
+	defaultLoco  = sim.Tracks
+)
 
 // DefaultBlueprint is the canonical starting blueprint: the one the library
 // seeds and the one a program is checked against before anyone edits a design.
@@ -34,38 +41,74 @@ const defaultArmor = sim.MediumArmor
 // The parts radar is not decoration: without one, prog.Validate rejects
 // move_to_radar_target, and DefaultProgram — design §10.7 — degenerates into a
 // blind random walk without it.
-func DefaultBlueprint() sim.Blueprint { return scavenger(defaultArmor) }
+func DefaultBlueprint() sim.Blueprint { return canonicalOf(DefaultBlueprintID, scavengerKit()) }
 
 // DefaultBlueprints is the *set* a colony starts with approved for production
-// (design §5.1 has the player approve one or more): one scavenger per armor
-// tier in the catalogue. That is the point of the set — the §5.2 build scan
-// needs a blueprint's exact components, so a colony approving only the medium
-// variant stalls forever the moment medium armor runs out, however much light
-// and heavy armor it has scavenged. An armor row added to the catalogue gets a
-// starter blueprint here for free.
-func DefaultBlueprints() []sim.Blueprint {
-	var out []sim.Blueprint
-	for _, c := range sim.Catalogue() {
-		if c.Kind == sim.KindArmor {
-			out = append(out, scavenger(c.Variant))
+// (design §5.1 has the player approve one or more): one scavenger per
+// (locomotion, armor) pair in the catalogue. That is the point of the set — the
+// §5.2 build scan needs a blueprint's exact components, so a colony approving
+// only the medium-armor tracks variant stalls forever the moment either medium
+// armor or tracks runs out, however much light armor and how many legs it has
+// scavenged. A locomotion or armor row added to the catalogue gets starter
+// blueprints here for free.
+//
+// Nine blueprints, and §5.2 picks uniformly among the *buildable* ones, so the
+// count only widens what a colony can do with what it actually holds: a colony
+// with one armor tier and one locomotion unit in stock still has exactly one
+// choice. What it buys is that no single component ever stalls production.
+func DefaultBlueprints() []sim.Blueprint { return scavengerKit() }
+
+// scavengerKit is the §10.7 scavenger body fanned out over the catalogue.
+func scavengerKit() []sim.Blueprint {
+	return fanOut(DefaultBlueprintID, "scavenger", DefaultProgramID, sim.Manipulator, sim.PartsRadar)
+}
+
+// canonicalOf returns the member of a fan-out that kept the bare prefix as its
+// id — the (defaultLoco, defaultArmor) body. fanOut always emits it, so the
+// zero value is unreachable.
+func canonicalOf(prefix string, bps []sim.Blueprint) sim.Blueprint {
+	for _, bp := range bps {
+		if bp.ID == prefix {
+			return bp
+		}
+	}
+	return sim.Blueprint{}
+}
+
+// fanOut builds one blueprint per (locomotion, armor) pair in the catalogue
+// around a fixed set of extra components. The id is keyed on the variant
+// numbers, which the catalogue promises never to reuse, and the canonical pair
+// keeps the bare prefix as its id.
+func fanOut(idPrefix, name, programID string, extra ...sim.Variant) []sim.Blueprint {
+	locos, armors := variantsOfKind(sim.KindLocomotion), variantsOfKind(sim.KindArmor)
+	out := make([]sim.Blueprint, 0, len(locos)*len(armors))
+	for _, loco := range locos {
+		for _, armor := range armors {
+			id, label := idPrefix, name
+			if loco != defaultLoco || armor != defaultArmor {
+				id = fmt.Sprintf("%s-%d-%d", idPrefix, loco, armor)
+				label = fmt.Sprintf("%s %s %s", armor, loco, name)
+			}
+			out = append(out, sim.Blueprint{
+				ID:         id,
+				Name:       label,
+				Components: append([]sim.Variant{loco, armor}, extra...),
+				ProgramID:  programID,
+			})
 		}
 	}
 	return out
 }
 
-// scavenger is the §10.7 scavenger body around one armor variant. The id is
-// keyed on the variant number, which the catalogue promises never to reuse.
-func scavenger(armor sim.Variant) sim.Blueprint {
-	id, name := DefaultBlueprintID, "scavenger"
-	if armor != defaultArmor {
-		id, name = fmt.Sprintf("%s-%d", DefaultBlueprintID, armor), armor.String()+" scavenger"
+// variantsOfKind is every catalogue row of one kind, in catalogue order.
+func variantsOfKind(k sim.ComponentKind) []sim.Variant {
+	var out []sim.Variant
+	for _, c := range sim.Catalogue() {
+		if c.Kind == k {
+			out = append(out, c.Variant)
+		}
 	}
-	return sim.Blueprint{
-		ID:         id,
-		Name:       name,
-		Components: []sim.Variant{sim.Tracks, armor, sim.Manipulator, sim.PartsRadar},
-		ProgramID:  DefaultProgramID,
-	}
+	return out
 }
 
 // DefaultProgram is the design §10.7 component scavenger, rule for rule.
@@ -86,13 +129,44 @@ func DefaultProgram() prog.Program {
 	}}
 }
 
-// equipColony approves the starting blueprints at a base and puts its starting
+// kit is a colony's starting equipment: what it has approved for production,
+// the programs those blueprints name, and one entry per robot it starts with.
+// A human colony and an AI colony differ only in the value of this struct.
+type kit struct {
+	blueprints []sim.Blueprint
+	programs   []namedProgram
+	start      []sim.Blueprint // one per starting robot
+}
+
+// namedProgram is a program plus the runtime id blueprints refer to it by.
+type namedProgram struct {
+	id string
+	p  prog.Program
+}
+
+// humanKit is the design §2.1 equal starting budget for a player's colony.
+func humanKit() kit {
+	return kit{
+		blueprints: DefaultBlueprints(),
+		programs:   []namedProgram{{DefaultProgramID, DefaultProgram()}},
+		start:      repeat(DefaultBlueprint(), startingRobots),
+	}
+}
+
+func repeat(bp sim.Blueprint, n int) []sim.Blueprint {
+	out := make([]sim.Blueprint, n)
+	for i := range out {
+		out[i] = bp
+	}
+	return out
+}
+
+// equipColony approves a kit's blueprints at a base and puts its starting
 // robots on the map. Everything random here draws from the world's own rng, so
-// two matches with the same seed and member count start identical.
-func equipColony(w *sim.World, base *sim.Base) {
-	base.Blueprints = append(base.Blueprints, DefaultBlueprints()...)
-	bp := DefaultBlueprint()
-	for i := 0; i < startingRobots; i++ {
+// two matches with the same seed, member list and AI list start identical.
+func equipColony(w *sim.World, base *sim.Base, k kit) {
+	base.Blueprints = append(base.Blueprints, k.blueprints...)
+	for _, bp := range k.start {
 		w.Robots = append(w.Robots, &sim.Robot{
 			ID:        w.NextID(),
 			Colony:    base.Colony,

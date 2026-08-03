@@ -19,12 +19,16 @@ const TickRate = 10
 
 const tickInterval = time.Second / TickRate
 
-// Colony is one member's seat in a running match. The index into Match.Colonies
-// is the sim.ColonyID, assigned in join order.
+// Colony is one seat in a running match. The index into Match.Colonies is the
+// sim.ColonyID: human seats first, in join order, then one per AI profile.
 type Colony struct {
 	ID          sim.ColonyID `json:"id"`
 	UserID      int64        `json:"user_id"`
 	DisplayName string       `json:"display_name"`
+	// AI names the profile driving this colony, and is empty for a human seat.
+	// UserID is 0 alongside it: user ids start at 1, so no authenticated caller
+	// can ever match an AI colony and command its robots.
+	AI Profile `json:"ai,omitempty"`
 }
 
 // Match is one running simulation, and the only thing in this package that is
@@ -56,35 +60,58 @@ type Match struct {
 	log []Command
 }
 
-// newMatch generates the arena and puts every member's colony in it.
+// newMatch generates the arena and puts every colony in it: one per member,
+// then one per AI profile in the settings (design §12 P2).
 func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 	if len(members) == 0 {
 		return nil, errors.New("lobby: cannot start a match with no members")
 	}
-	w := sim.Generate(s.Seed, s.GenOpts(len(members)))
-	if len(w.Bases) != len(members) {
+	// Colony kits are resolved before anything is generated: an unknown profile
+	// in a stored settings row must fail the start, not leave a base standing
+	// with nothing approved.
+	kits := make([]kit, 0, s.Colonies(len(members)))
+	for range members {
+		kits = append(kits, humanKit())
+	}
+	for _, p := range s.AI {
+		k, ok := p.kit()
+		if !ok {
+			return nil, fmt.Errorf("lobby: unknown AI profile %q", p)
+		}
+		kits = append(kits, k)
+	}
+
+	w := sim.Generate(s.Seed, s.GenOpts(len(kits)))
+	if len(w.Bases) != len(kits) {
 		// Generation caps colonies by arena area. maxPlayers is far below that
 		// cap, so this is a programming error, not a player-reachable one.
-		return nil, fmt.Errorf("lobby: generated %d bases for %d members", len(w.Bases), len(members))
+		return nil, fmt.Errorf("lobby: generated %d bases for %d colonies", len(w.Bases), len(kits))
 	}
 
 	rt := prog.NewRuntime()
-	rt.Install(DefaultProgramID, DefaultProgram())
 	w.Control = rt.Control
 
 	m := &Match{
 		ID:       lobby.ID,
 		Name:     lobby.Name,
 		Settings: s,
-		Colonies: make([]Colony, len(members)),
+		Colonies: make([]Colony, len(kits)),
 		Started:  time.Now().UTC(),
 		world:    w,
 		runtime:  rt,
 	}
-	for i, member := range members {
+	for i, k := range kits {
 		base := w.Bases[i]
-		equipColony(w, base)
-		m.Colonies[i] = Colony{ID: base.Colony, UserID: member.UserID, DisplayName: member.DisplayName}
+		for _, np := range k.programs {
+			rt.Install(np.id, np.p)
+		}
+		equipColony(w, base, k)
+		if i < len(members) {
+			m.Colonies[i] = Colony{ID: base.Colony, UserID: members[i].UserID, DisplayName: members[i].DisplayName}
+			continue
+		}
+		p := s.AI[i-len(members)]
+		m.Colonies[i] = Colony{ID: base.Colony, DisplayName: p.DisplayName(), AI: p}
 	}
 	return m, nil
 }
