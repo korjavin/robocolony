@@ -705,6 +705,20 @@ func TestTwoWeaponsFireInSlotOrder(t *testing.T) {
 	if got, want := shooter.WeaponCooldown[0], cannon.Cooldown-1; got != want {
 		t.Fatalf("slot-0 cooldown = %d, want %d: weapons must reload every tick", got, want)
 	}
+
+	// With both modules reloading the robot reports no reach at all: what a
+	// program is told about weapon range must be what attack can actually do,
+	// or a rule picks a shot the tick then wastes.
+	v := w.View(shooter, nil)
+	if v.WeaponReady || v.WeaponRange != 0 {
+		t.Fatalf("view says ready=%v range=%d while both weapons reload", v.WeaponReady, v.WeaponRange)
+	}
+	// The short weapon back first: reported reach is the gun's, not the
+	// still-reloading cannon's.
+	shooter.WeaponCooldown = [MaxWeapons]int{cannon.Cooldown, 0}
+	if v := w.View(shooter, nil); !v.WeaponReady || v.WeaponRange != gun.Range {
+		t.Fatalf("view says ready=%v range=%d, want the reloaded gun's %d", v.WeaponReady, v.WeaponRange, gun.Range)
+	}
 }
 
 // The tick loop must not smuggle in nondeterminism: two worlds with the same

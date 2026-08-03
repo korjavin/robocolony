@@ -137,10 +137,10 @@ type RobotView struct {
 	RadarTargets      []Sighting // radar only, omnidirectional, nearest first
 	Signals           []Signal   // heard this tick, own colony, never own
 
-	// WeaponReady is true when at least one installed weapon is off cooldown.
-	// WeaponRange is the longest range installed — a capability, not a
-	// readiness test, so a rule can ask "is it in range" and "can I shoot yet"
-	// separately.
+	// WeaponReady is true when at least one installed weapon is off cooldown,
+	// and WeaponRange is how far those reloaded weapons reach — zero while
+	// everything is reloading. Both are about this tick, so a rule that tests
+	// them and attacks always finds a weapon that can take the shot.
 	WeaponReady bool
 	WeaponRange int
 
@@ -398,20 +398,24 @@ func (w *World) moveTo(r *Robot, dest Coord) int {
 	return cost
 }
 
-// weaponry reports whether any installed weapon is off cooldown, and the
-// longest range installed. Slots past MaxWeapons are ignored: Validate rejects
-// them, and a hand-built blueprint must not index past the cooldown array.
+// weaponry reports whether any installed weapon is off cooldown, and how far
+// the ready ones reach. Both describe *this* tick: reach ignores a reloading
+// long-range module, so "in weapon range" means "readyWeapon would find
+// something" and a rule can never pick an attack the tick cannot carry out.
+//
+// Slots past MaxWeapons are ignored: Validate rejects them, and a hand-built
+// blueprint must not index past the cooldown array.
 func weaponry(r *Robot) (ready bool, reach int) {
 	for i, v := range r.Blueprint.Weapons() {
 		if i >= MaxWeapons {
 			break
 		}
 		spec, ok := WeaponStats(v)
-		if !ok {
+		if !ok || r.WeaponCooldown[i] > 0 {
 			continue
 		}
+		ready = true
 		reach = max(reach, spec.Range)
-		ready = ready || r.WeaponCooldown[i] == 0
 	}
 	return ready, reach
 }

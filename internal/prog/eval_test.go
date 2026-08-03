@@ -379,13 +379,20 @@ func TestCombatPredicates(t *testing.T) {
 		WeaponReady:    true,
 		WeaponRange:    8,
 		VisibleEnemies: []sim.Sighting{{ID: 2, Coord: sim.Coord{X: 5, Y: 2}, Distance: 3}},
-		RadarTargets:   []sim.Sighting{{ID: 3, Coord: sim.Coord{X: 9, Y: 9}, Distance: 12}},
+		// Variant zero is sim's "this sighting is a robot"; a parts radar
+		// reports components instead, and those are not targets.
+		RadarTargets: []sim.Sighting{{ID: 3, Coord: sim.Coord{X: 9, Y: 9}, Distance: 12}},
 	}
 	unarmed := armed
 	unarmed.Blueprint, unarmed.WeaponReady, unarmed.WeaponRange = scavengerBlueprint(), false, 0
 
+	// Range is the reach of the weapons that are loaded, so a robot mid-reload
+	// reports no reach at all.
 	reloading := armed
-	reloading.WeaponReady = false
+	reloading.WeaponReady, reloading.WeaponRange = false, 0
+
+	radarLoot := armed
+	radarLoot.RadarTargets = []sim.Sighting{{ID: 3, Variant: sim.Laser, Distance: 2}}
 
 	farEnemy := armed
 	farEnemy.VisibleEnemies = []sim.Sighting{{ID: 2, Distance: 9}}
@@ -406,8 +413,10 @@ func TestCombatPredicates(t *testing.T) {
 		{"visible target in range", VisibleTargetInWpnRange, armed, true},
 		{"visible target too far", VisibleTargetInWpnRange, farEnemy, false},
 		{"visible target but unarmed", VisibleTargetInWpnRange, unarmed, false},
+		{"visible target while reloading", VisibleTargetInWpnRange, reloading, false},
 		{"radar target too far", DetectedTargetInWpnRange, armed, false},
 		{"radar target in range", DetectedTargetInWpnRange, closeRadar, true},
+		{"radar sees loot, not an enemy", DetectedTargetInWpnRange, radarLoot, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := matcher{v: tc.v}
@@ -448,6 +457,14 @@ func TestAttackTargetsEnemiesOnly(t *testing.T) {
 		if kind != sim.ActNone || why == "" {
 			t.Fatalf("%s with no target = %v (%q), want a reasoned idle", do, kind, why)
 		}
+	}
+
+	// A parts radar reports loose components. Shooting at those would burn the
+	// primary action and stop the rule scan, so they are not targets either.
+	loot := empty
+	loot.RadarTargets = []sim.Sighting{{ID: 4, Variant: sim.Cannon, Coord: sim.Coord{X: 2, Y: 2}, Distance: 2}}
+	if kind, _, why := resolvePrimary(Do(AttackRadarTarget), loot); kind != sim.ActNone || why == "" {
+		t.Fatalf("attack_radar_target aimed at a loose component: %v (%q)", kind, why)
 	}
 }
 
