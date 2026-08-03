@@ -567,10 +567,9 @@ func weaponry(r *Robot) (ready bool, reach int) {
 // readyWeapon picks the weapon that fires at a target dist cells away: the
 // first one in slot order that is both reloaded and long enough to reach.
 //
-// ponytail: slot order, not "best weapon for the shot". Design §12 P1 leaves
-// selection open and E7.9 owns it; the smallest deterministic rule is first
-// ready in slot order, and a player who wants the cannon to fire first installs
-// it first.
+// Slot order, not "best weapon for the shot": design §12 P1's selection
+// question is settled as first ready in slot order (docs/decisions.md). A
+// player who wants the cannon to fire first installs it first.
 func readyWeapon(r *Robot, dist int) (slot int, spec WeaponSpec, ok bool) {
 	for i, v := range r.Blueprint.Weapons() {
 		if i >= MaxWeapons {
@@ -587,8 +586,8 @@ func readyWeapon(r *Robot, dist int) (slot int, spec WeaponSpec, ok bool) {
 
 // enemyAt returns the hostile robot standing on a cell, lowest id first so a
 // stack of them resolves the same way every run. Friendly robots are invisible
-// to this: design §12 P1 leaves friendly fire open and the POC answer is no
-// friendly fire. Bases are indestructible (design §5.3) and are not targets.
+// to this: design §12 P1's friendly-fire question is settled as no friendly
+// fire (docs/decisions.md). Bases are indestructible (§5.3), not targets.
 //
 // A robot already at zero health is not a target either. It is still in the
 // slice until the end-of-tick sweep, and without this a second shooter later in
@@ -656,7 +655,8 @@ func (w *World) componentInReach(r *Robot) *LooseComponent {
 }
 
 // pickUp implements pick_up_component. A manipulator is required (design §6.3)
-// and the robot carries at most one component (design §12 P0, smallest answer).
+// and the robot carries at most one component — design §12 P0's capacity
+// question is settled at exactly one (docs/decisions.md).
 func (w *World) pickUp(r *Robot) {
 	if !r.Blueprint.Has(KindManipulator) || r.Cargo != VariantNone {
 		return
