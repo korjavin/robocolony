@@ -23,6 +23,10 @@
     /* Terrain, keyed by the init frame's legend names. */
     --terrain-open: #cfd6dd;
     --terrain-barrier: #4a4f57;
+    /* Rubble favours legs and blocks tracks; sand is the reverse. They must be
+       told apart at a glance: terrain now decides where a robot can go. */
+    --terrain-rubble: #a89a86;
+    --terrain-sand: #ddc98d;
     --terrain-unknown: #8d939b;
     --grid-line: #00000012;
 
@@ -40,6 +44,8 @@
     :root {
       --terrain-open: #333a42;
       --terrain-barrier: #14171b;
+      --terrain-rubble: #4c443a;
+      --terrain-sand: #5c5233;
       --terrain-unknown: #565c64;
       --grid-line: #ffffff10;
     }

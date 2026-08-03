@@ -253,14 +253,14 @@ func inWeaponRange(v *sim.RobotView, s []sim.Sighting) bool {
 	return len(s) > 0 && s[0].Distance <= v.WeaponRange
 }
 
-// radarEnemy is the nearest radar contact that is a robot rather than a loose
-// component (sim.Sighting carries VariantNone for a robot). The POC's only
-// radar is the parts radar, so this is empty in practice — which is the point:
-// an attack must not aim at loot and waste the tick. E7.2's enemy-robot radar
-// starts filling it with no change here.
+// radarEnemy is the nearest radar contact that is a robot. It discriminates on
+// Kind, not on Variant: a base carries VariantNone too, so a Variant test would
+// let an enemy-base radar point attack_radar_target at an indestructible base
+// and burn the tick forever. Design §7.2 is explicit that bases are navigation
+// landmarks, not attack objectives.
 func radarEnemy(v sim.RobotView) (sim.Sighting, bool) {
 	for _, s := range v.RadarTargets {
-		if s.Variant == sim.VariantNone {
+		if s.Kind == sim.SightRobot {
 			return s, true
 		}
 	}
