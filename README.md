@@ -37,6 +37,27 @@ go run ./cmd/server    # http://localhost:8080
 dependency — it is also the container healthcheck. `SIGINT`/`SIGTERM` trigger a
 logged graceful shutdown with a 30s drain.
 
+## Google sign-in setup
+
+The server refuses to start without an OAuth client, because every route but
+`/health` and the static shell needs a session.
+
+1. Google Cloud console → **APIs & Services → Credentials → Create credentials
+   → OAuth client ID → Web application**.
+2. **Authorised redirect URI**: `<BASE_URL>/auth/callback` — exactly, including
+   the scheme and with no trailing slash. Add one per environment, e.g.
+   `http://localhost:8080/auth/callback` and
+   `https://robocolony.example.com/auth/callback`. It must match byte for byte
+   or Google returns `redirect_uri_mismatch`.
+3. On the **OAuth consent screen**, the `openid`, `email` and `profile` scopes
+   are all that is requested. While the app is in testing, add each player as a
+   test user.
+4. Put the client id and secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+
+Sessions are a random 32-byte cookie token; only its SHA-256 is stored, the
+expiry is 30 days and slides on use, and the cookie is `HttpOnly`,
+`SameSite=Lax` and `Secure` whenever `BASE_URL` is `https://`.
+
 Checks that must pass before a PR:
 
 ```sh
@@ -53,11 +74,10 @@ gitignored; production values are Portainer stack environment variables.
 | `PORT` | `8080` | server |
 | `LOG_LEVEL` | `info` | server (`debug`/`info`/`warn`/`error`) |
 | `BASE_URL` | `http://localhost:8080` | server |
-| `DB_PATH` | `./data/robocolony.db` | *E2 — declared, unused today* |
-| `SESSION_SECRET` | — | *E2 — declared, unused today* |
-| `GOOGLE_CLIENT_ID` | — | *E2 — declared, unused today* |
-| `GOOGLE_CLIENT_SECRET` | — | *E2 — declared, unused today* |
-| `GOOGLE_REDIRECT_URL` | — | *E2 — declared, unused today* |
+| `DB_PATH` | `./data/robocolony.db` | server |
+| `GOOGLE_CLIENT_ID` | — | server — **required**, startup fails without it |
+| `GOOGLE_CLIENT_SECRET` | — | server — **required**, startup fails without it |
+| `GOOGLE_REDIRECT_URL` | `BASE_URL` + `/auth/callback` | server (override only if the console entry differs) |
 | `HOSTNAME` | — | compose/Traefik only |
 | `TRAEFIK_NETWORK_NAME` | `traefik_default` | compose/Traefik only |
 | `TRAEFIK_CERT_RESOLVER` | `myresolver` | compose/Traefik only |
@@ -82,8 +102,9 @@ a Portainer webhook redeploys the stack.
    branch**, never `master`. `master` carries a `:latest` placeholder tag.
 2. Set the stack environment variables: `HOSTNAME`, `TRAEFIK_NETWORK_NAME`,
    `TRAEFIK_CERT_RESOLVER`, `TRAEFIK_CERT_DOMAIN`,
-   `BASE_URL`, `LOG_LEVEL`, `DB_PATH`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`,
-   `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`.
+   `BASE_URL`, `LOG_LEVEL`, `DB_PATH`, `GOOGLE_CLIENT_ID`,
+   `GOOGLE_CLIENT_SECRET`. `BASE_URL` must be the public `https://` origin —
+   the session cookie's `Secure` flag is derived from its scheme.
 3. No host setup is needed for storage. The container runs as **uid/gid 1000**
    and the SQLite file lives in the `robocolony_data` named volume, which
    Docker seeds from the image's `/app/data` and therefore creates already

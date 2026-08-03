@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in &mdash; robocolony</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto; padding: 6rem 1.25rem; max-width: 24rem; text-align: center;
+    font: 16px/1.6 system-ui, sans-serif;
+  }
+  h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  .tag { margin: 0 0 2.5rem; opacity: .65; }
+  .btn {
+    display: inline-block; padding: .7rem 1.4rem; border-radius: .5rem;
+    border: 1px solid currentColor; text-decoration: none; font-weight: 600;
+    color: inherit;
+  }
+  .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+  footer { margin-top: 3rem; font-size: .85rem; opacity: .6; }
+</style>
+</head>
+<body>
+  <h1>robocolony</h1>
+  <p class="tag">Sign in to build blueprints and programs.</p>
+
+  <!-- A plain link: the server mints the state and PKCE challenge. -->
+  <a class="btn" href="/auth/login">Sign in with Google</a>
+
+  <footer>Your Google account identifies you; nothing else is read from it.</footer>
+</body>
+</html>

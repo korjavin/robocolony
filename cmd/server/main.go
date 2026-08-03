@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/korjavin/robocolony/internal/auth"
 	"github.com/korjavin/robocolony/internal/config"
 	"github.com/korjavin/robocolony/internal/db"
 	"github.com/korjavin/robocolony/web"
@@ -49,9 +51,19 @@ func run() error {
 	}
 	defer func() { _ = database.Close() }()
 
+	if cfg.GoogleClientID == "" || cfg.GoogleClientSecret == "" {
+		return errors.New("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set: every route but /health needs a session, so there is nothing useful to serve without them")
+	}
+	// Also before the listener: OIDC discovery is a network call, and a
+	// half-configured login should fail the deploy, not the first player.
+	authHandler, err := auth.New(ctx, database, cfg)
+	if err != nil {
+		return err
+	}
+
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(),
+		Handler:           routes(authHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).
@@ -86,9 +98,13 @@ func run() error {
 	return nil
 }
 
-func routes() http.Handler {
+func routes(a *auth.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
+	a.Routes(mux)
+	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
+	// Everything under /api needs a session; the static shell does not.
+	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))
 	return mux
@@ -100,4 +116,25 @@ func health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(`{"status":"ok"}` + "\n"))
+}
+
+func loginPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "login.html")
+}
+
+// me is the smallest authenticated endpoint: it tells the client who it is,
+// and proves the session middleware end to end.
+func me(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFrom(r.Context())
+	if !ok { // unreachable behind RequireAuth
+		http.Error(w, "no user in context", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":           user.ID,
+		"email":        user.Email,
+		"display_name": user.DisplayName,
+	})
 }

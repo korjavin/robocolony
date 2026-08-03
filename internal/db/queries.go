@@ -72,6 +72,25 @@ func (d *DB) SessionUser(ctx context.Context, tokenHash string) (User, error) {
 		WHERE s.token_hash = ? AND s.expires_at > unixepoch()`, tokenHash))
 }
 
+// RefreshSession slides a live session's expiry to now+ttl, but only once it
+// is past its half life, so an active browser stays logged in without one
+// write per request. It reports whether the row was actually extended.
+func (d *DB) RefreshSession(ctx context.Context, tokenHash string, ttl time.Duration) (bool, error) {
+	secs := int64(ttl.Seconds())
+	res, err := d.ExecContext(ctx, `
+		UPDATE sessions SET expires_at = unixepoch() + ?
+		WHERE token_hash = ? AND expires_at > unixepoch() AND expires_at < unixepoch() + ?`,
+		secs, tokenHash, secs/2)
+	if err != nil {
+		return false, fmt.Errorf("db: refresh session: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("db: refresh session: %w", err)
+	}
+	return n > 0, nil
+}
+
 // DeleteSession logs a session out. Deleting an unknown session is not an error.
 func (d *DB) DeleteSession(ctx context.Context, tokenHash string) error {
 	if _, err := d.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash); err != nil {

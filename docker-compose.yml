@@ -39,12 +39,13 @@ services:
       # Set this in Portainer to https://<HOSTNAME>; empty falls back to localhost.
       - BASE_URL=${BASE_URL}
       - LOG_LEVEL=${LOG_LEVEL:-info}
-      # Consumed from E2 onward; declared now so the stack needs no edit later.
       - DB_PATH=${DB_PATH:-/app/data/robocolony.db}
-      - SESSION_SECRET=${SESSION_SECRET}
+      # Required: the server exits at startup without an OAuth client. The
+      # redirect URI defaults to BASE_URL + /auth/callback; override it only if
+      # the Google console entry differs.
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL}
+      - GOOGLE_REDIRECT_URL=${GOOGLE_REDIRECT_URL:-}
     restart: unless-stopped
 
 volumes:
