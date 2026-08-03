@@ -427,13 +427,13 @@ func TestCombatPredicates(t *testing.T) {
 	reloading.WeaponReady, reloading.WeaponRange = false, 0
 
 	radarLoot := armed
-	radarLoot.RadarTargets = []sim.Sighting{{ID: 3, Variant: sim.Laser, Distance: 2}}
+	radarLoot.RadarTargets = []sim.Sighting{{ID: 3, Kind: sim.SightComponent, Variant: sim.Laser, Distance: 2}}
 
 	farEnemy := armed
-	farEnemy.VisibleEnemies = []sim.Sighting{{ID: 2, Distance: 9}}
+	farEnemy.VisibleEnemies = []sim.Sighting{{ID: 2, Kind: sim.SightRobot, Distance: 9}}
 
 	closeRadar := armed
-	closeRadar.RadarTargets = []sim.Sighting{{ID: 3, Distance: 8}}
+	closeRadar.RadarTargets = []sim.Sighting{{ID: 3, Kind: sim.SightRobot, Distance: 8}}
 
 	for _, tc := range []struct {
 		name string
@@ -469,8 +469,8 @@ func TestAttackTargetsEnemiesOnly(t *testing.T) {
 		Blueprint:         defenderBlueprint(),
 		WeaponRange:       8,
 		VisibleComponents: []sim.Sighting{{ID: 1, Coord: sim.Coord{X: 1, Y: 1}, Distance: 1}},
-		VisibleEnemies:    []sim.Sighting{{ID: 2, Coord: sim.Coord{X: 5, Y: 5}, Distance: 4}},
-		RadarTargets:      []sim.Sighting{{ID: 3, Coord: sim.Coord{X: 9, Y: 9}, Distance: 6}},
+		VisibleEnemies:    []sim.Sighting{{ID: 2, Kind: sim.SightRobot, Coord: sim.Coord{X: 5, Y: 5}, Distance: 4}},
+		RadarTargets:      []sim.Sighting{{ID: 3, Kind: sim.SightRobot, Coord: sim.Coord{X: 9, Y: 9}, Distance: 6}},
 	}
 	for _, tc := range []struct {
 		do   ActionID
@@ -624,5 +624,40 @@ func TestDecideNeverPanics(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestRadarNeverAimsAtABase pins design §7.2: enemy bases are navigation
+// landmarks, not attack objectives. A base and a robot both carry VariantNone,
+// so discriminating on Variant instead of Kind would let a base-radar loadout
+// aim attack_radar_target at something indestructible and burn every tick.
+func TestRadarNeverAimsAtABase(t *testing.T) {
+	base := sim.Sighting{ID: 1, Kind: sim.SightBase, Variant: sim.VariantNone, Distance: 2}
+	robot := sim.Sighting{ID: 2, Kind: sim.SightRobot, Variant: sim.VariantNone, Distance: 9}
+	loot := sim.Sighting{ID: 3, Kind: sim.SightComponent, Variant: sim.Tracks, Distance: 1}
+
+	for _, tc := range []struct {
+		name    string
+		targets []sim.Sighting
+		wantID  int // 0 means "no target"
+	}{
+		{"a base alone is not a target", []sim.Sighting{base}, 0},
+		{"loot alone is not a target", []sim.Sighting{loot}, 0},
+		{"a nearer base does not shadow a robot", []sim.Sighting{loot, base, robot}, 2},
+		{"a robot is found", []sim.Sighting{robot}, 2},
+		{"nothing at all", nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := radarEnemy(sim.RobotView{RadarTargets: tc.targets})
+			if tc.wantID == 0 {
+				if ok {
+					t.Fatalf("radarEnemy returned %+v, want no target", got)
+				}
+				return
+			}
+			if !ok || got.ID != tc.wantID {
+				t.Fatalf("radarEnemy = (%+v, %v), want id %d", got, ok, tc.wantID)
+			}
+		})
 	}
 }
