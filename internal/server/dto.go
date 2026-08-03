@@ -64,14 +64,23 @@ type Component struct {
 // stream logs the measured size per connection). Deltas get a bead if that
 // stops being true.
 type Snapshot struct {
-	Tick     uint64 `json:"tick"`
-	EndTick  uint64 `json:"end_tick"`
-	Finished bool   `json:"finished"`
+	Tick    uint64 `json:"tick"`
+	EndTick uint64 `json:"end_tick"`
 
 	Robots   []Robot       `json:"robots"`
 	Bases    []Base        `json:"bases"`
 	Loose    []Loose       `json:"loose"`
 	Colonies []ColonyStats `json:"colonies"`
+}
+
+// End is the terminal frame: the match is over and no further tick will come.
+//
+// It is a separate event rather than a flag on the last snapshot because the
+// snapshot and the finished flag cannot be read in the same critical section
+// from out here — a flag would be either stale by one frame or would repeat the
+// final tick. The final score of design §9 belongs in this frame; E5.2 owns it.
+type End struct {
+	Tick uint64 `json:"tick"`
 }
 
 // Robot is one unit as the observer sees it. Health is hp/hp_max rather than a

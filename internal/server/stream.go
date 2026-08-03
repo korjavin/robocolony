@@ -35,8 +35,8 @@ const pollInterval = time.Second / lobby.TickRate / 2
 // Stream is GET /api/matches/{id}/stream: the authoritative world, as SSE.
 //
 // One event: init frame on connect carries the terrain and everything else that
-// cannot change, then one event: tick frame per simulation tick until the match
-// finishes or the client goes away. Design §4.3 — no fog of war for the
+// cannot change, then one event: tick frame per simulation tick, then a single
+// event: end when the match is over. Design §4.3 — no fog of war for the
 // observer, so every colony is in every frame.
 //
 // The handler owns no goroutines: everything runs on the request's own, so a
@@ -98,38 +98,41 @@ func Stream(reg *lobby.Registry) http.HandlerFunc {
 				}
 				flusher.Flush()
 			case <-ticker.C:
+				// Read before the snapshot: a match that finishes in between
+				// has a frozen world, so the snapshot below is still the final
+				// tick and the end frame after it is still true. The other
+				// order would announce the end at a tick that is about to move.
 				finished := m.Finished()
+
 				var snap Snapshot
 				fresh := false
 				m.Read(func(world *sim.World, rt *prog.Runtime) {
-					if world.Tick == last && !finished {
+					if world.Tick == last {
 						return // no new tick yet; nothing to say
 					}
 					snap = NewSnapshot(world, rt, info.EndTick)
 					fresh = true
 				})
-				if !fresh {
-					continue
-				}
-				last = snap.Tick
-				snap.Finished = finished
-
-				n, err := send(w, flusher, "tick", snap)
-				if err != nil {
-					return
-				}
-				if first {
-					first = false
-					level := slog.LevelInfo
-					if n > maxFrameBytes {
-						// File a bead for deltas; do not invent a protocol here.
-						level = slog.LevelWarn
+				if fresh {
+					last = snap.Tick
+					n, err := send(w, flusher, "tick", snap)
+					if err != nil {
+						return
 					}
-					slog.Log(ctx, level, "world stream frame size", "match_id", id,
-						"tick_bytes", n, "robots", len(snap.Robots), "loose", len(snap.Loose))
+					if first {
+						first = false
+						level := slog.LevelInfo
+						if n > maxFrameBytes {
+							// File a bead for deltas; do not invent a protocol here.
+							level = slog.LevelWarn
+						}
+						slog.Log(ctx, level, "world stream frame size", "match_id", id,
+							"tick_bytes", n, "robots", len(snap.Robots), "loose", len(snap.Loose))
+					}
 				}
 				if finished {
-					slog.Info("world stream closed: match finished", "match_id", id, "tick", snap.Tick)
+					_, _ = send(w, flusher, "end", End{Tick: last})
+					slog.Info("world stream closed: match finished", "match_id", id, "tick", last)
 					return
 				}
 			}
