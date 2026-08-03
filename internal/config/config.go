@@ -13,6 +13,7 @@ type Config struct {
 	Port     string     // TCP port to listen on
 	LogLevel slog.Level // minimum level for the slog handler
 	BaseURL  string     // public origin, used for OIDC redirects later
+	DBPath   string     // SQLite file; its directory must be writable by the process uid
 }
 
 // Load reads the environment and applies defaults. It fails only on values
@@ -22,6 +23,10 @@ func Load(getenv func(string) string) (Config, error) {
 		Port:     or(getenv("PORT"), "8080"),
 		LogLevel: slog.LevelInfo,
 		BaseURL:  or(getenv("BASE_URL"), "http://localhost:8080"),
+		// Relative on purpose: the container's WORKDIR is /app, so this default
+		// resolves to /app/data/robocolony.db there while a local `go run`
+		// still works without setting anything.
+		DBPath: or(getenv("DB_PATH"), "data/robocolony.db"),
 	}
 	if s := getenv("LOG_LEVEL"); s != "" {
 		if err := cfg.LogLevel.UnmarshalText([]byte(s)); err != nil {
