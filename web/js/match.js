@@ -48,7 +48,7 @@ function bakeTerrain() {
   canvas.height = init.height * cell;
   canvas.style.maxWidth = `${canvas.width}px`; // never upscale past the baked size
 
-  const colors = init.terrain_legend.map((n) => css(`--terrain-${slug(n)}`, css("--terrain-unknown", "#888")));
+  const colors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");
   terrain.width = canvas.width;
   terrain.height = canvas.height;
@@ -83,6 +83,11 @@ function bakeTerrain() {
 // Terrain and component kinds are built from the wire, not from a list of four
 // and a list of five: a terrain class or a catalogue kind added server-side
 // appears in the legend with no client change.
+//
+// The same goes for what a terrain class *does*: the §3.1 traversal matrix is
+// read off init.terrain_legend, never restated here. A locomotion is named by
+// resolving its variant id against the component catalogue, so the legend and
+// the simulation cannot drift apart — not even by a rename.
 
 function legendList(host, items) {
   host.replaceChildren(...items.map(([label, color]) => {
@@ -94,9 +99,18 @@ function legendList(host, items) {
   }));
 }
 
+function terrainLabel(t) {
+  const names = (vs) => vs.map(compName).join(", ");
+  const effects = [];
+  if (t.hard_barrier) effects.push("blocks everything");
+  else if (t.impassable?.length) effects.push(`blocks ${names(t.impassable)}`);
+  if (t.favored?.length) effects.push(`favours ${names(t.favored)}`);
+  return effects.length ? `${t.name} — ${effects.join(", ")}` : t.name;
+}
+
 function buildLegend() {
-  legendList($("lg-terrain"), init.terrain_legend.map((n) =>
-    [n, `var(--terrain-${slug(n)}, var(--terrain-unknown))`]));
+  legendList($("lg-terrain"), init.terrain_legend.map((t) =>
+    [terrainLabel(t), `var(--terrain-${slug(t.name)}, var(--terrain-unknown))`]));
 
   const kinds = [...new Set(init.components.map((c) => c.kind))].sort();
   legendList($("lg-kinds"), kinds.map((k) =>

@@ -60,6 +60,49 @@ func startMatch(t *testing.T) (*lobby.Registry, *lobby.Match) {
 	return svc.Registry(), m
 }
 
+// TestTerrainLegendMatchesSpecs is what keeps the legend honest: the wire is a
+// projection of the design §3.1 traversal matrix, so a rule changed in
+// internal/sim must reach the client without anyone editing the client. It also
+// pins every locomotion id to the component catalogue in the same frame — the
+// legend names them by resolving those ids, and an unresolvable one would
+// render as "variant 3".
+func TestTerrainLegendMatchesSpecs(t *testing.T) {
+	_, m := startMatch(t)
+
+	info := m.Info()
+	var in Init
+	m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w) })
+
+	specs := sim.TerrainSpecs()
+	if len(in.TerrainLegend) != len(specs) {
+		t.Fatalf("init.TerrainLegend has %d classes, want %d", len(in.TerrainLegend), len(specs))
+	}
+	known := map[int]bool{}
+	for _, c := range in.Components {
+		known[c.Variant] = true
+	}
+	for i, s := range specs {
+		got := in.TerrainLegend[i]
+		if got.Name != s.Name {
+			t.Errorf("init.TerrainLegend[%d].Name = %q, want %q", i, got.Name, s.Name)
+		}
+		if got.HardBarrier != s.HardBarrier {
+			t.Errorf("%s: HardBarrier = %v, want %v", s.Name, got.HardBarrier, s.HardBarrier)
+		}
+		if !slices.Equal(got.Impassable, variants(s.Impassable)) {
+			t.Errorf("%s: Impassable = %v, want %v", s.Name, got.Impassable, variants(s.Impassable))
+		}
+		if !slices.Equal(got.Favored, variants(s.Favored)) {
+			t.Errorf("%s: Favored = %v, want %v", s.Name, got.Favored, variants(s.Favored))
+		}
+		for _, v := range slices.Concat(got.Impassable, got.Favored) {
+			if !known[v] {
+				t.Errorf("%s: variant %d is not in the component catalogue", s.Name, v)
+			}
+		}
+	}
+}
+
 // TestSnapshotShape is the bead's golden-ish check: a real generated world
 // produces frames with every field the renderer needs populated.
 func TestSnapshotShape(t *testing.T) {
