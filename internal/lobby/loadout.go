@@ -29,12 +29,13 @@ import (
 //   - No player can out-equip another. See startingRoster.
 
 // maxLoadoutEntries bounds how many blueprints one colony may approve. The
-// built-in kit approves nine (one scavenger per locomotion × armor pair), so a
-// player fanning their own design out the same way still fits.
-const maxLoadoutEntries = 12
+// built-in kit approves eighteen (a scavenger and a base guard per locomotion ×
+// armor pair), so a player fanning two of their own designs out the same way
+// still fits, and nobody is capped below the default they are replacing.
+const maxLoadoutEntries = 18
 
 // maxLoadoutBytes bounds the stored snapshot. A program is capped by prog's own
-// structural limits, but twelve of them at the library's upload limit would be
+// structural limits, but a full loadout of them at the library's upload limit would be
 // megabytes on a row that is read back on every lobby listing.
 const maxLoadoutBytes = 256 << 10
 
