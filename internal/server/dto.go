@@ -180,13 +180,18 @@ type Loose struct {
 	Variant int `json:"variant"`
 }
 
-// ColonyStats is a colony's headline numbers (design §4.4). Losses, kills and
-// the §9 score belong here too; E5.2 owns them and adds fields.
+// ColonyStats is a colony's headline numbers (design §4.4).
+//
+// Score is the design §9 score as finalised by E7.8 — fleet value plus a
+// fraction of the base stock — and FleetValue is the fleet term on its own, so
+// the client can keep showing what a robot is worth without recomputing the
+// discount. A client that only knows fleet_value still renders.
 type ColonyStats struct {
 	Colony     int `json:"colony"`
 	Robots     int `json:"robots"`
 	Inventory  int `json:"inventory"`
 	FleetValue int `json:"fleet_value"`
+	Score      int `json:"score"`
 }
 
 // NewInit builds the connect frame. Callers must hold the match lock over w.
@@ -322,6 +327,10 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 			s.Colonies = append(s.Colonies, *st)
 			delete(stats, r.Colony)
 		}
+	}
+	// One pass over the finished rows, so both paths above get the §9 score.
+	for i := range s.Colonies {
+		s.Colonies[i].Score = w.Score(sim.ColonyID(s.Colonies[i].Colony))
 	}
 	return s
 }

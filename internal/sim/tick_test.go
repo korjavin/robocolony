@@ -1022,6 +1022,10 @@ func skirmish(seed int64) *World {
 		for _, v := range gunnerBlueprint().Components {
 			b.Inventory[v] += 3
 		}
+		// One part no approved blueprint can consume, so production cannot empty
+		// the base: the §9 score's inventory term needs stock to still be there
+		// when the clock runs out.
+		b.Inventory[HeavyArmor]++
 	}
 	for i, at := range []Coord{{7, 8}, {9, 8}} {
 		r := w.addRobot(ColonyID(i), at, [2]Heading{East, West}[i], gunnerBlueprint())
@@ -1076,30 +1080,105 @@ func TestScoreDeterministic(t *testing.T) {
 	}
 }
 
-// Design §9, by hand: colony_score is the summed value of the installed
-// components of every surviving robot, and nothing else.
-func TestScoreIsFleetValue(t *testing.T) {
+// Design §9 as E7.8 finalised it, recomputed by hand off a real match: fleet
+// value plus a fraction of the base stock.
+func TestScoreIsFleetPlusDiscountedStock(t *testing.T) {
 	w := skirmish(11)
 	lb := w.Leaderboard()
+	stocked := false
 	for _, res := range lb {
-		want, count := 0, 0
+		fleet, count := 0, 0
 		for _, r := range w.Robots {
 			if r.Colony == res.Colony {
-				want += r.Blueprint.Value()
+				fleet += r.Blueprint.Value()
 				count++
 			}
 		}
-		if res.Score != want || res.Robots != count {
-			t.Fatalf("colony %d scored %d over %d robots, want %d over %d",
-				res.Colony, res.Score, res.Robots, want, count)
+		stock := 0
+		for _, e := range w.baseOf(res.Colony).SortedInventory() {
+			c, _ := Lookup(e.Variant)
+			stock += c.Value * e.Count
+		}
+		stocked = stocked || stock > 0
+		want := fleet + stock*inventoryScorePercent/100
+		if res.Score != want || res.FleetValue != fleet || res.InventoryValue != stock || res.Robots != count {
+			t.Fatalf("colony %d: score %d fleet %d stock %d over %d robots, want %d / %d / %d / %d",
+				res.Colony, res.Score, res.FleetValue, res.InventoryValue, res.Robots,
+				want, fleet, stock, count)
 		}
 	}
-	// Best first, then colony id: the ordering must be as reproducible as the
-	// simulation that produced it.
+	if !stocked {
+		t.Fatal("no colony held stock: the inventory term was never exercised")
+	}
+	// Scoring reads state, it never becomes state: a match replayed from its
+	// seed and command log (E7.6) must not depend on whether anyone asked for
+	// the leaderboard on the way.
+	frozen := w.StateHash()
+	w.Leaderboard()
+	w.Score(0)
+	if w.StateHash() != frozen {
+		t.Fatal("reading the score mutated the world")
+	}
+	// Best first, then fleet value, then colony id: the ordering must be as
+	// reproducible as the simulation that produced it.
 	for i := 1; i < len(lb); i++ {
-		if lb[i-1].Score < lb[i].Score || (lb[i-1].Score == lb[i].Score && lb[i-1].Colony > lb[i].Colony) {
+		a, b := lb[i-1], lb[i]
+		if a.Score < b.Score ||
+			(a.Score == b.Score && a.FleetValue < b.FleetValue) ||
+			(a.Score == b.Score && a.FleetValue == b.FleetValue && a.Colony > b.Colony) {
 			t.Fatalf("leaderboard is not sorted: %+v", lb)
 		}
+	}
+}
+
+// The anti-gaming property design §9 asks for, and the reason the inventory
+// term is a fraction: the same components are worth strictly more fielded on a
+// robot than stockpiled in the base, so no amount of hoarding beats building
+// with the same parts. §9 fears the mirror image — padding a robot count with
+// worthless robots — which component-weighted value already answers.
+func TestFieldingBeatsHoarding(t *testing.T) {
+	bp := gunnerBlueprint()
+
+	hoard := arena(8)
+	hb := hoard.addBase(0, Coord{1, 1})
+	for _, v := range bp.Components {
+		hb.Inventory[v]++
+	}
+
+	field := arena(8)
+	field.addBase(0, Coord{1, 1})
+	field.addRobot(0, Coord{2, 2}, North, bp)
+
+	if h, f := hoard.Score(0), field.Score(0); h >= f {
+		t.Fatalf("hoarding %d parts scored %d, fielding the same parts scored %d", len(bp.Components), h, f)
+	}
+	// And the stock is not worth nothing either: design §5.3 keeps a colony
+	// with an empty arena and a full base in the match.
+	if hoard.Score(0) == 0 {
+		t.Fatal("a colony with no robots and a stocked base scored zero")
+	}
+}
+
+// A colony whose stock is worth exactly as much as another's fleet must lose
+// the tie-break, not win it on colony id.
+func TestTieBreakPrefersTheFieldedColony(t *testing.T) {
+	bp := gunnerBlueprint()
+	w := arena(8)
+	// Colony 0 hoards, colony 1 fields. Four times the stock, by construction
+	// of the discount, is exactly one fleet of the same value.
+	hb := w.addBase(0, Coord{1, 1})
+	for _, v := range bp.Components {
+		hb.Inventory[v] += 100 / inventoryScorePercent
+	}
+	w.addBase(1, Coord{6, 6})
+	w.addRobot(1, Coord{6, 5}, North, bp)
+
+	lb := w.Leaderboard()
+	if lb[0].Score != lb[1].Score {
+		t.Fatalf("the two colonies did not tie: %+v", lb)
+	}
+	if lb[0].Colony != 1 {
+		t.Fatalf("tie went to the hoarder: %+v", lb)
 	}
 }
 
