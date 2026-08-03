@@ -312,6 +312,61 @@ func TestAutoBuild(t *testing.T) {
 	}
 }
 
+// A base whose only approved blueprint pins one exact variant stalls the
+// moment that variant runs out, however rich the rest of the inventory is —
+// the live-match bug. One blueprint per armor tier is the fix, and either way
+// an idle base has to say why it is idle.
+func TestBuildStallOnAMissingVariant(t *testing.T) {
+	// A pile of salvage that covers everything except medium armor.
+	stock := func(b *Base) {
+		for _, v := range []Variant{Tracks, LightArmor, HeavyArmor, Manipulator, PartsRadar, Laser} {
+			b.Inventory[v] = 5
+		}
+	}
+	medium := scavengerBlueprint()
+	heavy := Blueprint{ID: "bp-scavenger-heavy", Name: "heavy scavenger",
+		Components: []Variant{Tracks, HeavyArmor, Manipulator, PartsRadar}, ProgramID: "prog-scavenge"}
+
+	t.Run("one pinned blueprint stalls, and says so", func(t *testing.T) {
+		w := arena(8)
+		b := w.addBase(0, Coord{4, 4})
+		b.Blueprints = append(b.Blueprints, medium)
+		stock(b)
+		for i := 0; i < buildTicks(medium)+1; i++ {
+			w.Step()
+		}
+		if len(w.Robots) != 0 {
+			t.Fatalf("%d robots built without medium armor", len(w.Robots))
+		}
+		if b.IdleReason() == "" {
+			t.Fatal("a base that can build nothing reports no reason for being idle")
+		}
+	})
+
+	t.Run("a blueprint per armor tier keeps building", func(t *testing.T) {
+		w := arena(8)
+		b := w.addBase(0, Coord{4, 4})
+		b.Blueprints = append(b.Blueprints, medium, heavy)
+		stock(b)
+		w.Step()
+		if b.Build.Ticks == 0 {
+			t.Fatal("base still idle with a heavy-armor blueprint approved and heavy armor in stock")
+		}
+		if b.Build.Blueprint.ID != heavy.ID {
+			t.Fatalf("started %q, want the only covered blueprint %q", b.Build.Blueprint.ID, heavy.ID)
+		}
+		if b.IdleReason() != "" {
+			t.Fatalf("a building base reports idle reason %q", b.IdleReason())
+		}
+		for i := 0; i < buildTicks(heavy); i++ {
+			w.Step()
+		}
+		if len(w.Robots) != 1 {
+			t.Fatalf("%d robots after one build, want 1", len(w.Robots))
+		}
+	})
+}
+
 // Design §5.3: a colony wiped down to zero robots rebuilds from inventory.
 func TestBaseRebuildsFromInventory(t *testing.T) {
 	bp := scavengerBlueprint()

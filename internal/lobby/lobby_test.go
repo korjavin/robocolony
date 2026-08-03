@@ -240,19 +240,50 @@ func TestSeedIsServerChosen(t *testing.T) {
 // the parts radar, without which move_to_radar_target is an error and the
 // program is a blind random walk.
 func TestDefaultKitIsPlayable(t *testing.T) {
-	bp := DefaultBlueprint()
-	if err := bp.Validate(); err != nil {
-		t.Fatalf("DefaultBlueprint().Validate() = %v", err)
+	seen := map[string]bool{}
+	for _, bp := range DefaultBlueprints() {
+		if err := bp.Validate(); err != nil {
+			t.Fatalf("blueprint %q Validate() = %v", bp.ID, err)
+		}
+		if !bp.Has(sim.KindRadar) {
+			t.Errorf("blueprint %q has no radar", bp.ID)
+		}
+		if seen[bp.ID] {
+			t.Errorf("duplicate starter blueprint id %q", bp.ID)
+		}
+		seen[bp.ID] = true
+		res := prog.Validate(DefaultProgram(), bp)
+		if !res.OK() {
+			t.Fatalf("DefaultProgram() on %q: %+v", bp.ID, res.Errors)
+		}
+		if len(res.Warnings) != 0 {
+			t.Errorf("DefaultProgram() on %q warnings = %+v, want none", bp.ID, res.Warnings)
+		}
 	}
-	if !bp.Has(sim.KindRadar) {
-		t.Error("the default blueprint has no radar")
+	if !seen[DefaultBlueprint().ID] {
+		t.Error("DefaultBlueprint() is not one of the approved starter blueprints")
 	}
-	res := prog.Validate(DefaultProgram(), bp)
-	if !res.OK() {
-		t.Fatalf("DefaultProgram() on the default blueprint: %+v", res.Errors)
-	}
-	if len(res.Warnings) != 0 {
-		t.Errorf("DefaultProgram() warnings = %+v, want none", res.Warnings)
+}
+
+// The live-match stall: a base sat idle holding heavy armor because its one
+// approved blueprint wanted medium. The starting kit must keep producing off
+// any armor tier the colony has actually collected.
+func TestColonyBuildsFromAnyArmorTier(t *testing.T) {
+	for _, armor := range []sim.Variant{sim.LightArmor, sim.MediumArmor, sim.HeavyArmor} {
+		m := testMatch(t, shortSettings(600), 1)
+		m.Read(func(w *sim.World, _ *prog.Runtime) {
+			w.Robots = nil // wiped out: §5.3's rebuild-from-inventory path
+			b := w.Bases[0]
+			b.Inventory = map[sim.Variant]int{
+				sim.Tracks: 1, armor: 1, sim.Manipulator: 1, sim.PartsRadar: 1,
+			}
+			for i := 0; i < 200 && len(w.Robots) == 0; i++ {
+				w.Step()
+			}
+			if len(w.Robots) == 0 {
+				t.Errorf("colony holding %v built nothing in 200 ticks (%s)", armor, b.IdleReason())
+			}
+		})
 	}
 }
 

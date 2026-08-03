@@ -139,6 +139,11 @@ type Base struct {
 	Inventory  []InvEntry  `json:"inventory"` // variant order, never map order
 	Blueprints []Blueprint `json:"blueprints"`
 	Build      *Build      `json:"build,omitempty"`
+
+	// IdleReason is why nothing is being assembled, empty while Build is set.
+	// The match view renders it instead of a bare "Idle.": a base that is
+	// waiting on parts it will never get must say so, or it reads as a bug.
+	IdleReason string `json:"idle_reason,omitempty"`
 }
 
 // InvEntry is one component stack.
@@ -281,6 +286,7 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 		dto := Base{Colony: int(b.Colony), X: b.Coord.X, Y: b.Coord.Y,
 			Inventory:  make([]InvEntry, 0, len(inv)),
 			Blueprints: make([]Blueprint, 0, len(b.Blueprints)),
+			IdleReason: b.IdleReason(),
 		}
 		st := stat(b.Colony)
 		for _, e := range inv {
