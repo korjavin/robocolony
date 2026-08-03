@@ -84,7 +84,51 @@ func Validate(p Program, b sim.Blueprint) Result {
 
 	warnForwardOnly(&r, p)
 	warnDominated(&r, p)
+	warnInertStart(&r, p, b)
 	return r
+}
+
+// cleanStart is the view a freshly built robot gets on its first tick: standing
+// on its own base at full health, hands empty, all three memory points empty,
+// nothing seen, nothing on radar, nothing heard. Every zero value of RobotView
+// is already the right answer, so only what is *not* zero is set here.
+func cleanStart(b sim.Blueprint) sim.RobotView {
+	return sim.RobotView{
+		Health:    sim.StartingHealth(b),
+		Cargo:     sim.VariantNone,
+		Blueprint: b,
+		HasBase:   true,
+		AtBase:    true,
+		// Weapons start loaded. Range stays zero, which is harmless: every
+		// in-weapon-range predicate also needs a target, and there is none.
+		WeaponReady: b.Has(sim.KindWeapon),
+	}
+}
+
+// warnInertStart flags a program in which no rule at all matches a robot that
+// has just been built — design §10.8 as printed is exactly this, and a robot
+// running it sits at "no rule matched" forever.
+//
+// The claim is deliberately narrow: it runs the real evaluator over one
+// synthetic view and reports what that single walk proves. It says nothing
+// about whether a rule becomes reachable later, which is general reachability
+// analysis and is declined here for the same reason unreachable_rule declines
+// it. A warning, never an error: a fragment meant to be combined with another
+// program is legal to save, and may well be installed on a robot that is
+// already carrying something.
+func warnInertStart(r *Result, p Program, b sim.Blueprint) {
+	if len(p.Rules) == 0 {
+		return // empty_program already said it, and said it better
+	}
+	v := cleanStart(b)
+	for i := range p.Rules {
+		m := matcher{v: v}
+		if m.cond(p.Rules[i].When, 0) {
+			return
+		}
+	}
+	r.warn(-1, "inert_start", "no rule matches a freshly built robot — empty memory, empty hands, "+
+		"nothing in sight — so it will idle until something around it changes")
 }
 
 // warnDeadPredicates flags predicates whose sensor the blueprint lacks. Legal,
