@@ -4,8 +4,8 @@ package web
 
 import "embed"
 
-// FS holds the static assets. Add css/js to the directive when they exist —
-// go:embed fails the build on a pattern that matches nothing.
+// FS holds the static assets. Add each new directory to the directive as it
+// appears — go:embed fails the build on a pattern that matches nothing.
 //
-//go:embed index.html login.html lobby.html editor.html
+//go:embed index.html login.html lobby.html editor.html match.html js/*.js
 var FS embed.FS

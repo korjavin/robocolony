@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Match &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+
+<style>
+  :root {
+    color-scheme: light dark;
+
+    /* Colony colours. The renderer reads these, so a reskin never touches JS. */
+    --colony-0: #2f7fd8;
+    --colony-1: #d8592f;
+    --colony-2: #2fa36b;
+    --colony-3: #a855d8;
+    --colony-4: #d8b62f;
+    --colony-5: #2fc2d8;
+    --colony-6: #d82f86;
+    --colony-7: #7f8a99;
+
+    /* Terrain, keyed by the init frame's legend names. */
+    --terrain-open: #cfd6dd;
+    --terrain-barrier: #4a4f57;
+    --terrain-unknown: #8d939b;
+    --grid-line: #00000012;
+
+    /* Loose components, keyed by catalogue kind. */
+    --kind-locomotion: #8b6b3a;
+    --kind-armor: #6f7a86;
+    --kind-manipulator: #3aa08b;
+    --kind-radar: #4f6fd0;
+    --kind-weapon: #c23b3b;
+    --kind-unknown: #999999;
+
+    --vision: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --terrain-open: #333a42;
+      --terrain-barrier: #14171b;
+      --terrain-unknown: #565c64;
+      --grid-line: #ffffff10;
+    }
+  }
+  body {
+    margin: 0 auto; padding: 1.5rem 1.25rem; max-width: 78rem;
+    font: 16px/1.6 system-ui, sans-serif;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.05rem; margin: 1.4rem 0 .4rem; }
+  h3 { font-size: .9rem; margin: .8rem 0 .2rem; text-transform: uppercase;
+       letter-spacing: .06em; opacity: .7; }
+  .tag { margin: 0 0 1rem; opacity: .65; }
+  .meta { font-size: .85rem; opacity: .7; }
+  .err { color: #c0392b; font-weight: 600; min-height: 1.6em; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { padding: .15rem .8rem .15rem 0; text-align: left; vertical-align: top; }
+  footer { margin-top: 2rem; font-size: .85rem; opacity: .6; }
+
+  .bar {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem;
+    margin: 0 0 .75rem;
+  }
+  .clock { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .conn { border: 1px solid; border-radius: .4rem; padding: .05rem .5rem;
+          font-size: .8rem; }
+  .conn.live { color: #2f8f4e; }
+  .conn.retry { color: #c98a00; }
+  .conn.over { color: #7f8a99; }
+
+  .cols { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-start; }
+  .arena { flex: 1 1 24rem; min-width: 18rem; }
+  .side { flex: 1 1 20rem; min-width: 17rem; }
+
+  canvas {
+    width: 100%; height: auto; display: block;
+    border: 1px solid; border-radius: .4rem; cursor: crosshair;
+    background: var(--terrain-open);
+  }
+
+  .panel { border: 1px solid; border-radius: .5rem; padding: .6rem .8rem; }
+  .swatch { display: inline-block; width: .7rem; height: .7rem;
+            border-radius: .2rem; margin-right: .35rem; }
+
+  .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
+        overflow: hidden; margin: .2rem 0 .4rem; }
+  .hp > i { display: block; height: 100%; background: #2f8f4e; }
+  .hp.hurt > i { background: #c98a00; }
+  .hp.crit > i { background: #c0392b; }
+
+  /* The active rule is the point of the inspector (design §13, criterion 9). */
+  .rule { border: 1px solid; border-left-width: .35rem; border-radius: .4rem;
+          padding: .45rem .7rem; margin: .3rem 0 .6rem; }
+  .rule.idle { opacity: .75; }
+  .rule .idx { font-size: 1.15rem; font-weight: 700; }
+  .rule .act { font-family: ui-monospace, monospace; font-size: .95rem; }
+  .rule .why { font-size: .9rem; opacity: .85; }
+  dl { margin: .2rem 0; display: grid; grid-template-columns: auto 1fr;
+       gap: 0 .8rem; font-size: .92rem; }
+  dt { opacity: .65; }
+  dd { margin: 0; }
+  code { font-family: ui-monospace, monospace; font-size: .9em; }
+  ul.tight { list-style: none; padding: 0; margin: .2rem 0; font-size: .92rem; }
+</style>
+</head>
+<body>
+  <h1>Match</h1>
+  <p class="tag" id="subtitle">Connecting to the world stream&hellip;</p>
+  <p class="err" id="err"></p>
+
+  <div class="bar">
+    <span class="clock" id="clock">--:--</span>
+    <span class="meta" id="tick"></span>
+    <span class="conn" id="conn">connecting</span>
+  </div>
+
+  <div class="cols">
+    <div class="arena">
+      <canvas id="arena" width="256" height="256"></canvas>
+      <p class="meta">Click a robot to inspect it. The wedge is that robot's
+      forward vision &mdash; the only thing its program can see.</p>
+    </div>
+
+    <div class="side">
+      <h2>Selected robot</h2>
+      <div class="panel" id="inspector"><p class="meta">No robot selected.</p></div>
+
+      <h2>Colonies</h2>
+      <div class="panel"><table id="stats"></table>
+        <p class="meta">Provisional standing by fleet value. Losses, kills and
+        production history are not on the wire yet.</p></div>
+
+      <h2>Base</h2>
+      <div class="panel" id="base"><p class="meta">No colony selected.</p></div>
+    </div>
+  </div>
+
+  <footer><a href="/lobby">lobbies</a> &middot; <a href="/">home</a></footer>
+
+<script type="module" src="/js/match.js"></script>
+</body>
+</html>

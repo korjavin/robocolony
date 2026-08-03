@@ -152,7 +152,10 @@ function renderMatch(info) {
     }
     table.append(tr);
   }
-  el.append(h, table);
+  const watch = document.createElement("a");
+  watch.href = `/match?id=${info.id}`;
+  watch.textContent = "Watch the arena";
+  el.append(h, table, watch);
 }
 
 // Polling, not SSE: the live world stream is E4.1. This only refreshes the
