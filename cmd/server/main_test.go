@@ -37,6 +37,9 @@ func TestRoutes(t *testing.T) {
 		// not. The library service never reaches its database on this path.
 		{path: "/api/programs", accept: "application/json", wantCode: http.StatusUnauthorized},
 		{path: "/editor.html", wantCode: http.StatusOK, wantBody: "Program editor"},
+		// The editor has a route of its own; /editor.html kept working so old
+		// links do not break, but nothing should depend on the file extension.
+		{path: "/editor", wantCode: http.StatusOK, wantBody: "Program editor"},
 		{path: "/match", wantCode: http.StatusOK, wantBody: "Selected robot"},
 		// The renderer is a module the shell loads by URL: if the embed
 		// directive stops matching web/js, the page 404s in the browser and
