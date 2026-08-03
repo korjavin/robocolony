@@ -6,3 +6,13 @@
 /server
 /robocolony
 .beads/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
+
+# bd/agent tooling scratch (local only)
+.agents/
+.codex/
+.claude/
