@@ -428,14 +428,29 @@ function connect() {
     if (over || !source) return;
     source.close();
     source = null;
+    conn("retry", "connection lost, checking…");
+
+    // EventSource never reports the status code, so a dropped connection, an
+    // expired session and a match that no longer exists all arrive identically.
+    // The match endpoint is behind the same session and does report one, so one
+    // probe tells them apart — and stops the retry loop on the two of them that
+    // will never succeed. Live match state is in-memory (AGENTS.md), so a
+    // bookmarked /match?id= after a restart is the expected way to hit 410.
+    const res = await fetch(`/api/matches/${encodeURIComponent(matchID)}`,
+      { headers: { Accept: "application/json" } }).catch(() => null);
+    if (res && res.status === 401) { location.href = "/login"; return; }
+    if (res && (res.status === 404 || res.status === 410)) {
+      over = true;
+      const body = await res.json().catch(() => ({}));
+      err(body.error || "this match is not running");
+      conn("over", "no match");
+      return;
+    }
+
     conn("retry", `reconnecting in ${Math.round(backoff / 1000)}s…`);
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 15000);
-    // EventSource never reports the status code, so an expired session is
-    // indistinguishable from a dead server until something asks.
-    const res = await fetch("/api/me").catch(() => null);
-    if (res && res.status === 401) location.href = "/login";
   });
 }
 
