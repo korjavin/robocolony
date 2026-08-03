@@ -188,12 +188,21 @@ const colonyName = (id) => init?.colonies.find((c) => c.id === id)?.display_name
 
 // ---------------------------------------------------------------- selection
 
+// A robot is a dot a few pixels wide that moves every tick or two, so an exact
+// cell hit is luck rather than aim. Take the nearest one within a couple of
+// cells of the pointer; a click into open ground still deselects.
+const HIT_CELLS = 2;
+
 canvas.addEventListener("click", (ev) => {
   if (!init || !snap) return;
   const box = canvas.getBoundingClientRect();
-  const x = Math.floor((ev.clientX - box.left) / box.width * init.width);
-  const y = Math.floor((ev.clientY - box.top) / box.height * init.height);
-  const hit = snap.robots.find((r) => r.x === x && r.y === y);
+  const px = (ev.clientX - box.left) / box.width * init.width;
+  const py = (ev.clientY - box.top) / box.height * init.height;
+  let hit = null, best = (HIT_CELLS + .5) ** 2;
+  for (const r of snap.robots) {
+    const d = (r.x + .5 - px) ** 2 + (r.y + .5 - py) ** 2;
+    if (d < best) { best = d; hit = r; }
+  }
   selected = hit ? hit.id : null;
   render();
 });
@@ -301,6 +310,91 @@ function blueprintOf(r) {
     if (bp) return bp;
   }
   return null;
+}
+
+// ---------------------------------------------------------------- roster
+//
+// The roster is the same selection as a canvas click, made by name instead of
+// by aim, and it doubles as a colony-wide view of what every robot is doing.
+//
+// Rows are built once per robot and updated in place, for the same reason
+// commandBox is: this panel re-renders ten times a second, and a list rebuilt
+// that often loses its scroll position, its hover and the click that is the
+// whole point of it. Rows are keyed by robot id — production appends robots and
+// destruction removes them, so a slice position is not an identity — and
+// ordered by (colony, id), both of which are fixed for a robot's whole life. A
+// row therefore never moves out from under the pointer.
+
+const rosterRows = new Map(); // robot id -> {node, update}
+let rosterShown = null;       // selection the list last scrolled to
+
+const setText = (n, s) => { if (n.textContent !== s) n.textContent = s; };
+
+function rosterRow(r) {
+  const node = el("button", "row");
+  node.type = "button";
+  const sw = el("span", "swatch");
+  sw.style.background = colonyColor(r.colony);
+  // Identity is fixed at build time; only the numbers below change per tick.
+  const who = el("span", "who", `${r.archetype} #${r.id}`);
+  const hp = el("span");
+  const act = el("span", "act");
+  const cargo = el("span", "cargo");
+  const sub = el("span", "sub");
+  sub.append(act, cargo);
+  node.append(sw, who, hp, sub);
+  node.addEventListener("click", () => { selected = r.id; render(); });
+
+  const update = (cur) => {
+    setText(hp, `${cur.hp}/${cur.hp_max}`);
+    hp.className = cur.hp * 3 <= cur.hp_max ? "num crit" : cur.hp < cur.hp_max ? "num hurt" : "num";
+
+    // A recalled robot has suspended its program (design §4.2), so its trace is
+    // stale — say what it is actually doing, not what it last decided.
+    const t = cur.trace;
+    setText(act, cur.recalled ? "returning to base" : t ? (t.action || "idle") : "no decision yet");
+    const why = cur.recalled ? "recalled" : (t && t.reason) || "";
+    if (node.title !== why) node.title = why;
+
+    setText(cargo, cur.cargo ? compName(cur.cargo) : "");
+
+    const on = cur.id === selected;
+    if (node.classList.contains("sel") !== on) {
+      node.classList.toggle("sel", on);
+      node.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+  };
+
+  return { node, update };
+}
+
+function renderRoster() {
+  const list = $("roster");
+  const live = snap ? [...snap.robots].sort((a, b) => a.colony - b.colony || a.id - b.id) : [];
+  $("roster-empty").hidden = live.length > 0;
+
+  // Walk the list in order, moving a node only when it is not already where it
+  // belongs: in the steady state this touches no DOM at all.
+  let at = list.firstChild;
+  for (const r of live) {
+    let row = rosterRows.get(r.id);
+    if (!row) { row = rosterRow(r); rosterRows.set(r.id, row); }
+    if (at === row.node) at = at.nextSibling;
+    else list.insertBefore(row.node, at);
+    row.update(r);
+  }
+
+  const ids = new Set(live.map((r) => r.id));
+  for (const [id, row] of rosterRows) {
+    if (!ids.has(id)) { row.node.remove(); rosterRows.delete(id); }
+  }
+
+  // Bring a robot picked on the canvas into view, once per selection: doing it
+  // every frame would fight the scrollbar.
+  if (selected !== rosterShown) {
+    rosterShown = selected;
+    rosterRows.get(selected)?.node.scrollIntoView({ block: "nearest" });
+  }
 }
 
 // ---------------------------------------------------------------- commands
@@ -522,6 +616,7 @@ function render() {
   draw();
   renderClock();
   renderInspector();
+  renderRoster();
   renderStats();
   renderBase();
 }
