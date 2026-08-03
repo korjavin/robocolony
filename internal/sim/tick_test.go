@@ -1109,8 +1109,26 @@ func TestWipedColonyRebuilds(t *testing.T) {
 	if b.Stats.Losses != 1 {
 		t.Fatalf("losses = %d, want 1", b.Stats.Losses)
 	}
-	// It had no unit for a while, and the time-active counter says so.
-	if b.Stats.TicksActive >= w.Tick {
-		t.Fatalf("time active %d covers all %d ticks despite the gap", b.Stats.TicksActive, w.Tick)
+	// It had no unit for the whole rebuild, and the time-active counter says so
+	// — but the tick that released the replacement counts.
+	if b.Stats.TicksActive != 1 {
+		t.Fatalf("time active %d over %d ticks, want the single tick since the rebuild",
+			b.Stats.TicksActive, w.Tick)
+	}
+}
+
+// A robot destroyed earlier in the same tick is still in the slice until the
+// sweep, but it must not take a turn out of it.
+func TestDestroyedRobotDoesNotAct(t *testing.T) {
+	w := arena(8)
+	wreckage := w.addRobot(0, Coord{4, 4}, North, scavengerBlueprint())
+	wreckage.Health = 0
+	wreckage.WeaponCooldown[0] = 3
+	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActMoveForward} }))
+
+	w.Step()
+	if wreckage.Coord != (Coord{4, 4}) || wreckage.WeaponCooldown[0] != 3 {
+		t.Fatalf("a destroyed robot took its turn: moved to %v, reload %d",
+			wreckage.Coord, wreckage.WeaponCooldown[0])
 	}
 }

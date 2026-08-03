@@ -233,6 +233,12 @@ func (w *World) Step() {
 	var next []Signal
 
 	for _, r := range w.Robots {
+		// A robot shot to pieces earlier in this same loop is still in the slice
+		// until the sweep below. It does not get a turn: no reload, no decision,
+		// and above all no shot back from a wreck.
+		if isDestroyed(r) {
+			continue
+		}
 		// Weapons reload while the robot is busy with something else, so this
 		// runs before the action cooldown check, not after it.
 		for i := range r.WeaponCooldown {
@@ -263,10 +269,12 @@ func (w *World) Step() {
 	// and so a colony wiped out this tick can already start rebuilding from
 	// inventory (design §5.3).
 	for _, b := range w.Bases {
+		w.produce(b)
+		// Counted after production, so the tick a wiped-out colony is released
+		// back into play counts as active.
 		if w.hasRobots(b.Colony) {
 			b.Stats.TicksActive++
 		}
-		w.produce(b)
 	}
 
 	w.signals = next
