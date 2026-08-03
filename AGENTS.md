@@ -32,6 +32,7 @@ sql/migrations/      NNN_name.sql, goose format
 | Signal reach (design §12 P0) | Global friendly channel. No radius. |
 | Persistence | SQLite via `modernc.org/sqlite` (CGO-free — builds must stay `CGO_ENABLED=0`). Users, sessions, blueprints, programs, lobbies are persisted. **Live match state is in-memory only** for the POC. |
 | Auth | Google OIDC. Every non-static route except `/health` and the auth callbacks requires a session. |
+| Go version | `go 1.25.0` in `go.mod`, `golang:1.25-alpine` builder. CI is the build authority; locally `GOTOOLCHAIN=auto` fetches 1.25.0 on first build. |
 | Logging | `log/slog`, structured. No `fmt.Println`, no third-party logger. |
 | Deps | Stdlib first. A new module dependency needs a one-line justification in the PR body. |
 
