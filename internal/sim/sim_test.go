@@ -24,15 +24,20 @@ func sampleWorld(t *testing.T, seed int64) *World {
 	for _, v := range []Variant{Laser, Tracks, MediumArmor, Manipulator, PartsRadar} {
 		w.Bases[0].Inventory[v] += 2
 	}
+	w.Bases[0].Build = BuildOrder{Blueprint: bp, Ticks: 7}
+	w.signals = []Signal{{Kind: ComeHere, From: 1, Colony: 0, Coord: Coord{3, 4}}}
 	w.Robots = append(w.Robots, &Robot{
-		ID:        w.NextID(),
-		Colony:    0,
-		Coord:     Coord{X: 5, Y: 7},
-		Heading:   SouthWest,
-		Health:    100,
-		Cargo:     Laser,
-		Blueprint: bp,
-		Memory:    [MemPoints]MemPoint{{Coord: Coord{1, 2}, Set: true}},
+		ID:          w.NextID(),
+		Colony:      0,
+		Coord:       Coord{X: 5, Y: 7},
+		Heading:     SouthWest,
+		Health:      100,
+		Cargo:       Laser,
+		Blueprint:   bp,
+		ProgramID:   bp.ProgramID,
+		Cooldown:    2,
+		PathBlocked: true,
+		Memory:      [MemPoints]MemPoint{{Coord: Coord{1, 2}, Set: true}},
 	})
 	return w
 }
@@ -114,6 +119,22 @@ func TestStateHashCoversState(t *testing.T) {
 		{"robot blueprint", func(w *World) { w.Robots[0].Blueprint.ID = "bp-other" }},
 		{"robot memory set", func(w *World) { w.Robots[0].Memory[1].Set = true }},
 		{"robot memory coord", func(w *World) { w.Robots[0].Memory[0].Coord.X++ }},
+		{"robot program", func(w *World) { w.Robots[0].ProgramID += "!" }},
+		{"robot cooldown", func(w *World) { w.Robots[0].Cooldown++ }},
+		{"robot path blocked", func(w *World) { w.Robots[0].PathBlocked = !w.Robots[0].PathBlocked }},
+		{"robot target reached", func(w *World) { w.Robots[0].TargetReached = !w.Robots[0].TargetReached }},
+		{"robot target unreachable", func(w *World) {
+			w.Robots[0].TargetUnreachable = !w.Robots[0].TargetUnreachable
+		}},
+		{"base build timer", func(w *World) { w.Bases[0].Build.Ticks++ }},
+		{"base build blueprint", func(w *World) { w.Bases[0].Build.Blueprint.ID = "bp-other" }},
+		{"signal added", func(w *World) {
+			w.signals = append(w.signals, Signal{Kind: ComeHere, From: 99, Coord: Coord{2, 3}})
+		}},
+		{"signal kind", func(w *World) { w.signals[0].Kind = AvoidHere }},
+		{"signal sender", func(w *World) { w.signals[0].From++ }},
+		{"signal colony", func(w *World) { w.signals[0].Colony++ }},
+		{"signal coord", func(w *World) { w.signals[0].Coord.X++ }},
 		{"loose coord", func(w *World) { w.Loose[0].Coord.X++ }},
 		{"loose variant", func(w *World) { w.Loose[0].Variant = VariantNone }},
 		{"loose removed", func(w *World) { w.Loose = w.Loose[1:] }},

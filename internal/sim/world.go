@@ -142,6 +142,9 @@ type ColonyID int
 const MemPoints = 3
 
 // Robot is one active unit.
+//
+// Every mutable field here must also be covered by StateHash, or the
+// determinism guard silently stops guarding.
 type Robot struct {
 	ID        int
 	Colony    ColonyID
@@ -150,7 +153,18 @@ type Robot struct {
 	Health    int
 	Cargo     Variant // VariantNone when carrying nothing
 	Blueprint Blueprint
+	ProgramID string // installed program; cleared and replaced on reprogram
 	Memory    [MemPoints]MemPoint
+
+	// Cooldown is how many further ticks the current action occupies. A robot
+	// with a cooldown does not perceive or decide; this is how speed (§6.4)
+	// turns into time.
+	Cooldown int
+
+	// Perception flags for the next evaluation cycle (design §10.3).
+	PathBlocked       bool
+	TargetReached     bool
+	TargetUnreachable bool
 }
 
 // InvEntry is one component stack in a base inventory.
@@ -165,6 +179,7 @@ type Base struct {
 	Coord      Coord
 	Inventory  map[Variant]int
 	Blueprints []Blueprint // approved for automatic production
+	Build      BuildOrder  // current assembly job; zero when idle
 }
 
 // SortedInventory returns the inventory in variant order. Anything that feeds
@@ -198,6 +213,16 @@ type World struct {
 	Loose         []*LooseComponent
 	Tick          uint64
 	Seed          int64
+
+	// Control resolves a robot's controller each tick. It is an *input*, not
+	// state: StateHash ignores it, and two worlds driven by equivalent
+	// controllers must still hash equal. A nil Control, or a nil result, idles
+	// the robot. E3 plugs the program runtime in here.
+	Control func(*Robot) Controller
+
+	// signals are the broadcasts heard this tick — sent during the previous
+	// one. State, and hashed.
+	signals []Signal
 
 	rng    *rand.Rand
 	nextID int
@@ -238,12 +263,6 @@ func (w *World) Passable(c Coord, locomotion Variant) bool {
 	return w.In(c) && w.At(c).Terrain.Passable(locomotion)
 }
 
-// Step advances the world by one tick.
-//
-// E1.2 fills in movement, vision, interaction and production here; for now a
-// tick only advances the clock, which is all the determinism harness needs.
-func (w *World) Step() { w.Tick++ }
-
 // StateHash is a stable hash over the whole world state. Two worlds with equal
 // state hash equal, in any process, on any run: entities are hashed in sorted
 // id order and inventories in sorted variant order.
@@ -263,6 +282,13 @@ func (w *World) StateHash() uint64 {
 		_, _ = h.Write([]byte(s))
 	}
 	putC := func(c Coord) { putI(c.X); putI(c.Y) }
+	putB := func(b bool) {
+		if b {
+			putI(1)
+		} else {
+			putI(0)
+		}
+	}
 	putBP := func(b Blueprint) {
 		putS(b.ID)
 		putS(b.Name)
@@ -303,6 +329,8 @@ func (w *World) StateHash() uint64 {
 		for _, bp := range b.Blueprints {
 			putBP(bp)
 		}
+		putI(b.Build.Ticks)
+		putBP(b.Build.Blueprint)
 	}
 
 	robots := slices.Clone(w.Robots)
@@ -316,13 +344,14 @@ func (w *World) StateHash() uint64 {
 		putI(r.Health)
 		putI(int(r.Cargo))
 		putBP(r.Blueprint)
+		putS(r.ProgramID)
+		putI(r.Cooldown)
+		putB(r.PathBlocked)
+		putB(r.TargetReached)
+		putB(r.TargetUnreachable)
 		for _, m := range r.Memory {
 			putC(m.Coord)
-			if m.Set {
-				putI(1)
-			} else {
-				putI(0)
-			}
+			putB(m.Set)
 		}
 	}
 
@@ -333,6 +362,23 @@ func (w *World) StateHash() uint64 {
 		putI(l.ID)
 		putC(l.Coord)
 		putI(int(l.Variant))
+	}
+
+	// Signals in flight are state: they decide what robots perceive next tick.
+	// Sorted, because the channel is a set, not a sequence.
+	sigs := slices.Clone(w.signals)
+	slices.SortFunc(sigs, func(a, b Signal) int {
+		if c := cmp.Compare(a.From, b.From); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Kind, b.Kind)
+	})
+	putI(len(sigs))
+	for _, s := range sigs {
+		putI(int(s.Kind))
+		putI(s.From)
+		putI(int(s.Colony))
+		putC(s.Coord)
 	}
 
 	return h.Sum64()
