@@ -204,6 +204,10 @@
 
       <h2>Selected robot</h2>
       <div class="panel" id="inspector"><p class="meta">No robot selected.</p></div>
+      <!-- Command lives outside #inspector on purpose: that panel is cleared
+           with replaceChildren() every tick, and detaching a <select> from the
+           document closes any dropdown the player has open. -->
+      <div class="panel" id="command" hidden></div>
 
       <!-- Design §10.10's trace history. Its own panel rather than a section of
            the inspector: the inspector is rebuilt on every tick, and a scrolled
