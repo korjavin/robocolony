@@ -150,6 +150,25 @@
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .roster .row .cargo:not(:empty)::before { content: "◆ "; }
   .roster .row .cargo { white-space: nowrap; }
+
+  /* Trace history (design §10.10). Newest first, and runs of identical
+     decisions collapse into one entry — a robot decides ten times a second,
+     and an uncollapsed list is a debug dump, not something a player reads. */
+  .hist-list { max-height: 20rem; overflow-y: auto; overflow-x: hidden;
+               display: grid; align-content: start; gap: .25rem; }
+  .hist { border-left: .2rem solid #7f8a9955; padding: .1rem 0 .1rem .5rem; }
+  .hist.idle { opacity: .7; }
+  .hist.acted { border-left-color: currentColor; }
+  .hist .when { font-size: .78rem; opacity: .6; font-variant-numeric: tabular-nums; }
+  .hist .head { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
+  .hist .idx { font-size: .85rem; font-weight: 700; }
+  .hist .act { font-family: ui-monospace, monospace; font-size: .85rem; }
+  .hist .at { font-size: .8rem; font-variant-numeric: tabular-nums; opacity: .75; }
+  .hist .why { font-size: .85rem; opacity: .8; }
+  .hist .also { font-size: .78rem; opacity: .65; }
+  .hist .chip { font-size: .8rem; }
+  .hist .chip.mem::before { content: "✎ "; color: #2f8f4e; }
+  .hist .chip.sig::before { content: "📡 "; }
 </style>
 </head>
 <body>
@@ -185,6 +204,15 @@
 
       <h2>Selected robot</h2>
       <div class="panel" id="inspector"><p class="meta">No robot selected.</p></div>
+
+      <!-- Design §10.10's trace history. Its own panel rather than a section of
+           the inspector: the inspector is rebuilt on every tick, and a scrolled
+           list inside it would lose its position ten times a second. -->
+      <h2>Recent decisions</h2>
+      <div class="panel">
+        <div class="hist-list" id="history-list"></div>
+        <p class="meta" id="history-note">Select a robot to start recording why it acts.</p>
+      </div>
 
       <h2>Colonies</h2>
       <div class="panel"><table id="stats"></table>
