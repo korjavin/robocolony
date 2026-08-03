@@ -8,6 +8,7 @@ import (
 
 	"github.com/korjavin/robocolony/internal/auth"
 	"github.com/korjavin/robocolony/internal/lobby"
+	"github.com/korjavin/robocolony/internal/server"
 )
 
 func TestRoutes(t *testing.T) {
@@ -32,12 +33,16 @@ func TestRoutes(t *testing.T) {
 		{path: "/api/lobbies", accept: "application/json", wantCode: http.StatusUnauthorized},
 		{path: "/api/matches/1", accept: "application/json", wantCode: http.StatusUnauthorized},
 		{path: "/lobby", wantCode: http.StatusOK, wantBody: "Open lobbies"},
+		// Same for the program editor: its API needs a session, its shell does
+		// not. The library service never reaches its database on this path.
+		{path: "/api/programs", accept: "application/json", wantCode: http.StatusUnauthorized},
+		{path: "/editor.html", wantCode: http.StatusOK, wantBody: "Program editor"},
 	}
 
 	// The zero Handler registers the routes and authenticates nobody, which is
 	// all this wiring test needs; internal/auth covers the flow itself. The
 	// lobby service never reaches its database on these paths.
-	h := routes(&auth.Handler{}, lobby.New(nil), nil)
+	h := routes(&auth.Handler{}, lobby.New(nil), nil, server.NewLibrary(nil))
 	for _, tt := range tests {
 		t.Run(tt.path+" "+tt.accept, func(t *testing.T) {
 			rec := httptest.NewRecorder()
