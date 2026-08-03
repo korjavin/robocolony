@@ -25,6 +25,20 @@ func DefaultGenOpts() GenOpts {
 // minArenaSide keeps generation and base separation sane.
 const minArenaSide = 8
 
+// Terrain mix, as multiples of GenOpts.BarrierDensity. BarrierDensity keeps its
+// meaning — hard barriers are scattered at exactly the requested density — and
+// the two locomotion-specific classes of design §3.1 are scattered on top of it
+// in the same proportion to each other.
+//
+// The consequence is deliberate: at density d, *every* locomotion is blocked by
+// d*(1 + one of the two shares) of the map rather than the flat d it used to
+// face, so the arena is more obstructed overall but never for everyone at once,
+// and BarrierDensity 0 still means a completely clean arena.
+const (
+	rubblePerBarrier = 0.5 // leg-favoured, closed to tracks
+	sandPerBarrier   = 0.5 // track-favoured, closed to legs
+)
+
 // basePlacementDraws is how many candidate cells each base considers. Fixed so
 // that rng consumption does not depend on how lucky the draws are.
 const basePlacementDraws = 64
@@ -60,10 +74,19 @@ func Generate(seed int64, opts GenOpts) *World {
 		rng:    rand.New(rand.NewSource(seed)),
 	}
 
-	// 1. Barriers, scattered uniformly.
+	// 1. Terrain, scattered uniformly: one draw per cell, split into bands, so
+	// adding classes did not change how much randomness a seed consumes.
+	hardBand := o.BarrierDensity
+	rubbleBand := hardBand + o.BarrierDensity*rubblePerBarrier
+	sandBand := rubbleBand + o.BarrierDensity*sandPerBarrier
 	for i := range w.Cells {
-		if w.rng.Float64() < o.BarrierDensity {
+		switch v := w.rng.Float64(); {
+		case v < hardBand:
 			w.Cells[i].Terrain = Barrier
+		case v < rubbleBand:
+			w.Cells[i].Terrain = Rubble
+		case v < sandBand:
+			w.Cells[i].Terrain = Sand
 		}
 	}
 
@@ -93,27 +116,38 @@ func Generate(seed int64, opts GenOpts) *World {
 		}
 	}
 
-	// 3. Connectivity. Nothing above stops the barrier scatter from walling a
+	// 3. Connectivity. Nothing above stops the terrain scatter from walling a
 	// colony off, and a colony that cannot reach anything can never scavenge
-	// (design §5.3 leaves it permanently inactive). Carve a direct corridor
-	// from any base the first one cannot reach. Carving consumes no randomness,
-	// so a seed still draws exactly as many numbers as before.
+	// (design §5.3 leaves it permanently inactive). Carve a direct corridor from
+	// any base the first one cannot reach. Carving consumes no randomness, so a
+	// seed still draws exactly as many numbers as before.
 	//
-	// Reachability is measured with Tracks: in the POC terrain set every
-	// impassable cell is a hard barrier, so the answer is the same for every
-	// locomotion. When E7.3 adds leg-only and track-only terrain this must
-	// become "connected for at least one locomotion".
+	// Since E7.3 reachability is per-locomotion: rubble is closed to tracks and
+	// sand to legs, so "connected" has three answers and the arena must satisfy
+	// all of them. carve opens Open cells, which every locomotion can enter, so
+	// one corridor repairs every locomotion at once — hence the break.
 	for i := 1; i < len(w.Bases); i++ {
-		if !w.reachable(w.Bases[0].Coord, Tracks)[w.index(w.Bases[i].Coord)] {
-			w.carve(w.Bases[i].Coord, w.Bases[0].Coord)
+		for _, loco := range locomotionVariants() {
+			if !w.reachable(w.Bases[0].Coord, loco)[w.index(w.Bases[i].Coord)] {
+				w.carve(w.Bases[i].Coord, w.Bases[0].Coord)
+				break
+			}
 		}
 	}
-	reach := w.reachable(w.Bases[0].Coord, Tracks)
+	reach := w.commonReach(w.Bases[0].Coord)
 
-	// 4. Loose components. A draw that lands on a barrier, a base footprint, an
-	// already-taken cell or a pocket no base can reach is dropped rather than
+	// 4. Loose components. A draw that lands on non-open terrain, a base
+	// footprint, an already-taken cell or a pocket is dropped rather than
 	// retried, so the number of rng draws stays fixed; Richness is a target,
 	// not a guarantee.
+	//
+	// "A pocket" is now a per-locomotion question, and the answer taken here is
+	// the strict one: a component is only placed where *every* locomotion can
+	// reach it. A leg-only pocket full of loot would be a nice idea and a bad
+	// bug — the starter blueprint runs on tracks, so a colony that has not yet
+	// scavenged a pair of legs could watch a third of the map's resources sit
+	// unreachable forever. Terrain still shapes play through the §6.4 speed
+	// modifier and through shorter routes, which cost nothing to be wrong about.
 	//
 	// occupied is only ever *looked up*, never ranged: map lookups are
 	// deterministic, map iteration is not.
@@ -129,6 +163,24 @@ func Generate(seed int64, opts GenOpts) *World {
 	}
 
 	return w
+}
+
+// commonReach is the set of cells reachable from a coordinate by every
+// locomotion in the catalogue — the intersection of the per-locomotion floods.
+// Deterministic and rng-free.
+func (w *World) commonReach(from Coord) []bool {
+	var out []bool
+	for _, loco := range locomotionVariants() {
+		r := w.reachable(from, loco)
+		if out == nil {
+			out = r
+			continue
+		}
+		for i := range out {
+			out[i] = out[i] && r[i]
+		}
+	}
+	return out
 }
 
 // carve opens a one-cell corridor between two coordinates, stepping diagonally

@@ -53,7 +53,7 @@ func inCone(from Coord, h Heading, to Coord) (dist int, ok bool) {
 func (w *World) look(r *Robot) (components, enemies []Sighting) {
 	for _, l := range w.Loose {
 		if d, ok := inCone(r.Coord, r.Heading, l.Coord); ok {
-			components = append(components, Sighting{ID: l.ID, Coord: l.Coord, Variant: l.Variant, Distance: d})
+			components = append(components, Sighting{ID: l.ID, Kind: SightComponent, Coord: l.Coord, Variant: l.Variant, Distance: d})
 		}
 	}
 	for _, o := range w.Robots {
@@ -65,16 +65,18 @@ func (w *World) look(r *Robot) (components, enemies []Sighting) {
 			continue
 		}
 		if d, ok := inCone(r.Coord, r.Heading, o.Coord); ok {
-			enemies = append(enemies, Sighting{ID: o.ID, Coord: o.Coord, Colony: o.Colony, Distance: d})
+			enemies = append(enemies, Sighting{ID: o.ID, Kind: SightRobot, Coord: o.Coord, Colony: o.Colony, Distance: d})
 		}
 	}
 	return sortSightings(components), sortSightings(enemies)
 }
 
 // radar returns what the installed radar reports (design §7.2): longer range,
-// omnidirectional, and exactly one target class. A blueprint without a radar
-// sees nothing here. Adding a radar variant to the catalogue means adding a
-// case, not restructuring perception.
+// omnidirectional, and exactly one target class — which is the whole point of
+// the radar choice, since a blueprint may carry only one (design §6.3).
+//
+// Each variant is a case over a different slice of the world; nothing else in
+// perception changes when a radar row is added.
 func (w *World) radar(r *Robot) []Sighting {
 	var out []Sighting
 	for _, v := range r.Blueprint.Components {
@@ -85,7 +87,28 @@ func (w *World) radar(r *Robot) []Sighting {
 		case PartsRadar:
 			for _, l := range w.Loose {
 				if d := r.Coord.Chebyshev(l.Coord); d > 0 && d <= radarRange {
-					out = append(out, Sighting{ID: l.ID, Coord: l.Coord, Variant: l.Variant, Distance: d})
+					out = append(out, Sighting{ID: l.ID, Kind: SightComponent, Coord: l.Coord, Variant: l.Variant, Distance: d})
+				}
+			}
+		case EnemyRadar:
+			for _, o := range w.Robots {
+				// Same rule as forward vision: a robot shot to pieces earlier
+				// this tick is not a contact, so nobody spends a turn aiming at
+				// a wreck the end-of-tick sweep is about to remove.
+				if o.Colony == r.Colony || isDestroyed(o) {
+					continue
+				}
+				if d := r.Coord.Chebyshev(o.Coord); d > 0 && d <= radarRange {
+					out = append(out, Sighting{ID: o.ID, Kind: SightRobot, Coord: o.Coord, Colony: o.Colony, Distance: d})
+				}
+			}
+		case BaseRadar:
+			for _, b := range w.Bases {
+				if b.Colony == r.Colony {
+					continue
+				}
+				if d := r.Coord.Chebyshev(b.Coord); d > 0 && d <= baseRadarRange {
+					out = append(out, Sighting{ID: baseSightingID(b.Colony), Kind: SightBase, Coord: b.Coord, Colony: b.Colony, Distance: d})
 				}
 			}
 		}
@@ -93,6 +116,12 @@ func (w *World) radar(r *Robot) []Sighting {
 	}
 	return sortSightings(out)
 }
+
+// baseSightingID is the contact id of an enemy base. Bases have no entity id —
+// a colony has exactly one and it never moves — so this manufactures a stable
+// negative one, which cannot collide with a robot or component id because those
+// come from World.NextID and start at 1.
+func baseSightingID(c ColonyID) int { return -1 - int(c) }
 
 // sortSightings orders nearest first, breaking ties on id so the result never
 // depends on slice order.

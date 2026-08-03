@@ -205,7 +205,7 @@ func TestBlockedMovement(t *testing.T) {
 	}
 	// The flag must clear again once the robot can actually move.
 	r.Heading = South
-	for i := 0; i < moveTicks(r.Blueprint)+1; i++ {
+	for i := 0; i < moveTicks(r.Blueprint, Open)+1; i++ {
 		w.Step()
 	}
 	if r.PathBlocked || r.Coord == (Coord{4, 4}) {
@@ -513,7 +513,7 @@ func TestEffectiveSpeedFallsWithMass(t *testing.T) {
 	if EffectiveSpeed(heavy) >= EffectiveSpeed(light) {
 		t.Fatalf("heavy robot is not slower: %d vs %d", EffectiveSpeed(heavy), EffectiveSpeed(light))
 	}
-	if moveTicks(heavy) < moveTicks(light) {
+	if moveTicks(heavy, Open) < moveTicks(light, Open) {
 		t.Fatal("a slower robot must not cross a cell in fewer ticks")
 	}
 	absurd := Blueprint{Components: []Variant{Tracks, MediumArmor}}
@@ -532,7 +532,7 @@ func TestMovementCostsTicks(t *testing.T) {
 	r := w.addRobot(0, Coord{8, 8}, North, bp)
 	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActMoveForward} }))
 
-	cost := moveTicks(bp)
+	cost := moveTicks(bp, Open)
 	if cost < 2 {
 		t.Skip("scavenger crosses a cell per tick; nothing to observe")
 	}

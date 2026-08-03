@@ -72,28 +72,48 @@ func (h Heading) Turn(steps int) Heading {
 	return Heading(((int(h)+steps)%n + n) % n)
 }
 
-// Terrain is a terrain class. The POC generates only Open and Barrier; the
-// rest of design §3.1 arrives in E7.3 as extra rows in terrainSpecs.
+// Terrain is a terrain class (design §3.1).
+//
+// The numbers are wire values — internal/server/dto.go ships a terrain grid as
+// one digit per cell, indexing the terrainSpecs slice — so classes are appended,
+// never inserted, and the slice order below must stay the enum order.
 type Terrain uint8
 
 const (
 	Open Terrain = iota
+	// Barrier is design §3.1's "mountain ridge / hard barrier": impassable to
+	// everything, anti-gravity included.
 	Barrier
+	// Rubble is the leg-favoured obstacle: legs cross it faster than open
+	// ground, tracks cannot enter, anti-gravity floats over at no bonus.
+	Rubble
+	// Sand is the track-favoured obstacle: tracks spread their load and gain,
+	// legs sink and cannot enter, anti-gravity floats over at no bonus.
+	Sand
 )
 
 // TerrainSpec is one row of the design §3.1 traversal matrix. HardBarrier
 // terrain is impassable to every locomotion, present and future; otherwise
-// Impassable lists the locomotion variants that cannot enter.
+// Impassable lists the locomotion variants that cannot enter and Favored the
+// ones design §3.1 marks "passable or favored", which the §6.4 speed model
+// pays as a terrain modifier.
 type TerrainSpec struct {
 	Terrain     Terrain
 	Name        string
 	HardBarrier bool
 	Impassable  []Variant
+	Favored     []Variant
 }
 
+// terrainSpecs is the design §3.1 traversal matrix, as data. Every locomotion
+// not listed in Impassable may enter; anti-gravity appears in no Impassable row
+// and no Favored row, which is exactly its identity — it goes everywhere except
+// a hard barrier and is fast nowhere in particular.
 var terrainSpecs = []TerrainSpec{
 	{Terrain: Open, Name: "open"},
 	{Terrain: Barrier, Name: "barrier", HardBarrier: true},
+	{Terrain: Rubble, Name: "rubble", Impassable: []Variant{Tracks}, Favored: []Variant{Legs}},
+	{Terrain: Sand, Name: "sand", Impassable: []Variant{Legs}, Favored: []Variant{Tracks}},
 }
 
 // TerrainSpecs returns the terrain catalogue.
@@ -122,6 +142,16 @@ func (t Terrain) Passable(locomotion Variant) bool {
 		return false
 	}
 	return !slices.Contains(s.Impassable, locomotion)
+}
+
+// SpeedBonus is the design §6.4 terrain_modifier term: the speed a locomotion
+// gains on terrain design §3.1 marks favoured for it, and zero everywhere else.
+func (t Terrain) SpeedBonus(locomotion Variant) int {
+	s, ok := terrainSpec(t)
+	if !ok || !slices.Contains(s.Favored, locomotion) {
+		return 0
+	}
+	return favoredSpeedBonus
 }
 
 // Cell is one arena cell. Later epics extend it; At/SetTerrain keep working.

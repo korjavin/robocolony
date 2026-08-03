@@ -29,9 +29,8 @@ func (k ComponentKind) String() string {
 // Variant identifies one concrete component in the catalogue.
 type Variant uint8
 
-// The POC catalogue. Design §6 lists more (legs, anti-gravity, enemy-robot and
-// enemy-base radars); E7.2 adds them as extra rows in catalogue below — no code
-// outside this file changes.
+// The design §6 catalogue, complete: three locomotion units, three armor
+// classes, three radars, three weapons, plus the manipulator.
 //
 // New variants are appended, never inserted: a stored blueprint holds these
 // numbers, so shifting one silently rewrites every saved design.
@@ -46,10 +45,15 @@ const (
 	HeavyArmor
 	Cannon
 	AutoGun
+	Legs
+	AntiGrav
+	EnemyRadar
+	BaseRadar
 )
 
-// Component is a catalogue entry. Mass and Value are placeholder balance
-// numbers; E7.2 tunes them and adds per-kind stats (speed, range, damage).
+// Component is a catalogue entry. Mass feeds the design §6.4 speed model and
+// Value feeds the design §9 score; both are balance numbers and live here with
+// the rest of them.
 type Component struct {
 	Variant Variant
 	Kind    ComponentKind
@@ -61,21 +65,38 @@ type Component struct {
 // catalogue is data, not a switch. Adding a component is adding a row.
 var catalogue = []Component{
 	{Variant: Tracks, Kind: KindLocomotion, Name: "tracks", Mass: 30, Value: 30},
+	{Variant: Legs, Kind: KindLocomotion, Name: "legs", Mass: 24, Value: 40},
+	{Variant: AntiGrav, Kind: KindLocomotion, Name: "anti-gravity platform", Mass: 25, Value: 70},
 	{Variant: LightArmor, Kind: KindArmor, Name: "light armor", Mass: 20, Value: 25},
 	{Variant: MediumArmor, Kind: KindArmor, Name: "medium armor", Mass: 40, Value: 40},
 	{Variant: HeavyArmor, Kind: KindArmor, Name: "heavy armor", Mass: 70, Value: 65},
 	{Variant: Manipulator, Kind: KindManipulator, Name: "manipulator", Mass: 10, Value: 20},
 	{Variant: PartsRadar, Kind: KindRadar, Name: "parts radar", Mass: 8, Value: 25},
+	{Variant: EnemyRadar, Kind: KindRadar, Name: "enemy robot radar", Mass: 10, Value: 35},
+	{Variant: BaseRadar, Kind: KindRadar, Name: "enemy base radar", Mass: 6, Value: 20},
 	{Variant: Laser, Kind: KindWeapon, Name: "laser", Mass: 15, Value: 35},
 	{Variant: Cannon, Kind: KindWeapon, Name: "projectile cannon", Mass: 35, Value: 55},
 	{Variant: AutoGun, Kind: KindWeapon, Name: "automatic gun", Mass: 20, Value: 30},
 }
 
+// locomotionVariants is every locomotion unit in the catalogue, in catalogue
+// order. Generation uses it to keep the arena solvable for all of them, so a
+// new locomotion row is covered by the connectivity work automatically.
+func locomotionVariants() []Variant {
+	var out []Variant
+	for _, c := range catalogue {
+		if c.Kind == KindLocomotion {
+			out = append(out, c.Variant)
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
-// Combat balance. Every number in this block, plus the Mass and Value columns
-// above, is a placeholder: nothing is balanced yet. E7.3 retunes the game by
-// editing these tables, and E7.2 adds weapons and armor tiers by adding rows.
-// No logic below reads a variant by name.
+// Balance. Every number in this block, plus the Mass and Value columns above
+// and the speed-model constants at the top of tick.go, is a judgement call:
+// retuning the game is editing these tables, and adding a component is adding a
+// row to one of them. No logic below reads a variant by name.
 // ---------------------------------------------------------------------------
 
 // MaxWeapons is the design §6.3 limit on weapon modules, and the number of
@@ -122,6 +143,52 @@ var armorSpecs = []ArmorSpec{
 	{Variant: LightArmor, Health: 50},
 	{Variant: MediumArmor, Health: 100},
 	{Variant: HeavyArmor, Health: 180},
+}
+
+// LocomotionSpec is one row of the design §6.1 locomotion table and supplies
+// both terms of the §6.4 speed model that depend on the locomotion unit:
+//
+//	effective_speed = BaseSpeed - mass/MassPerSpeedPoint + terrain_modifier
+//
+// MassPerSpeedPoint is mass tolerance: how many units of mass buy one point of
+// speed away. A *small* number is a *harsh* penalty.
+type LocomotionSpec struct {
+	Variant           Variant
+	BaseSpeed         int
+	MassPerSpeedPoint int
+}
+
+// locomotionSpecs gives each locomotion unit an identity that only makes sense
+// read against the §3.1 traversal matrix in world.go:
+//
+//   - Tracks: the workhorse. Middling speed, ordinary mass tolerance, favoured
+//     on sand, shut out of rubble. Cheapest, so it is also what a colony rebuilds
+//     from when scavenging has gone badly.
+//   - Legs: slowest on open ground and the best mass tolerance, so a heavy
+//     gun platform is a leg platform. Favoured in rubble, shut out of sand.
+//   - Anti-gravity: fastest while light and the only unit design §3.1 lets
+//     through both obstacle classes — and the design §6.4 balancing disadvantage
+//     is spent here, as mass tolerance less than half of tracks'. A bare
+//     anti-gravity scout outruns everything; the same platform under heavy armor
+//     and two weapons is the slowest thing on the map. Its component Value is the
+//     highest in the catalogue as well, which makes it both expensive to field
+//     and the richest wreck to leave lying around (design §8.2).
+var locomotionSpecs = []LocomotionSpec{
+	{Variant: Tracks, BaseSpeed: 12, MassPerSpeedPoint: 20},
+	{Variant: Legs, BaseSpeed: 10, MassPerSpeedPoint: 26},
+	{Variant: AntiGrav, BaseSpeed: 16, MassPerSpeedPoint: 9},
+}
+
+// locomotionStats returns the locomotion row for a variant. A blueprint whose
+// locomotion is missing or unknown falls back to the untuned defaults rather
+// than dividing by a zero mass tolerance.
+func locomotionStats(v Variant) LocomotionSpec {
+	for _, s := range locomotionSpecs {
+		if s.Variant == v {
+			return s
+		}
+	}
+	return LocomotionSpec{Variant: v, BaseSpeed: baseSpeedUnknown, MassPerSpeedPoint: massPerSpeedPointUnknown}
 }
 
 // WeaponStats returns the weapon row for a variant, or false when the variant
