@@ -76,20 +76,19 @@ func (h *Robots) Recall(ctx context.Context, userID, matchID int64, robotID int)
 	if err != nil {
 		return RobotState{}, err
 	}
-	var (
-		out  RobotState
-		rerr error
-	)
-	m.Read(func(w *sim.World, _ *prog.Runtime) {
+	// Apply rather than Read: a recall is a player input, and the match's input
+	// log is what a restart replays it from (internal/lobby/persist.go).
+	var out RobotState
+	err = m.Apply(lobby.Command{Kind: lobby.CmdRecall, Robot: robotID}, func(w *sim.World, _ *prog.Runtime) error {
 		r, err := robotOf(w, colony, robotID)
 		if err != nil {
-			rerr = err
-			return
+			return err
 		}
 		r.Recalled = true
 		out = robotState(w, r)
+		return nil
 	})
-	return out, rerr
+	return out, err
 }
 
 // InstallProgram is design §4.2 steps 3-5: a program from the caller's own
@@ -114,35 +113,39 @@ func (h *Robots) InstallProgram(ctx context.Context, userID, matchID int64, robo
 		return RobotState{}, errf(http.StatusBadRequest, "program %d does not load: %s", programID, err)
 	}
 
-	var (
-		out  RobotState
-		rerr error
-	)
-	m.Read(func(w *sim.World, rt *prog.Runtime) {
+	// The program travels in the log by value, not as a library id: the player
+	// may edit that library row later, and a replay must install the rules the
+	// robot actually ran.
+	id := installID(programID, robotID)
+	cmd := lobby.Command{
+		Kind:      lobby.CmdProgram,
+		Robot:     robotID,
+		ProgramID: id,
+		Program:   json.RawMessage(row.JSON),
+	}
+	var out RobotState
+	err = m.Apply(cmd, func(w *sim.World, rt *prog.Runtime) error {
 		r, err := robotOf(w, colony, robotID)
 		if err != nil {
-			rerr = err
-			return
+			return err
 		}
 		// The travel delay is the whole point of design §4.2: no install in the
 		// field, however long the player has been waiting.
 		if !w.AtOwnBase(r) {
-			rerr = errf(http.StatusConflict, "robot %d is not at its base; recall it first", robotID)
-			return
+			return errf(http.StatusConflict, "robot %d is not at its base; recall it first", robotID)
 		}
 		if res := prog.Validate(p, r.Blueprint); !res.OK() {
-			rerr = validationError(res)
-			return
+			return validationError(res)
 		}
-		id := installID(programID, robotID)
 		rt.Install(id, p)
 		// Reprogram clears all three memory points (design §10.6) here and now,
 		// rather than leaving it to Runtime.Control on the robot's next tick: the
 		// inspector must be able to show the clean state immediately.
 		r.Reprogram(id)
 		out = robotState(w, r)
+		return nil
 	})
-	return out, rerr
+	return out, err
 }
 
 // installID is the runtime id a library program gets when it is installed on
@@ -164,7 +167,7 @@ func installID(programID int64, robotID int) string {
 func (h *Robots) own(matchID, userID int64) (*lobby.Match, sim.ColonyID, error) {
 	m, ok := h.reg.Get(matchID)
 	if !ok {
-		return nil, 0, errf(http.StatusNotFound, "match not found: live match state does not survive a server restart")
+		return nil, 0, errf(http.StatusNotFound, "match not found")
 	}
 	// A finished match stays in the registry so it can still be observed, and
 	// its world stops stepping. Commanding it would edit the final state after

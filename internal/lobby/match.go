@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -48,6 +49,11 @@ type Match struct {
 	world    *sim.World
 	runtime  *prog.Runtime
 	finished bool
+
+	// log is every player command applied so far, in order. With the seed and
+	// the settings it is the whole match (see persist.go): it is what a restart
+	// replays, and it is why the world itself is never serialised.
+	log []Command
 }
 
 // newMatch generates the arena and puts every member's colony in it.
@@ -92,6 +98,38 @@ func (m *Match) Read(f func(*sim.World, *prog.Runtime)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	f(m.world, m.runtime)
+}
+
+// Apply is Read for a player command: it runs f under the same lock and, if f
+// succeeds, records cmd in the match's input log so a restart can replay it.
+//
+// Every mutation of a live world that does not come from a tick must go
+// through here. One that goes through Read instead is invisible to the log,
+// and a replay would silently rebuild a world in which it never happened.
+//
+// cmd.Tick is filled in from the world, not by the caller: the tick a command
+// applied at is only knowable under the lock.
+func (m *Match) Apply(cmd Command, f func(*sim.World, *prog.Runtime) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := f(m.world, m.runtime); err != nil {
+		return err
+	}
+	cmd.Tick = m.world.Tick
+	m.log = append(m.log, cmd)
+	return nil
+}
+
+// record copies what a restart needs, and reports whether the match is over.
+//
+// It exists so that saving never holds the match lock across disk I/O: this
+// takes the lock, copies, and returns; the caller writes afterwards. A save is
+// therefore always a consistent (tick, commands) pair, and a slow disk costs a
+// match nothing but the microseconds spent here.
+func (m *Match) record() (tick uint64, log []Command, finished bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.world.Tick, slices.Clone(m.log), m.finished
 }
 
 // Info is the match metadata endpoint's payload. The live world stream is E4.1;
@@ -210,19 +248,27 @@ func (m *Match) Finished() bool {
 	return m.finished
 }
 
-// Registry holds the live matches. Live match state is in-memory for the POC
-// (AGENTS.md): a restart ends every running match, and E7.6 owns fixing that.
+// Registry holds the live matches. The world itself stays in memory; what
+// survives a restart is the replay record each driver saves (persist.go).
 type Registry struct {
 	mu      sync.Mutex
 	matches map[int64]*Match
 	wg      sync.WaitGroup
 	done    chan struct{} // closed by Shutdown; every driver watches it
 	closed  bool
+
+	// save persists a match's replay record. Called from the tick driver, never
+	// under the match lock. Nil disables persistence, which is what a test that
+	// only wants a ticking world asks for.
+	save func(*Match)
+	// forget drops a record a match no longer needs. Nil like save.
+	forget func(*Match)
 }
 
-// NewRegistry returns an empty registry.
-func NewRegistry() *Registry {
-	return &Registry{matches: map[int64]*Match{}, done: make(chan struct{})}
+// NewRegistry returns an empty registry. save and forget may be nil; see the
+// Registry fields of the same name.
+func NewRegistry(save, forget func(*Match)) *Registry {
+	return &Registry{matches: map[int64]*Match{}, done: make(chan struct{}), save: save, forget: forget}
 }
 
 // ErrShuttingDown is returned by Start once Shutdown has begun.
@@ -264,21 +310,57 @@ func (r *Registry) drive(m *Match, onEnd func(*Match)) {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
+	// Immediately, not at the first interval: without this a match killed
+	// ungracefully in its first ten seconds has no record at all, and Restore
+	// would finish a lobby it could have replayed from tick 0.
+	r.persist(m)
+
+	unsaved := 0
 	for {
 		select {
 		case <-r.done:
+			// The last save of the match, and the one that makes a graceful
+			// deploy cost the players nothing: Shutdown waits for this
+			// goroutine, so the record is on disk before the process exits.
+			r.persist(m)
 			slog.Info("match suspended by shutdown", "match_id", m.ID, "tick", m.Info().Tick)
 			return
 		case <-ticker.C:
 			if m.step() {
+				// Saving on the driver goroutine, between ticks: it is one
+				// small write every saveEvery ticks, it holds no match lock,
+				// and a disk that stalls delays this match rather than
+				// stealing a worker from every other one. A kill -9 costs the
+				// match the ticks since the last save and nothing more.
+				if unsaved++; unsaved >= saveEvery {
+					unsaved = 0
+					r.persist(m)
+				}
 				continue
 			}
 			slog.Info("match finished", "match_id", m.ID, "ticks", m.Settings.durationTicks())
+			// Before onEnd: a record left behind for a finished match is dead
+			// weight on the volume, and one more way for a restart to try to
+			// resurrect a match that is over.
+			if r.forget != nil {
+				r.forget(m)
+			}
 			if onEnd != nil {
 				onEnd(m)
 			}
 			return
 		}
+	}
+}
+
+// saveEvery is how many ticks pass between two replay-record saves — ten
+// seconds' worth. It is the bound on how far a match rewinds if the process
+// dies without running its shutdown path; a graceful stop rewinds nothing.
+const saveEvery = 10 * TickRate
+
+func (r *Registry) persist(m *Match) {
+	if r.save != nil {
+		r.save(m)
 	}
 }
 

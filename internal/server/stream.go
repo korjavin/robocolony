@@ -50,7 +50,7 @@ func Stream(reg *lobby.Registry) http.HandlerFunc {
 		}
 		m, ok := reg.Get(id)
 		if !ok {
-			http.Error(w, "match not found: live match state does not survive a server restart", http.StatusNotFound)
+			http.Error(w, "match not found", http.StatusNotFound)
 			return
 		}
 		flusher, ok := w.(http.Flusher)
