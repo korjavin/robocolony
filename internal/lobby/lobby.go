@@ -193,14 +193,6 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	members, err := s.db.LobbyMembers(ctx, id)
-	if err != nil {
-		return Info{}, err
-	}
-	if len(members) == 0 {
-		return Info{}, errf(http.StatusConflict, "the lobby is empty")
-	}
-
 	if err := s.db.StartLobby(ctx, id, userID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return Info{}, err
@@ -211,7 +203,18 @@ func (s *Service) Start(ctx context.Context, id, userID int64) (Info, error) {
 		return Info{}, errf(http.StatusConflict, "the match has already started")
 	}
 
-	match, err := newMatch(lobby, set, members)
+	// Membership is read *after* the flip on purpose: joining and leaving are
+	// both gated on state = 'open', so from here the seats cannot move, and
+	// the colonies in the match are exactly the rows in lobby_members. Reading
+	// first would let a join land in the gap and get a seat but no colony.
+	members, err := s.db.LobbyMembers(ctx, id)
+	if err == nil && len(members) == 0 {
+		err = errf(http.StatusConflict, "the lobby is empty")
+	}
+	var match *Match
+	if err == nil {
+		match, err = newMatch(lobby, set, members)
+	}
 	if err == nil {
 		err = s.reg.Start(match, s.matchEnded)
 	}

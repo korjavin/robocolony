@@ -104,11 +104,13 @@ func (d *DB) LobbyByID(ctx context.Context, id int64) (Lobby, error) {
 }
 
 // LobbyMembers returns the seats in join order — the order colonies are
-// assigned in, so it must stay deterministic.
+// assigned in, so it must stay deterministic. joined_at has one-second
+// resolution, so insertion order (rowid) breaks the ties two joins in the same
+// second would otherwise leave to chance.
 func (d *DB) LobbyMembers(ctx context.Context, lobbyID int64) ([]Member, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT u.id, u.display_name FROM lobby_members m JOIN users u ON u.id = m.user_id
-		WHERE m.lobby_id = ? ORDER BY m.joined_at, u.id`, lobbyID)
+		WHERE m.lobby_id = ? ORDER BY m.joined_at, m.rowid`, lobbyID)
 	if err != nil {
 		return nil, fmt.Errorf("db: lobby members: %w", err)
 	}
