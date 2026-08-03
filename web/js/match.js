@@ -252,11 +252,26 @@ function renderInspector() {
   ]));
 
   box.append(el("h3", null, "Memory"));
-  const mem = el("ul", "tight");
+  // Highlighted straight after an install: design §4.2 step 4 clears all three,
+  // and §13 criterion 6 is checked by looking at exactly this list.
+  const fresh = note && note.robot === r.id && !note.bad;
+  const mem = el("ul", "tight" + (fresh ? " cleared" : ""));
   (r.memory || []).forEach((p, i) => {
     mem.append(el("li", null, `${i + 1}: ` + (p ? `${p.x}, ${p.y}` : "unset")));
   });
   box.append(mem);
+
+  if (r.colony === myColony()) {
+    box.append(el("h3", null, "Command"));
+    if (cmdFor !== r.id) { // rebuilt only on a new selection, see commandBox
+      note = null;
+      cmd = commandBox(r);
+      cmdFor = r.id;
+      loadPrograms();
+    }
+    cmd.update(r);
+    box.append(cmd.node);
+  }
 }
 
 function ruleBox(r) {
@@ -286,6 +301,143 @@ function blueprintOf(r) {
     if (bp) return bp;
   }
   return null;
+}
+
+// ---------------------------------------------------------------- commands
+//
+// Design §4.2: recall a robot, wait for it to walk home, install a program
+// there. The server owns every rule — whose robot it is, whether it is at its
+// base, whether the program fits the blueprint. The checks below only decide
+// whether a control is worth showing; none of them is a security boundary.
+//
+// Nothing here mutates snapshot state optimistically. A command posts, and the
+// next tick frame says what actually happened; a local guess would disagree
+// with the arena drawn beside it.
+
+let me = null;         // /api/me, only to find which colony is the viewer's
+let programs = null;   // the player's library, null while it loads
+let picked = "";       // chosen program id, kept across the per-tick re-render
+let note = null;       // {robot, text, bad}: last command result for that robot
+let cmd = null;        // the command controls, see commandBox
+let cmdFor = null;     // robot they were built for
+
+const myColony = () => {
+  const seat = init?.colonies.find((c) => c.user_id === me?.id);
+  return seat ? seat.id : null;
+};
+
+// sim.AtOwnBase: Chebyshev distance 1 of the colony's own base. Duplicated for
+// the same reason as VISION_RANGE — the wire carries state, not rules — and it
+// only greys a button out; the server still refuses an install in the field.
+const atOwnBase = (r) => {
+  const b = snap?.bases.find((x) => x.colony === r.colony);
+  return !!b && Math.max(Math.abs(b.x - r.x), Math.abs(b.y - r.y)) <= 1;
+};
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : { Accept: "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { location.href = "/login"; return null; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    // An install refused by prog.Validate carries the offending rules, and each
+    // message already names its rule. Keep them: "invalid program" on its own
+    // gives the player nothing to fix.
+    const issues = (data.issues || []).map((i) => i.message);
+    throw new Error([data.error || res.statusText, ...issues].join(" · "));
+  }
+  return data;
+}
+
+async function loadPrograms() {
+  const data = await api("GET", "/api/programs").catch(() => null);
+  if (!data) return;
+  programs = data.programs;
+  render();
+}
+
+// commandBox builds the controls once per selected robot and returns an update
+// hook instead of rebuilding them. The inspector re-renders on every tick, and
+// a <select> replaced ten times a second cannot be used at all: the dropdown
+// closes under the pointer.
+function commandBox(r) {
+  const node = el("div", "cmd");
+  const state = el("div", "state");
+  const recall = el("button", null, "Recall to base");
+  const pick = el("select");
+  const install = el("button", null, "Install");
+  const msg = el("p", "note");
+  const row = el("div", "row");
+  row.append(pick, install);
+  node.append(state, recall, row, msg);
+
+  const fail = (e) => { note = { robot: r.id, text: e.message, bad: true }; };
+
+  recall.addEventListener("click", async () => {
+    note = null;
+    recall.disabled = true; // until the next frame reports the flag
+    try { await api("POST", `/api/matches/${matchID}/robots/${r.id}/recall`); }
+    catch (e) { fail(e); }
+    render();
+  });
+
+  pick.addEventListener("change", () => { picked = pick.value; });
+
+  install.addEventListener("click", async () => {
+    const id = Number(pick.value);
+    if (!id) { note = { robot: r.id, text: "Pick a program first.", bad: true }; render(); return; }
+    const name = pick.selectedOptions[0].textContent;
+    note = null;
+    install.disabled = true;
+    try {
+      const st = await api("POST", `/api/matches/${matchID}/robots/${r.id}/program`,
+        { program_id: id });
+      if (st) {
+        // Counted from the server's own reply, not assumed: this is the claim
+        // design §13 criterion 6 asks the player to verify.
+        const cleared = st.memory.filter((p) => !p).length;
+        note = { robot: r.id, text: `${name} installed — ${cleared} memory points cleared.` };
+      }
+    } catch (e) { fail(e); }
+    render();
+  });
+
+  const update = (cur) => {
+    const home = atOwnBase(cur);
+    state.className = "state" + (cur.recalled ? (home ? " home" : " back") : "");
+    state.textContent = cur.recalled
+      ? (home ? "at base — awaiting program" : "returning to base")
+      : "in the field, running its program";
+
+    recall.disabled = over || cur.recalled;
+    // A program can be installed on any robot standing at its own base, recalled
+    // or not — that is the server's rule, and it is what a just-built robot needs.
+    const ready = !over && home && programs !== null && programs.length > 0;
+    pick.disabled = install.disabled = !ready;
+
+    if (programs === null) {
+      pick.replaceChildren(el("option", null, "loading library…"));
+    } else if (pick.dataset.lib !== programs.map((p) => p.id).join(",")) {
+      pick.dataset.lib = programs.map((p) => p.id).join(",");
+      const none = el("option", null, programs.length ? "— pick a program —" : "library is empty");
+      none.value = ""; // without this an <option> takes its own text as its value
+      pick.replaceChildren(none);
+      for (const p of programs) {
+        const o = el("option", null, p.name);
+        o.value = String(p.id);
+        pick.append(o);
+      }
+      pick.value = picked; // survives the re-render; empty if that program is gone
+    }
+
+    msg.className = "note" + (note && note.robot === cur.id ? (note.bad ? " bad" : " ok") : "");
+    msg.textContent = note && note.robot === cur.id ? note.text : "";
+  };
+
+  return { node, update };
 }
 
 function renderStats() {
@@ -455,3 +607,7 @@ function connect() {
 }
 
 connect();
+
+// Which colony is the viewer's own. Only gates the command controls, so a
+// failure here costs the buttons, not the observer view.
+api("GET", "/api/me").then((u) => { me = u; render(); }).catch(() => {});
