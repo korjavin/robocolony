@@ -1,0 +1,8 @@
+.env
+/data/
+*.db
+*.db-shm
+*.db-wal
+/server
+/robocolony
+.beads/
