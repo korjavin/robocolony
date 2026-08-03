@@ -39,7 +39,7 @@ let acts = new Map();
 let programs = [];
 let blueprints = [];
 let current = null;         // { id, name, program }
-let findings = { errors: [], warnings: [] };
+let findings = { errors: [], warnings: [], notes: [] };
 let pending = 0;
 let dryrun = null;          // last /api/programs/dryrun report, or null
 
@@ -295,8 +295,11 @@ function reorder(from, to) {
 // Validation feedback. Errors block the save, warnings never do (design §10.10).
 // ---------------------------------------------------------------------------
 
+// Buckets in descending loudness: an error, then a warning, then a note. Notes
+// are observations about a correct program, so they are rendered quietly and
+// never counted anywhere that gates a save.
 const issuesFor = (rule) =>
-  findings.errors.filter((e) => e.rule === rule).concat(findings.warnings.filter((e) => e.rule === rule));
+  [...findings.errors, ...findings.warnings, ...(findings.notes || [])].filter((e) => e.rule === rule);
 
 function issueLine(is) {
   return el("div", { className: `issue ${is.severity}`, textContent: `${is.severity}: ${is.message}` });
@@ -316,7 +319,9 @@ let timer = null;
 function changed() {
   // Any edit invalidates the last dry run: it was measured on a program that no
   // longer exists, and after a reorder its rule numbers point at other rules.
+  // The same goes for whatever the last refusal said about it.
   dryrun = null;
+  err("");
   render();
   clearTimeout(timer);
   timer = setTimeout(validate, 200);
@@ -343,16 +348,16 @@ async function validate() {
 // ---------------------------------------------------------------------------
 
 // dryRunBadges is what turns the report into an edit: a rule that never fired is
-// called out on its own card, not buried in a summary. never_fired is the only
-// field trusted here, because it is the endpoint's own judgement about which
-// rules are observable at all.
+// called out on its own card, not buried in a summary. never_fired is top-level
+// and exhaustive — the trace records every rule that matched, not only the one
+// that took the tick — so a side-effect-only rule that ran counts as fired.
 function dryRunBadges(i) {
   if (!dryrun) return [];
   const out = [];
   if (dryrun.never_fired.includes(i)) {
     out.push(el("span", {
       className: "badge never", textContent: "never fired",
-      title: "in the dry run this rule never took a tick — an earlier rule always matched first, or its condition never held",
+      title: "in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held",
     }));
   }
   const row = (dryrun.rules || []).find((r) => r.rule === i);
@@ -438,7 +443,7 @@ function renderLibrary() {
 function open(p) {
   current = { id: p.id, name: p.name, program: structuredClone(p.program) };
   $("name").value = p.name;
-  findings = { errors: [], warnings: [] };
+  findings = { errors: [], warnings: [], notes: [] };
   status("");
   changed();
 }
@@ -505,8 +510,10 @@ function statLine(s) {
 const componentName = (v) => (lang.components.find((c) => c.variant === v) || { name: `#${v}` }).name;
 
 let picked = [];
-let bpStats = null;   // last /api/blueprints/preview verdict for `picked`
+let bpStats = null;     // last /api/blueprints/preview verdict
+let bpStatsFor = "";    // the parts list that verdict describes
 let bpTimer = null;
+const pickedKey = () => picked.join(",");
 
 // renderParts draws the palette grouped by the catalogue's own kind field, so
 // E7.2 adding legs or an enemy-robot radar needs no change here.
@@ -551,8 +558,10 @@ function renderBlueprintDraft() {
     host.append(statLine(bpStats));
     if (!bpStats.ok) host.append(el("div", { className: "issue error", textContent: bpStats.error }));
   }
-  // The server's verdict is the gate, exactly as it is for the save itself.
-  $("bpcreate").disabled = !(bpStats && bpStats.ok);
+  // The server's verdict is the gate, exactly as it is for the save itself —
+  // and only while it still describes the parts list on screen. A verdict for
+  // some earlier design must never open the button for this one.
+  $("bpcreate").disabled = !(bpStats && bpStats.ok && bpStatsFor === pickedKey());
 }
 
 // previewBlueprint asks the server what the current parts list would build.
@@ -561,10 +570,14 @@ function previewBlueprint() {
   renderBlueprintDraft();
   clearTimeout(bpTimer);
   bpTimer = setTimeout(async () => {
+    const key = pickedKey();
     try {
       const res = await api("POST", "/api/blueprints/preview", { components: picked });
-      if (!res) return;
+      // Responses can land out of order; one for a design the player has
+      // already moved on from is dropped rather than shown.
+      if (!res || key !== pickedKey()) return;
       bpStats = res;
+      bpStatsFor = key;
       renderBlueprintDraft();
     } catch (e) { err(e.message); }
   }, 150);
@@ -579,7 +592,7 @@ function previewBlueprint() {
 function showRefusal(e) {
   err(e.message);
   if (e.data && e.data.errors) {
-    findings = { errors: e.data.errors, warnings: e.data.warnings || [] };
+    findings = { errors: e.data.errors, warnings: e.data.warnings || [], notes: e.data.notes || [] };
     renderRules();
     renderIssues();
   }
@@ -663,6 +676,7 @@ $("bpcreate").addEventListener("click", async () => {
     blueprints.push(bp);
     picked = [];
     bpStats = null;
+    bpStatsFor = "";
     $("bpname").value = "";
     renderBlueprints();
     $("blueprint").value = String(bp.id);
