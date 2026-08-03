@@ -120,6 +120,30 @@
   .cmd .note.bad { color: #c0392b; font-weight: 600; }
   /* Design §13, criterion 6 is verified by eye right here. */
   ul.tight.cleared { border-left: .2rem solid #2f8f4e; padding-left: .5rem; }
+
+  /* Robot roster. Rows are <button>s so focus, Enter and Space come for free. */
+  .roster { max-height: 18rem; overflow-y: auto; overflow-x: hidden;
+            display: grid; align-content: start; gap: .1rem; }
+  .roster .row {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 0 .35rem;
+    align-items: baseline; width: 100%; text-align: left; font: inherit;
+    padding: .15rem .35rem; border: 1px solid transparent; border-radius: .3rem;
+    background: none; color: inherit;
+  }
+  .roster .row:hover { background: #7f8a9922; }
+  .roster .row.sel { border-color: currentColor; background: #7f8a9933; }
+  .roster .row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .roster .row .num { font-size: .85rem; font-variant-numeric: tabular-nums; opacity: .8; }
+  .roster .row .num.hurt { color: #c98a00; opacity: 1; }
+  .roster .row .num.crit { color: #c0392b; opacity: 1; }
+  .roster .row .sub {
+    grid-column: 2 / 4; display: flex; gap: .5rem; justify-content: space-between;
+    font-size: .8rem; line-height: 1.35; opacity: .75; min-width: 0;
+  }
+  .roster .row .act { font-family: ui-monospace, monospace;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .roster .row .cargo:not(:empty)::before { content: "◆ "; }
+  .roster .row .cargo { white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -136,11 +160,23 @@
   <div class="cols">
     <div class="arena">
       <canvas id="arena" width="256" height="256"></canvas>
-      <p class="meta">Click a robot to inspect it. The wedge is that robot's
-      forward vision &mdash; the only thing its program can see.</p>
+      <p class="meta">Click near a robot &mdash; or pick one from the roster
+      &mdash; to inspect it. The wedge is that robot's forward vision &mdash;
+      the only thing its program can see.</p>
     </div>
 
     <div class="side">
+      <!-- The roster sits above the inspector on purpose: the inspector grows
+           by a whole Command section when the selection is the viewer's own
+           robot, and a list below it would jump under the pointer. -->
+      <h2>Robots</h2>
+      <div class="panel">
+        <div class="roster" id="roster"></div>
+        <p class="meta" id="roster-empty">No robots yet.</p>
+        <p class="meta">Every robot in the match, by colony, with what it is
+        doing this tick.</p>
+      </div>
+
       <h2>Selected robot</h2>
       <div class="panel" id="inspector"><p class="meta">No robot selected.</p></div>
 
