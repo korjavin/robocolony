@@ -20,9 +20,26 @@ func sampleWorld(t *testing.T, seed int64) *World {
 	if err := bp.Validate(); err != nil {
 		t.Fatalf("sample blueprint invalid: %v", err)
 	}
-	w.Bases[0].Blueprints = append(w.Bases[0].Blueprints, bp)
-	for _, v := range []Variant{Laser, Tracks, MediumArmor, Manipulator, PartsRadar} {
-		w.Bases[0].Inventory[v] += 2
+	// Two approved blueprints, and enough stock to keep building for the whole
+	// of TestDeterminism's run. Both halves matter, and both are load-bearing
+	// for the guard rather than scenery:
+	//
+	//   - two, because design §5.2's production draw is w.rng.Intn(len(buildable))
+	//     and Intn(1) is 0 whatever stream it comes from. With one blueprint a
+	//     base that picked from the *global* rand would step identically. That is
+	//     the same masking that let the E1.2 break through, one function over.
+	//   - deep stock, because a base that runs dry after two builds only draws
+	//     twice. Forty of each keeps the draw happening for the whole run, so a
+	//     broken stream diverges outright instead of coin-flipping.
+	heavy := bp
+	heavy.ID, heavy.Name = "bp-scout-heavy", "heavy scout"
+	heavy.Components = []Variant{Tracks, HeavyArmor, Manipulator, PartsRadar}
+	if err := heavy.Validate(); err != nil {
+		t.Fatalf("sample heavy blueprint invalid: %v", err)
+	}
+	w.Bases[0].Blueprints = append(w.Bases[0].Blueprints, bp, heavy)
+	for _, v := range []Variant{Laser, Tracks, MediumArmor, HeavyArmor, Manipulator, PartsRadar} {
+		w.Bases[0].Inventory[v] += 40
 	}
 	w.Bases[0].Build = BuildOrder{Blueprint: bp, Ticks: 7}
 	w.signals = []Signal{{Kind: ComeHere, From: 1, Colony: 0, Coord: Coord{3, 4}}}

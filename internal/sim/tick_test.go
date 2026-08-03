@@ -423,8 +423,10 @@ func TestAutoBuildPicksRandomlyFromTheWorldRand(t *testing.T) {
 func TestSignalsReachTheColonyNextTick(t *testing.T) {
 	w := arena(8)
 	sender := w.addRobot(0, Coord{1, 1}, North, scavengerBlueprint())
-	friend := w.addRobot(0, Coord{6, 6}, North, scavengerBlueprint())
-	enemy := w.addRobot(1, Coord{6, 1}, North, scavengerBlueprint())
+	// Both inside the signal radius (4 on an 8×8 arena), so colony — not
+	// distance — is the only thing keeping the enemy off the channel.
+	friend := w.addRobot(0, Coord{4, 4}, North, scavengerBlueprint())
+	enemy := w.addRobot(1, Coord{2, 2}, North, scavengerBlueprint())
 
 	heard := map[int][]Signal{}
 	w.Control = func(r *Robot) Controller {
@@ -456,6 +458,88 @@ func TestSignalsReachTheColonyNextTick(t *testing.T) {
 	w.Step() // tick 2: the signal is gone
 	if len(heard[friend.ID]) != 1 {
 		t.Fatal("a signal outlived the tick after it was sent")
+	}
+}
+
+// The friendly channel is not global (rc-w9s.20): it reaches about half the
+// board from the sender. Tested at the boundary, because an off-by-one in a
+// radius is invisible anywhere else, and for both signal kinds — a warning that
+// carried further than a rally call would be a rule nobody could reason about.
+func TestSignalRadiusIsHalfTheBoard(t *testing.T) {
+	const side = 16
+	w := arena(side)
+	if got, want := w.signalRadius(), side/2; got != want {
+		t.Fatalf("signalRadius on a %d×%d arena = %d, want %d", side, side, got, want)
+	}
+	// Scaling, not a constant: double the arena, double the reach.
+	if big := arena(2 * side); big.signalRadius() != 2*w.signalRadius() {
+		t.Fatalf("radius %d on a %d-wide arena but %d on a %d-wide one: not derived from arena size",
+			w.signalRadius(), side, big.signalRadius(), 2*side)
+	}
+
+	sender := w.addRobot(0, Coord{0, 0}, North, scavengerBlueprint())
+	inside := w.addRobot(0, Coord{side / 2, 0}, North, scavengerBlueprint())    // exactly the radius
+	outside := w.addRobot(0, Coord{side/2 + 1, 0}, North, scavengerBlueprint()) // one cell further
+
+	heard := map[int][]Signal{}
+	w.Control = func(r *Robot) Controller {
+		return funcController(func(v RobotView) Action {
+			heard[v.ID] = append(heard[v.ID], v.Signals...)
+			if v.ID == sender.ID && v.Tick == 0 {
+				return Action{Broadcasts: []SignalKind{ComeHere, AvoidHere}}
+			}
+			return Action{}
+		})
+	}
+	w.Step() // broadcast
+	w.Step() // delivery
+
+	if len(heard[inside.ID]) != 2 {
+		t.Fatalf("a robot exactly %d cells out heard %v, want both signals", w.signalRadius(), heard[inside.ID])
+	}
+	if len(heard[outside.ID]) != 0 {
+		t.Fatalf("a robot %d cells out heard %v, want nothing", w.signalRadius()+1, heard[outside.ID])
+	}
+}
+
+// Build time is mass-dependent (rc-w9s.22): the heavier of two blueprints must
+// cost measurably more, and the lightest legal body must still cost something.
+func TestBuildTimeGrowsWithMass(t *testing.T) {
+	light := Blueprint{ID: "bp-light", Name: "light", Components: []Variant{Legs, LightArmor}}
+	heavy := Blueprint{ID: "bp-heavy", Name: "heavy",
+		Components: []Variant{Tracks, HeavyArmor, Cannon, Cannon, Manipulator, EnemyRadar}}
+	for _, bp := range []Blueprint{light, heavy} {
+		if err := bp.Validate(); err != nil {
+			t.Fatalf("%s is not a legal blueprint: %v", bp.ID, err)
+		}
+	}
+	if buildTicks(heavy) <= buildTicks(light) {
+		t.Fatalf("heavy (%d mass) builds in %d ticks, light (%d mass) in %d: mass does not cost time",
+			heavy.Mass(), buildTicks(heavy), light.Mass(), buildTicks(light))
+	}
+	// Same components, one armor tier apart: the difference must come from mass
+	// alone, not from the number of parts.
+	medium := scavengerBlueprint()
+	heavier := scavengerBlueprint()
+	heavier.ID, heavier.Components = "bp-scavenger-heavy", []Variant{Tracks, HeavyArmor, Manipulator, PartsRadar}
+	if buildTicks(heavier) <= buildTicks(medium) {
+		t.Fatalf("swapping medium armor for heavy left build time at %d ticks", buildTicks(medium))
+	}
+	// The floor: the lightest legal robot is cheap, never near-instant.
+	if buildTicks(light) < 20 {
+		t.Fatalf("the lightest legal robot builds in %d ticks, which is nearly free", buildTicks(light))
+	}
+
+	// And the timer the base actually charges is that number.
+	w := arena(8)
+	b := w.addBase(0, Coord{4, 4})
+	b.Blueprints = append(b.Blueprints, heavy)
+	for _, v := range heavy.Components {
+		b.Inventory[v]++
+	}
+	w.Step()
+	if b.Build.Ticks != buildTicks(heavy) {
+		t.Fatalf("base charged %d ticks for a %d-mass blueprint, want %d", b.Build.Ticks, heavy.Mass(), buildTicks(heavy))
 	}
 }
 

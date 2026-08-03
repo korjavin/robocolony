@@ -58,6 +58,24 @@ import (
 // the board off it on half the seeds. What changed is that the other half now
 // have a colony left to play.
 //
+// Re-measured again after rc-w9s.20 (signals gained a radius of half the board)
+// and rc-w9s.22 (build time became mass-dependent). Same harness, same 16 seeds.
+// No profile was retuned — these numbers are the effect of the two sim changes
+// on the profiles exactly as they were:
+//
+//	tutorial     0/16 wiped, 0/16 dead at end, human out-collects it 1403 to 445
+//	peaceful     0/16 wiped, 0/16 dead at end, human out-collects it 1131 to 802
+//	defensive    0/16 wiped, 0/16 dead at end, human ahead 1252 to 706
+//	aggressive  10/16 wiped, 10/16 dead at end, avg tick 2167, earliest 999,
+//	            human behind 828 to 1040
+//
+// The radius is what moved the defensive rung: its spotters call responders in
+// over the colony channel, and a call now carries half the board instead of all
+// of it, so the responder that used to arrive from the far corner does not. It
+// still costs a player robots (32 losses against peaceful's 0), so the ladder
+// keeps its order — but it is the softest it has measured, and it is the rung to
+// re-check first if the ladder ever needs a fifth measurement.
+//
 // Retuning a profile means moving its rung, so re-measure when you do.
 type Profile string
 
