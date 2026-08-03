@@ -1,8 +1,15 @@
 # AGENTS.md — conventions for contributors and coding agents
 
-Read this before writing code. `docs/design_v0.1.md` is the game design; this
-file is the *implementation* contract. Where the design doc leaves a decision
-open (§12), the "Locked decisions" table below is the answer for the POC.
+Read this before writing code. `docs/design_v0.1.md` is the game *concept*; this
+file is the *implementation* contract. Two companions:
+
+- **`docs/decisions.md`** — every question the design doc left open (§12), how it
+  was answered, and the measurements behind the balance calls. The table below is
+  the subset you must not violate while coding; that file is the full record.
+- **`docs/engineering-notes.md`** — the traps this codebase has actually sprung,
+  with the evidence. The Landmines section below is the index; read the notes
+  before touching `internal/sim`, the starter kit, the inspector UI, or
+  persistence.
 
 ## Layout
 
@@ -38,11 +45,35 @@ sql/migrations/      NNN_name.sql, goose format
 
 ## Landmines
 
+Each of these cost real debugging time. `docs/engineering-notes.md` has the
+incident behind every one — go there before you decide a rule is over-cautious.
+
 - **`internal/sim` purity.** If you need HTTP, DB, or wall-clock time inside
   `internal/sim`, you are in the wrong package. Time is *ticks*, passed in.
 - **Determinism guard.** `internal/sim` has a test that runs a seeded world
   twice and compares a state hash. Anything nondeterministic (global rand, map
   ordering, goroutine races) fails it. Do not weaken the test to make it pass.
+  **The guard has holes — five found so far** — so when you touch `internal/sim`,
+  *do the deliberate break*: swap one roll to package-level `math/rand`, confirm
+  the guard fails, restore it, say so in the PR. A fixture offering exactly one
+  choice makes `Intn(1)` return 0 from any source and hides the break; any
+  fixture exercising a random selection needs **two live options for the whole
+  run**. New mutable field ⇒ a `StateHash` entry *and* a
+  `TestStateHashCoversState` case; observation (traces, history, idle reasons) is
+  not state and stays out of the hash.
+- **`w.Robots` is not a stable index space.** Production appends and destruction
+  removes within a tick. Key by entity id, never by position — a test that
+  snapshotted positions into a slice panicked when tick ordering shifted.
+- **Nothing interactive may live in `#inspector`.** It is `replaceChildren()`-ed
+  at 10 Hz, which detaches and re-appends cached nodes, so an open `<select>`
+  closes under the pointer. Anything that can hold focus or a popup gets its own
+  panel that is never cleared.
+- **Fanning out over one axis leaves the next axis binding.** The starter kit has
+  stalled three times on three different component kinds. When a required kind
+  gains variants, check the starter fan-out covers it.
+- **Give the feature a door.** Twice a capability shipped with no page linking to
+  it. Name where the player reaches it, or say in the PR body that UI is out of
+  scope so a follow-up gets filed.
 - **Never edit an existing migration.** Add `NNN_next.sql`. Numbers must be
   contiguous.
 - **`CGO_ENABLED=0`** everywhere. Do not introduce `mattn/go-sqlite3`.

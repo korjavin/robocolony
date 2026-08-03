@@ -10,6 +10,8 @@
 
 **Audience:** Game designers, gameplay engineers, simulation engineers, UI/UX designers
 
+> **This document describes the *concept*, not the build.** Where it says TBD or "open decision", the answer is in **`docs/decisions.md`** — every §12 question was resolved on 3 August 2026. `AGENTS.md` is the implementation contract. Nothing decided is restated here, so that a number can never disagree with itself.
+
 > **Design intent:** The player is an engineer of autonomous behavior, not a unit commander. Success comes from robot design, production choices, and robust programs that continue to work while the player is offline.
 
 # 1. Executive Summary
@@ -71,8 +73,10 @@ The match runs in real time on the server. A colony remains active when its play
 | Match duration       | Fixed per lobby; exact supported values are TBD.                            |
 | Initial map richness | Controls how many ready-made components are placed during arena generation. |
 | Resource spawn rate  | Controls the slow appearance of additional components during the match.     |
-| Map generation seed  | Randomized; exposure or manual selection is TBD.                            |
+| Map generation seed  | Drawn by the server, exposed read-only, never player-chosen.                |
 | Player / AI count    | Configurable; supported limits are TBD.                                     |
+
+The remaining TBDs above were closed on 3 August 2026: duration, richness, spawn rate, max players and starting budget are all lobby settings with server-validated ranges. The ranges live in `internal/lobby/settings.go` — deliberately not copied here, so they cannot drift. See `docs/decisions.md` (§12 P1, match parameters). The seed is deliberately not a setting: a match stays reproducible without letting a host shop for a favourable arena.
 
 # 3. Arena and World Model
 
@@ -117,7 +121,7 @@ The player cannot click a destination, steer a robot, aim a weapon, manually col
 
 There is no fog of war for the human observer. During a match, the player can see the arena, all bases, and all robots from every colony, including their movement and combat. This omniscience does not transfer to robot programs: a robot may only use its own position, base position, local vision, installed radar, memory, and received signals.
 
-Whether all loose components are globally visible to the player, or only components discovered by the player's colony, remains an open decision.
+Resolved on 3 August 2026: the observer sees **all** loose components, not only those its colony discovered — consistent with the no-fog-of-war rule above. See `docs/decisions.md` (§12 P1, world visibility).
 
 ## 4.4 Required observation interface
 
@@ -157,7 +161,7 @@ A blueprint defines a legal physical robot configuration and its default program
 
 7.  Release it with the blueprint's default program.
 
-Build time may be constant or depend on component count and mass; this remains TBD. The random selection rule is intentional for the current concept, although weighted priorities could be explored later.
+Build time is **mass-dependent** — resolved on 3 August 2026, see `docs/decisions.md` (§12 P1, production timing) for the reasoning and `internal/sim/tick.go` for the numbers. The random selection rule is intentional for the current concept, although weighted priorities could be explored later.
 
 ## 5.3 Recovery after losses
 
@@ -185,7 +189,7 @@ Every robot is modular. The minimum valid robot contains one locomotion unit and
 
 | **Component**     | **Function**                                               | **Current limit**                                                            |
 |-------------------|------------------------------------------------------------|------------------------------------------------------------------------------|
-| Manipulator       | Picks up, carries, and deposits ready-made components.     | Presence is required for scavenging; exact slot and carrying limits are TBD. |
+| Manipulator       | Picks up, carries, and deposits ready-made components.     | Required for scavenging. Carrying capacity is **exactly one** component.     |
 | Parts radar       | Detects loose robot components at range.                   | At most one radar of any type.                                               |
 | Enemy robot radar | Detects hostile robots at range.                           | At most one radar of any type.                                               |
 | Enemy base radar  | Detects opponent bases as navigation landmarks.            | At most one radar of any type.                                               |
@@ -207,7 +211,7 @@ Every robot is modular. The minimum valid robot contains one locomotion unit and
 
 - Additional components increase total mass and reduce effective speed.
 
-The phrase “two types of weapons” is currently interpreted as two weapon modules, potentially identical or different. This interpretation must be confirmed during detailed design.
+The phrase “two types of weapons” is interpreted as two weapon modules, potentially identical or different — confirmed on 3 August 2026. Which of the two fires is decided by slot order: the first weapon that is off cooldown and in range. See `docs/decisions.md` (§12 P1, weapon modules).
 
 ## 6.4 Speed model
 
@@ -252,7 +256,9 @@ Communication uses one shared friendly channel. Signals are events rather than c
 | COME_HERE  | Sender coordinates | Request nearby or connected friendly robots to converge on the sender. |
 | AVOID_HERE | Sender coordinates | Warn friendly robots about the sender's current area.                  |
 
-A signal exists only at the moment of transmission. A receiving robot may preserve its coordinate by writing it into Point 1, Point 2, or Point 3. Signal reception range is not yet fully resolved: the current concept requires a common channel heard by all eligible friendly robots, but whether eligibility is global or limited by radio distance remains TBD.
+A signal exists only at the moment of transmission. A receiving robot may preserve its coordinate by writing it into Point 1, Point 2, or Point 3.
+
+Signal reach was resolved on 3 August 2026: the shared channel is **limited by a fixed radius of about half the board**, not global. A friendly robot outside it simply never matches `received(...)`, which needs no language change. See `docs/decisions.md` (§12 P0, signal reach) for why, and `AGENTS.md` for the exact rule.
 
 # 8. Combat and Destruction
 
@@ -389,6 +395,8 @@ Target-selection filters such as nearest, farthest, component type, enemy bluepr
 
 Implementation note: the deposit rule must remain above the generic carrying rule. This example shows why rule ordering and action-completion semantics require clear editor feedback.
 
+> **Caveat — this program does not run on every blueprint.** Rule 4 is `move_to_radar_target`, so the blueprint needs a **parts radar**; without one the validator raises a `missing_component` *error* and the program cannot be saved. Deleting rule 4 instead of fitting the radar does not help: no remaining rule steers the robot toward a component, so it degenerates into a blind random walk that only picks up what it happens to bump into. As printed it is correct — on a blueprint with a manipulator *and* a parts radar.
+
 ## 10.8 Example program: memory-assisted scout
 
 ```text
@@ -411,7 +419,9 @@ Implementation note: the deposit rule must remain above the generic carrying rul
    THEN move_to_point(Point 1)
 ```
 
-This example also demonstrates the unresolved need for limited action sequences. Saving a coordinate and continuing movement may require either a zero-duration bookkeeping action or a rule that can contain a short sequence.
+This example also demonstrates the need for limited action sequences. Saving a coordinate and continuing movement requires a zero-duration bookkeeping action — resolved that way on 3 August 2026 (`docs/decisions.md`, §12 P0 rule action model), which is why rule 1 does not end the tick.
+
+> **Caveat — this program can never start.** A freshly built robot stands at its base with empty hands and empty memory, and every rule here also waits on cargo or on Point 1 — while the only rule that *sets* Point 1 requires already carrying something. Nothing in the world can unblock it. The validator reports this as an `inert_start` warning (not an error: the program is legal, and works if installed on a robot that is already carrying a component). It is kept as printed because the warning that catches it is the lesson.
 
 ## 10.9 Example program: defensive responder
 
@@ -437,6 +447,8 @@ This example also demonstrates the unresolved need for limited action sequences.
 7. WHEN sees_obstacle
    THEN turn_random
 ```
+
+> **Caveat — this program only reacts.** Nothing here matches a robot that has just been built, so it idles at the base until the world gives it a stimulus: an enemy in sight, a `COME_HERE`, a radar contact, an obstacle. That is a legitimate design for a base guard, so the validator reports it as a neutral `reactive_start` note rather than a warning. It also needs a **radar** for rule 6 and a **weapon** for rule 3, or those raise `missing_component` errors.
 
 ## 10.10 Visual editor requirements
 
@@ -490,7 +502,9 @@ The first playable version should validate whether designing autonomous colonies
 
 # 12. Open Design Decisions
 
-The following items were not resolved in the concept discussion and should not be treated as fixed requirements.
+> **All of these were resolved on 3 August 2026.** The answers, with the reasoning and the measurements behind them, are in **`docs/decisions.md`** — one row per question below, same priorities and titles. `AGENTS.md` carries the subset an implementer must not violate. This table is kept as the record of what the questions *were*; it is not the answer, and neither is any "TBD" left elsewhere in this document that maps to a row here.
+
+The following items were not resolved in the concept discussion, and should not be read as fixed requirements *of the concept* — see the note above for how each was answered in the implementation.
 
 | **Priority** | **Decision**            | **Question**                                                                                                                             |
 |--------------|-------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
