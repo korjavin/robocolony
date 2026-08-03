@@ -135,17 +135,25 @@ func warnForwardOnly(r *Result, p Program) {
 // deliberately incomplete: it only recognises conjunction containment, which
 // is the case editors actually produce (rule 5 = A AND B under rule 2 = A).
 // Anything containing an OR is skipped rather than guessed at.
+//
+// Only a rule with a primary action can dominate: under the locked action
+// model a side-effect-only rule fires and evaluation continues down the list
+// (design §10.8 rule 1 is exactly that), so it pre-empts nothing.
 func warnDominated(r *Result, p Program) {
 	keys := make([][]string, len(p.Rules))
 	for i, rule := range p.Rules {
+		if !hasPrimary(rule) {
+			continue
+		}
 		keys[i], _ = conjuncts(rule.When, 0)
 	}
 	for j := 1; j < len(p.Rules); j++ {
-		if keys[j] == nil {
+		kj, ok := conjuncts(p.Rules[j].When, 0)
+		if !ok {
 			continue
 		}
-		have := make(map[string]bool, len(keys[j]))
-		for _, k := range keys[j] {
+		have := make(map[string]bool, len(kj))
+		for _, k := range kj {
 			have[k] = true
 		}
 		for i := 0; i < j; i++ {
@@ -157,6 +165,15 @@ func warnDominated(r *Result, p Program) {
 			break
 		}
 	}
+}
+
+func hasPrimary(r Rule) bool {
+	for _, a := range r.Then {
+		if a.Primary() {
+			return true
+		}
+	}
+	return false
 }
 
 func subset(want []string, have map[string]bool) bool {

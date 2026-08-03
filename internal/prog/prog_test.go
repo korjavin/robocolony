@@ -130,6 +130,17 @@ func TestValidate(t *testing.T) {
 			nil, []string{"unreachable_rule"},
 		},
 		{
+			// A side-effect-only rule does not end the tick, so it cannot
+			// pre-empt anything below it (design §10.8 rule 1).
+			"broad side-effect rule does not dominate",
+			Program{Rules: []Rule{
+				{Pred(CarryingComponent), []Action{DoArg(SaveCurrentPosition, 1)}},
+				{And(Pred(CarryingComponent), Pred(AtOwnBase)), []Action{Do(DepositComponentAtBase)}},
+			}},
+			full,
+			nil, nil,
+		},
+		{
 			"radar predicate without radar only warns",
 			Program{Rules: []Rule{{Pred(RadarDetectsTarget), []Action{Do(TurnRandom)}}}},
 			blueprint(),
