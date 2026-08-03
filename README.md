@@ -7,7 +7,12 @@ your colony compete on a generated arena — including while you are offline.
 Server-authoritative real-time simulation in Go, vanilla HTML/JS client served
 by the same binary.
 
-- Game design: [`docs/design_v0.1.md`](docs/design_v0.1.md)
+- Game design: [`docs/design_v0.1.md`](docs/design_v0.1.md) — the concept.
+- Decisions: [`docs/decisions.md`](docs/decisions.md) — every question the design
+  doc left open, how it was answered, and the measurements behind the balance
+  calls. Read this before assuming §12 is still open.
+- Engineering notes: [`docs/engineering-notes.md`](docs/engineering-notes.md) —
+  traps this codebase has actually sprung, with evidence.
 - Architecture & conventions for contributors and agents: `AGENTS.md`
 
 ## Status
