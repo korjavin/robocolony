@@ -129,6 +129,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
 	mux.HandleFunc("GET /lobby", lobbyPage)
 	mux.HandleFunc("GET /match", matchPage)
+	mux.HandleFunc("GET /editor", editorPage)
 	// Everything under /api needs a session; the static shell does not.
 	mux.Handle("GET /api/me", a.RequireAuth(http.HandlerFunc(me)))
 	lobbies.Routes(mux, a.RequireAuth)
@@ -163,6 +164,13 @@ func lobbyPage(w http.ResponseWriter, r *http.Request) {
 // the session is required by the world stream it subscribes to.
 func matchPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "match.html")
+}
+
+// editorPage gives the program and blueprint editor a route of its own. It was
+// previously reachable only as the static file /editor.html, which no page
+// linked to — so the editor existed and could not be found.
+func editorPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "editor.html")
 }
 
 // me is the smallest authenticated endpoint: it tells the client who it is,
