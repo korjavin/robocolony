@@ -135,7 +135,8 @@ function robotStyle(r) {
   const hit = styles.get(key);
   if (hit) return hit;
   const bp = blueprintOf(r);
-  // Not cached: the blueprint is missing from this frame, not from the match.
+  // Not cached: an id the init frame's design list does not name is a client
+  // older than the world it is watching, not a design that will appear later.
   if (!bp) return UNKNOWN_STYLE;
   const parts = bp.components.map(catalogue);
   const loco = parts.find((c) => c && c.kind === "locomotion");
@@ -526,13 +527,14 @@ function ruleBox(r) {
   return div;
 }
 
+// Approved designs come from the init frame: they are fixed for the whole match
+// and resending them ten times a second was half of an ordinary tick frame
+// (rc-w9s.31).
+const blueprintsOf = (colony) =>
+  init?.colonies.find((c) => c.id === colony)?.blueprints || [];
+
 function blueprintOf(r) {
-  for (const b of snap.bases) {
-    if (b.colony !== r.colony) continue;
-    const bp = b.blueprints.find((x) => x.id === r.blueprint);
-    if (bp) return bp;
-  }
-  return null;
+  return blueprintsOf(r.colony).find((x) => x.id === r.blueprint) || null;
 }
 
 // ---------------------------------------------------------------- roster
@@ -1136,7 +1138,7 @@ function renderBase() {
 
   box.append(el("h3", null, "Approved blueprints"));
   const ul = el("ul", "tight");
-  for (const bp of b.blueprints) {
+  for (const bp of blueprintsOf(b.colony)) {
     ul.append(el("li", null, `${bp.name} — ${bp.components.map(compName).join(", ")} (${bp.value})`));
   }
   box.append(ul);
