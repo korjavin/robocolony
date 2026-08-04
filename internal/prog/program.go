@@ -35,22 +35,27 @@ type (
 	ActionID    string
 )
 
-// CondOp tags a node of the condition tree (design §10.2 EBNF). Grouping is
-// explicit: nesting is the only precedence rule.
+// CondOp tags a node of the condition tree (design §10.2 EBNF, plus OpNot —
+// see the §10.2 caveat and docs/decisions.md). Grouping is explicit: nesting is
+// the only precedence rule, which is what keeps NOT (A AND B) distinguishable
+// from (NOT A) AND B without a precedence table anyone has to remember.
 type CondOp string
 
 const (
 	OpPred CondOp = "pred"
 	OpAnd  CondOp = "and"
 	OpOr   CondOp = "or"
+	// OpNot inverts exactly one operand in Of. Zero or two operands is a
+	// structural error, never a panic and never silently true.
+	OpNot CondOp = "not"
 )
 
-// Condition is a predicate leaf or an AND/OR group.
+// Condition is a predicate leaf, an AND/OR group, or a NOT of one condition.
 type Condition struct {
 	Op   CondOp      `json:"op"`
 	Pred PredicateID `json:"pred,omitempty"` // OpPred only
 	Arg  int         `json:"arg,omitempty"`  // predicate parameter, see ArgKind
-	Of   []Condition `json:"of,omitempty"`   // OpAnd / OpOr operands
+	Of   []Condition `json:"of,omitempty"`   // OpAnd / OpOr operands; OpNot's single one
 }
 
 // Action is one catalogue action plus its optional argument.
@@ -87,6 +92,7 @@ func PredArg(id PredicateID, arg int) Condition {
 }
 func And(of ...Condition) Condition     { return Condition{Op: OpAnd, Of: of} }
 func Or(of ...Condition) Condition      { return Condition{Op: OpOr, Of: of} }
+func Not(c Condition) Condition         { return Condition{Op: OpNot, Of: []Condition{c}} }
 func Do(id ActionID) Action             { return Action{Do: id} }
 func DoArg(id ActionID, arg int) Action { return Action{Do: id, Arg: arg} }
 
@@ -208,6 +214,17 @@ func checkCond(out *[]Issue, rule int, c Condition, depth int, budget *int) {
 		if len(c.Of) == 0 {
 			add("empty_group", "rule %s: empty %s group", ordinal(rule), c.Op)
 			return
+		}
+		for _, k := range c.Of {
+			checkCond(out, rule, k, depth+1, budget)
+		}
+	case OpNot:
+		// Exactly one operand. Anything else is un-representable rather than
+		// merely odd — "not nothing" and "not two things" have no meaning — so
+		// it is an error here and the walk still descends into whatever is
+		// there, which keeps the node budget honest for a hostile program.
+		if len(c.Of) != 1 {
+			add("bad_not", "rule %s: NOT takes exactly one condition, got %d", ordinal(rule), len(c.Of))
 		}
 		for _, k := range c.Of {
 			checkCond(out, rule, k, depth+1, budget)

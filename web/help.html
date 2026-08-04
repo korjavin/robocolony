@@ -79,6 +79,7 @@
   <nav class="toc">
     <a href="#tick">One tick</a>
     <a href="#order">Rule order</a>
+    <a href="#combine">ALL, ANY and NOT</a>
     <a href="#see">What a robot perceives</a>
     <a href="#turn">Turning</a>
     <a href="#memory">Memory and signals</a>
@@ -160,6 +161,64 @@
     general fallback (<code>carrying_nothing THEN move_forward</code>) last, or
     it eats every tick.</li>
   </ul>
+
+  <h2 id="combine">Combining conditions: ALL, ANY and NOT</h2>
+  <p>A condition is one dropdown, or a box holding several. The editor gives you
+  three kinds of box, and <strong>the box <em>is</em> the grouping</strong>
+  &mdash; there is no operator precedence to remember, because there is nothing
+  written on one line to be ambiguous about.</p>
+  <ul>
+    <li><strong>ALL of</strong> &mdash; every condition in the box must hold.</li>
+    <li><strong>ANY of</strong> &mdash; at least one must hold.</li>
+    <li><strong>NOT</strong> &mdash; holds exactly one condition, and is true
+    precisely when that condition is false. Press <em>NOT</em> on a condition to
+    wrap it, or on a group's header to invert the whole group.</li>
+  </ul>
+  <p>Which condition a NOT covers is the thing to get right, and the boxes make
+  it visible. These two are different programs:</p>
+
+  <div class="prog">
+    <div class="r">
+      <span class="n">A</span>
+      <span class="what">NOT ( sees_enemy_robot AND weapon_ready )</span>
+      <span class="say">One NOT box, an ALL box inside it. True unless
+      <em>both</em> hold &mdash; so it is true with an enemy in sight and the
+      weapon still reloading.</span>
+    </div>
+    <div class="r">
+      <span class="n">B</span>
+      <span class="what">( NOT sees_enemy_robot ) AND weapon_ready</span>
+      <span class="say">One ALL box, a NOT box inside it. True only with
+      <em>no</em> enemy in sight and the weapon loaded &mdash; the opposite
+      answer in exactly the case above.</span>
+    </div>
+  </div>
+
+  <p>Two things NOT changes about the warnings, both worth knowing before you
+  reach for it:</p>
+  <ul>
+    <li><strong>A negated condition is often already true at spawn.</strong> A
+    fresh robot sees nothing, hears nothing and detects nothing, so
+    <code>NOT sees_enemy_robot</code> holds on tick one. That is usually what
+    you wanted &mdash; it is also why a rule that <em>only</em> negates world
+    conditions fires immediately and can eat every tick if you leave it near the
+    top.</li>
+    <li><strong>Negating a condition your robot cannot sense is a trap.</strong>
+    On a blueprint with no radar, <code>radar_detects_target</code> is
+    permanently false, so <code>NOT radar_detects_target</code> can never fail
+    and that part of the rule tests nothing. The editor says so with
+    <code>always_true_predicate</code> &mdash; the negated twin of
+    <code>dead_predicate</code>. What the rule then does depends on where you
+    put the NOT: inside an ALL box the other conditions still decide, but a NOT
+    wrapped around the <em>whole</em> box makes the rule fire every tick.</li>
+  </ul>
+  <p class="note">One thing the editor deliberately will <em>not</em> tell you:
+  whether a rule holding a NOT is made unreachable by a rule above it. Working
+  that out in general is the same problem as deciding satisfiability, so
+  <code>unreachable_rule</code> stays quiet on any condition containing a NOT
+  (and on any containing an ANY, for the same reason) rather than guessing and
+  marking a live rule dead. Use <em>Try it</em>: a rule that never fires in a few
+  hundred ticks shows up on its own card.</p>
 
   <h2 id="see">What a robot can actually perceive</h2>
   <p>A robot has no map. It knows where it stands, where its own base is, what
@@ -374,10 +433,12 @@
     </tr>
   </table>
 
-  <p class="note">Two more markers you will meet: <code>forward_only</code>
-  (the robot can drive but never turn, so the first wall stops it forever) and
-  <code>unreachable_rule</code> (a rule above always matches first). Errors block
-  saving; warnings and notes never do.</p>
+  <p class="note">Three more markers you will meet: <code>forward_only</code>
+  (the robot can drive but never turn, so the first wall stops it forever),
+  <code>unreachable_rule</code> (a rule above always matches first) and
+  <code>always_true_predicate</code> (a NOT over a condition the blueprint
+  cannot sense, so the negation tests nothing). Errors block saving; warnings
+  and notes never do.</p>
 
   <h2 id="first">Write your first scavenger</h2>
   <p>Six rules, in this order. Every one of them is a dropdown in the editor.</p>

@@ -305,6 +305,54 @@ func TestWorkedProgramBadgesMatchValidation(t *testing.T) {
 	}
 }
 
+// TestNotClaimsMatchValidation keeps the ALL/ANY/NOT section honest the same
+// way the diagrams are kept honest: the programs it describes are built here
+// and run through the real validator, never transcribed. The section makes two
+// checkable claims about negation, and both are ones a polarity bug would
+// break silently — the page would keep teaching the old answer.
+func TestNotClaimsMatchValidation(t *testing.T) {
+	page := helpHTML(t)
+	radarless := sim.Blueprint{Name: "no radar", Components: []sim.Variant{sim.Tracks, sim.MediumArmor, sim.Manipulator}}
+
+	// "NOT radar_detects_target on a blueprint with no radar is permanently
+	// true, and the editor says always_true_predicate" — not dead_predicate,
+	// which is what the same predicate earns unnegated.
+	negated := prog.Program{V: prog.SchemaVersion, Rules: []prog.Rule{
+		{When: prog.Not(prog.Pred(prog.RadarDetectsTarget)), Then: []prog.Action{prog.Do(prog.TurnRandom)}},
+	}}
+	got := codes(prog.Validate(negated, radarless))
+	if !slices.Contains(got, "always_true_predicate") {
+		t.Errorf("the guide says a negated missing sensor earns always_true_predicate; validation reports %v", got)
+	}
+	if slices.Contains(got, "dead_predicate") {
+		t.Errorf("the guide says the negated form is *not* dead_predicate; validation reports %v", got)
+	}
+
+	// "unreachable_rule stays quiet on any condition containing a NOT." The
+	// unnegated pair below is dominated and must still be reported, so this is
+	// a decline and not an analysis that stopped running.
+	carrying := prog.Pred(prog.CarryingComponent)
+	dominated := func(second prog.Condition) []string {
+		return codes(prog.Validate(prog.Program{V: prog.SchemaVersion, Rules: []prog.Rule{
+			{When: carrying, Then: []prog.Action{prog.Do(prog.MoveToOwnBase)}},
+			{When: second, Then: []prog.Action{prog.Do(prog.DepositComponentAtBase)}},
+		}}, radarless))
+	}
+	if plain := dominated(prog.And(carrying, prog.Pred(prog.AtOwnBase))); !slices.Contains(plain, "unreachable_rule") {
+		t.Errorf("unreachable_rule no longer fires on plain conjunction containment: %v", plain)
+	}
+	if withNot := dominated(prog.And(carrying, prog.Not(prog.Pred(prog.AtOwnBase)))); slices.Contains(withNot, "unreachable_rule") {
+		t.Errorf("the guide says unreachable_rule stays quiet on a NOT; validation reports %v", withNot)
+	}
+
+	// And the page has to actually name the code it promises.
+	for _, want := range []string{"always_true_predicate", "unreachable_rule"} {
+		if !strings.Contains(page, "<code>"+want+"</code>") {
+			t.Errorf("help.html no longer names %s", want)
+		}
+	}
+}
+
 func codes(r prog.Result) []string {
 	var out []string
 	for _, group := range [][]prog.Issue{r.Errors, r.Warnings, r.Notes} {

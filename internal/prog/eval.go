@@ -150,6 +150,10 @@ type matcher struct {
 	// does, to ask "could anything outside the robot make this rule match?"
 	// without enumerating world states.
 	anyWorld bool
+	// neg is the polarity of the node being walked: true inside an odd number
+	// of NOTs. It exists only for anyWorld — see pred. Decide's answer is
+	// exact and needs no polarity.
+	neg bool
 }
 
 // cond walks the condition tree. Depth is capped exactly as Validate caps it,
@@ -179,6 +183,16 @@ func (m *matcher) cond(c Condition, depth int) bool {
 			}
 		}
 		return false
+	case OpNot:
+		if len(c.Of) != 1 {
+			return false // structurally invalid; never silently true
+		}
+		// The polarity flip is saved and restored around the recursion rather
+		// than passed down, so a sibling of this NOT is unaffected by it.
+		m.neg = !m.neg
+		got := m.cond(c.Of[0], depth+1)
+		m.neg = !m.neg
+		return !got
 	}
 	return false
 }
@@ -186,7 +200,16 @@ func (m *matcher) cond(c Condition, depth int) bool {
 func (m *matcher) pred(id PredicateID, arg int) bool {
 	// A world predicate whose sensor the blueprint lacks is not something the
 	// world can deliver either — dead_predicate says so separately.
-	if m.anyWorld {
+	//
+	// Polarity decides which way "optimistic" points. Positive, the hopeful
+	// answer is that the world supplies the sighting, so this reads true.
+	// Under a NOT the hopeful answer is the opposite one — NOT sees_enemy_robot
+	// is satisfied precisely when nothing is visible, which is what a clean
+	// start already *is* — so the override steps aside and the clean-start view
+	// answers, which is false for every world predicate. Forcing true here
+	// instead would report a working "sees_component AND NOT sees_enemy_robot"
+	// program as inert.
+	if m.anyWorld && !m.neg {
 		if spec, ok := LookupPredicate(id); ok && spec.World && len(missing(spec.Needs, m.v.Blueprint)) == 0 {
 			return true
 		}
