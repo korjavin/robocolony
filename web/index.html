@@ -4,44 +4,242 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+
+    /* The observer view's palette, copied from match.html so the frame below
+       is drawn in the colours a live match is actually drawn in. Keep the two
+       in step: this is a still of that renderer, not an artist's impression. */
+    --colony-0: #2f7fd8;
+    --colony-1: #d8592f;
+    --terrain-open: #cfd6dd;
+    --terrain-barrier: #4a4f57;
+    --terrain-rubble: #a89a86;
+    --terrain-sand: #ddc98d;
+    --kind-manipulator: #3aa08b;
+    --kind-radar: #4f6fd0;
+    --kind-weapon: #c23b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --terrain-open: #333a42;
+      --terrain-barrier: #14171b;
+      --terrain-rubble: #4c443a;
+      --terrain-sand: #5c5233;
+    }
+  }
   body {
-    margin: 0 auto; padding: 3rem 1.25rem; max-width: 42rem;
+    margin: 0 auto; padding: 3rem 1.25rem; max-width: 46rem;
     font: 16px/1.6 system-ui, sans-serif;
   }
-  h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
-  .tag { margin: 0 0 2rem; opacity: .65; }
+  h1 { font-size: 2.2rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .5rem; }
+  .tag { margin: 0 0 .75rem; font-size: 1.1rem; opacity: .8; }
+  .meta { font-size: .85rem; opacity: .7; }
+  .alpha {
+    border: 1px solid; border-radius: .5rem; padding: .5rem .8rem;
+    margin: 0 0 2rem; font-size: .9rem; opacity: .85;
+  }
+  .cta { margin: 1.5rem 0; }
+  .btn {
+    display: inline-block; padding: .6rem 1.2rem; border-radius: .5rem;
+    border: 1px solid currentColor; text-decoration: none; font-weight: 600;
+    color: inherit; margin-right: .5rem;
+  }
+  .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+  /* The frame and the inspector card sit side by side on a wide screen and
+     stack on a narrow one; two flex children do it without a media query. */
+  figure { margin: 0 0 .5rem; }
+  .frame { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
+  /* min-width: 0 on both children, or a phone-width viewport scrolls
+     sideways: a flex item refuses to shrink past its content by default. */
+  .frame svg { flex: 3 1 22rem; min-width: 0; width: 100%; height: auto; border-radius: .4rem; }
+  .frame svg text {
+    font: 700 9px system-ui, sans-serif; text-anchor: middle;
+    dominant-baseline: central; fill: #fff; stroke: #0008; stroke-width: .8;
+    paint-order: stroke;
+  }
+  .card {
+    flex: 1 1 12rem; min-width: 0; border: 1px solid; border-radius: .5rem;
+    padding: .6rem .8rem; font-size: .85rem;
+  }
+  .card h3 {
+    font-size: .75rem; margin: 0 0 .4rem; text-transform: uppercase;
+    letter-spacing: .06em; opacity: .7;
+  }
+  .card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .1rem .5rem; }
+  .card dt { opacity: .65; }
+  .card dd { margin: 0; }
+  .rule { border-left: 3px solid var(--colony-0); padding-left: .5rem; margin: 0 0 .8rem; }
+  .rule .idx { font-weight: 700; }
+  .rule .act { font-family: ui-monospace, monospace; font-size: .8rem; }
+  figcaption { margin-top: .6rem; font-size: .85rem; opacity: .75; }
+
   ul { padding-left: 1.2rem; }
-  footer { margin-top: 2.5rem; font-size: .9rem; opacity: .65; }
+  ol { padding-left: 1.3rem; }
+  ol li { margin: .5rem 0; }
+  footer {
+    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid;
+    font-size: .9rem; opacity: .75;
+  }
+  footer form { display: inline; }
+  footer button {
+    font: inherit; padding: 0; border: 0; background: none; color: inherit;
+    text-decoration: underline; cursor: pointer;
+  }
 </style>
 </head>
 <body>
   <h1>robocolony</h1>
-  <p class="tag">Autonomous robot colony simulation &mdash; pre-alpha.</p>
+  <p class="tag">You design the robots and write the rules they follow. Then they
+  compete without you &mdash; including while you are logged out.</p>
 
-  <p>
-    You are an engineer of behavior, not a unit commander. You design robot
-    blueprints and ordered priority-rule programs, then your colony competes on
-    a procedurally generated arena against other colonies &mdash; including
-    while you are offline.
-  </p>
+  <p class="alpha"><strong>Pre-alpha.</strong> Playable end to end, but young:
+  balance still moves. A restart resumes the matches that were running; a deploy
+  that changes the simulation ends them instead.</p>
+
+  <figure>
+    <div class="frame">
+      <!-- A real frame, not a mock-up: the crop below is the state of match
+           seed 55 at tick 400, drawn by the rules match.js draws by (design
+           §7.1 wedge, colony colours, blueprint-initial glyphs). -->
+      <svg viewBox="0 0 364 224" role="img"
+           aria-label="A crop of the arena: a scavenger with its vision wedge lit
+                       up, a second scavenger cornered by an enemy gunner beside
+                       the home base and its guard, and a loose radar component
+                       lying on open ground.">
+        <path fill="var(--terrain-open)" d="M0 0h112v14h-112zM126 0h14v14h-14zM154 0h112v14h-112zM280 0h28v14h-28zM322 0h42v14h-42zM0 14h364v14h-364zM0 28h28v14h-28zM42 28h42v14h-42zM98 28h70v14h-70zM182 28h182v14h-182zM0 42h14v14h-14zM28 42h28v14h-28zM70 42h28v14h-28zM126 42h14v14h-14zM154 42h14v14h-14zM182 42h112v14h-112zM336 42h28v14h-28zM0 56h364v14h-364zM14 70h70v14h-70zM112 70h28v14h-28zM154 70h28v14h-28zM210 70h14v14h-14zM238 70h126v14h-126zM0 84h56v14h-56zM70 84h14v14h-14zM98 84h14v14h-14zM126 84h98v14h-98zM238 84h28v14h-28zM280 84h84v14h-84zM0 98h14v14h-14zM42 98h56v14h-56zM126 98h84v14h-84zM224 98h28v14h-28zM266 98h56v14h-56zM336 98h14v14h-14zM0 112h56v14h-56zM70 112h14v14h-14zM98 112h14v14h-14zM154 112h112v14h-112zM280 112h84v14h-84zM0 126h98v14h-98zM126 126h140v14h-140zM280 126h28v14h-28zM322 126h42v14h-42zM0 140h84v14h-84zM98 140h56v14h-56zM182 140h154v14h-154zM350 140h14v14h-14zM0 154h42v14h-42zM70 154h14v14h-14zM98 154h182v14h-182zM294 154h70v14h-70zM0 168h14v14h-14zM28 168h56v14h-56zM112 168h112v14h-112zM238 168h126v14h-126zM0 182h42v14h-42zM70 182h84v14h-84zM168 182h28v14h-28zM210 182h154v14h-154zM0 196h126v14h-126zM140 196h168v14h-168zM322 196h42v14h-42zM0 210h42v14h-42zM56 210h42v14h-42zM126 210h70v14h-70zM210 210h140v14h-140z"/>
+        <path fill="var(--terrain-barrier)" d="M28 28h14v14h-14zM84 28h14v14h-14zM168 28h14v14h-14zM14 42h14v14h-14zM112 42h14v14h-14zM168 42h14v14h-14zM294 42h42v14h-42zM0 70h14v14h-14zM84 70h28v14h-28zM196 70h14v14h-14zM266 84h14v14h-14zM14 98h28v14h-28zM98 98h14v14h-14zM210 98h14v14h-14zM322 98h14v14h-14zM350 98h14v14h-14zM56 112h14v14h-14zM84 112h14v14h-14zM126 112h14v14h-14zM266 126h14v14h-14zM154 140h14v14h-14zM84 168h28v14h-28zM224 168h14v14h-14zM56 182h14v14h-14zM196 182h14v14h-14zM126 196h14v14h-14zM42 210h14v14h-14zM98 210h28v14h-28zM196 210h14v14h-14z"/>
+        <path fill="var(--terrain-rubble)" d="M112 0h14v14h-14zM308 0h14v14h-14zM56 42h14v14h-14zM98 42h14v14h-14zM140 70h14v14h-14zM182 70h14v14h-14zM112 98h14v14h-14zM140 112h14v14h-14zM112 126h14v14h-14zM168 140h14v14h-14zM42 154h14v14h-14zM84 154h14v14h-14zM280 154h14v14h-14zM14 168h14v14h-14zM42 182h14v14h-14z"/>
+        <path fill="var(--terrain-sand)" d="M140 0h14v14h-14zM266 0h14v14h-14zM140 42h14v14h-14zM224 70h14v14h-14zM56 84h14v14h-14zM84 84h14v14h-14zM112 84h14v14h-14zM224 84h14v14h-14zM252 98h14v14h-14zM112 112h14v14h-14zM266 112h14v14h-14zM98 126h14v14h-14zM308 126h14v14h-14zM84 140h14v14h-14zM336 140h14v14h-14zM56 154h14v14h-14zM154 182h14v14h-14zM308 196h14v14h-14zM350 210h14v14h-14z"/>
+        <path fill="var(--colony-0)" opacity=".18" d="M28 28h14v14h-14zM42 28h14v14h-14zM56 28h14v14h-14zM70 28h14v14h-14zM84 28h14v14h-14zM98 28h14v14h-14zM112 28h14v14h-14zM28 42h14v14h-14zM42 42h14v14h-14zM56 42h14v14h-14zM70 42h14v14h-14zM84 42h14v14h-14zM98 42h14v14h-14zM112 42h14v14h-14zM28 56h14v14h-14zM42 56h14v14h-14zM56 56h14v14h-14zM70 56h14v14h-14zM84 56h14v14h-14zM98 56h14v14h-14zM112 56h14v14h-14zM28 70h14v14h-14zM42 70h14v14h-14zM56 70h14v14h-14zM70 70h14v14h-14zM84 70h14v14h-14zM98 70h14v14h-14zM112 70h14v14h-14zM28 84h14v14h-14zM42 84h14v14h-14zM56 84h14v14h-14zM70 84h14v14h-14zM84 84h14v14h-14zM98 84h14v14h-14zM112 84h14v14h-14zM28 98h14v14h-14zM42 98h14v14h-14zM56 98h14v14h-14zM70 98h14v14h-14zM84 98h14v14h-14zM98 98h14v14h-14zM112 98h14v14h-14zM28 112h14v14h-14zM42 112h14v14h-14zM56 112h14v14h-14zM70 112h14v14h-14zM84 112h14v14h-14zM98 112h14v14h-14z"/>
+        <rect x="292" y="82" width="18" height="18" fill="var(--colony-0)" stroke="#000"/><text x="301" y="91">B</text>
+        <path d="M49 45L53 49L49 53L45 49z" fill="var(--kind-radar)"/>
+        <circle cx="119" cy="119" r="6" fill="var(--colony-0)"/><path d="M119 119L114 114" stroke="#000" stroke-width="2"/><text x="119" y="119">S</text><circle cx="119" cy="119" r="8" fill="none" stroke="#fff" stroke-width="2"/><circle cx="124" cy="114" r="3" fill="var(--kind-weapon)"/><rect x="112" y="124" width="14" height="2" fill="#0006"/><rect x="112" y="124" width="12.4" height="2" fill="#c98a00"/>
+        <circle cx="245" cy="49" r="6" fill="var(--colony-0)"/><path d="M245 49L250 44" stroke="#000" stroke-width="2"/><text x="245" y="49">S</text><circle cx="250" cy="44" r="3" fill="var(--kind-manipulator)"/><rect x="238" y="54" width="14" height="2" fill="#0006"/><rect x="238" y="54" width="5.8" height="2" fill="#c0392b"/>
+        <circle cx="231" cy="63" r="6" fill="var(--colony-1)"/><path d="M231 63L236 58" stroke="#000" stroke-width="2"/><text x="231" y="63">G</text><rect x="224" y="68" width="14" height="2" fill="#0006"/><rect x="224" y="68" width="13.1" height="2" fill="#c98a00"/>
+        <circle cx="301" cy="91" r="6" fill="var(--colony-0)"/><path d="M301 91L301 96" stroke="#000" stroke-width="2"/><text x="301" y="91">H</text><rect x="294" y="96" width="14" height="2" fill="#0006"/><rect x="294" y="96" width="13.5" height="2" fill="#c98a00"/>
+      </svg>
+
+      <!-- The inspector, as the match page renders it for the robot you have
+           selected: the rule that took the tick, then what the robot is. -->
+      <div class="card">
+        <h3>Active rule</h3>
+        <div class="rule">
+          <div class="idx">rule 3</div>
+          <div class="act">pick_up_component</div>
+          <div>Pick up component</div>
+          <div class="meta">decided on tick 398, 2 ticks ago</div>
+        </div>
+        <h3>Loadout</h3>
+        <dl>
+          <dt>Blueprint</dt><dd>scavenger</dd>
+          <dt>Parts</dt><dd>tracks, medium armor, manipulator, parts radar</dd>
+          <dt>Program</dt><dd>default scavenger</dd>
+          <dt>Cargo</dt><dd>laser</dd>
+          <dt>Health</dt><dd>106 / 120</dd>
+        </dl>
+      </div>
+    </div>
+    <figcaption>One real frame &mdash; seed 55, tick 400, one colony against the
+    aggressive AI. Circles are robots; the letter is their blueprint's initial
+    and the notch is the way they face. The tinted wedge is everything the
+    selected robot can see, diamonds are components lying on the ground, and
+    <strong>B</strong> is a base. Blue has just picked up a laser it cannot fire
+    and is carrying it home for the base to build with; four cells from that
+    base, another of its scavengers is down to 50 health with an orange gunner
+    in the next cell &mdash; and nobody is going to tell either of them what to
+    do about it.</figcaption>
+  </figure>
+
+  <div class="cta">
+    <a class="btn" href="/lobby">Start a match</a>
+    <a class="btn" href="/editor">Open the editor</a>
+  </div>
+
+  <h2>What you actually do</h2>
+
+  <p>Two things, and neither of them is steering. You <strong>assemble
+  blueprints</strong> out of components &mdash; locomotion, armour, a
+  manipulator, a radar, weapons &mdash; which compete for the same budget and
+  add mass that slows the robot down. Then you <strong>write programs</strong>:
+  an ordered list of rules, each one <em>when these conditions hold, do
+  this</em>. Every robot re-decides every tick, and the first rule whose
+  conditions match takes the tick. That list is your whole control surface.</p>
+
+  <p>A robot perceives a 90&deg; wedge six cells deep in front of it, plus
+  whatever radar you paid the mass for, plus two signals it can broadcast to its
+  own colony across half the board and three coordinates it can remember. If it
+  did not perceive a thing, no rule of yours can react to it. Two robots walking
+  past each other facing the wrong way is not a bug; it is the game.</p>
+
+  <p>The simulation is server-side and authoritative: ten ticks a second on a
+  64&times;64 arena generated from a seed nobody sees beforehand. Every colony
+  starts on the same budget and keeps one base that cannot be destroyed &mdash;
+  losing every robot is a setback rather than an elimination, because the base
+  goes on building from whatever your scavengers brought home. Matches run to a
+  fixed duration, ten minutes by default, whether or not anyone is watching.</p>
+
+  <p>The five pillars, one line each: autonomy first; program behaviour, not
+  movement; modular trade-offs; emergent competition; readable simulation. They
+  are &sect;1.1 of <a
+  href="https://github.com/korjavin/robocolony/blob/master/docs/design_v0.1.md">the
+  design document</a>, which is what the game is trying to be; every question it
+  left open was answered in <a
+  href="https://github.com/korjavin/robocolony/blob/master/docs/decisions.md">the
+  decisions log</a>, together with the measurements behind the balance calls.</p>
+
+  <h2>Your first match, in four steps</h2>
+
+  <ol>
+    <li><a href="/login">Sign in with Google.</a> Nothing but your identity is
+    read from the account.</li>
+
+    <li>Create a lobby on the <a href="/lobby">lobbies page</a>. The defaults
+    make a fine first match: ten minutes, four seats.</li>
+
+    <li>Add an AI opponent, and pick the rung you want. <strong>Tutorial</strong>
+    and <strong>peaceful</strong> carry no weapon in any of their blueprints
+    &mdash; a test pins that &mdash; so they compete with you for parts and
+    cannot take a robot off the board at all. <strong>Defensive</strong> keeps
+    armed responders and hurts a colony that blunders into it.
+    <strong>Aggressive</strong> comes looking for you: measured against the
+    default starter kit over sixteen seeds, it left that colony with no robots
+    standing on ten of them.</li>
+
+    <li>Start the match and watch. Click any robot for its loadout, its memory
+    and the rule that made this tick's decision &mdash; and, on your own robots,
+    to recall one or install a different program mid-match.</li>
+  </ol>
+
+  <p>You do not have to write anything to play that first match: a colony that
+  approves none of its own designs opens with a built-in starter kit. The kit is
+  unarmed, and against the aggressive profile it usually dies &mdash; which is
+  the moment to open the editor.</p>
+
+  <h2>Where things are</h2>
 
   <ul>
-    <li>Robots are never steered directly. They execute rules.</li>
-    <li>Perception is limited: forward vision, optional radars, simple signals.</li>
-    <li>The simulation runs server-side and is watchable live.</li>
+    <li><a href="/editor">Editor</a> &mdash; blueprints, and the priority-rule
+    programs they run. Both are checked as you edit, and a program can be dry-run
+    against a robot before anything carries it into a match.</li>
+    <li><a href="/help">The rule language, in one page</a> &mdash; what a robot
+    can perceive, what each condition means, and three worked programs to start
+    from.</li>
+    <li><a href="/lobby">Lobbies</a> &mdash; create a match, seat AI colonies,
+    wait for players, start it.</li>
+    <li><a href="https://github.com/korjavin/robocolony">Source</a> &mdash; Go
+    and a deterministic simulation core; the client is this, plain HTML with no
+    build step.</li>
   </ul>
 
-  <p><a href="/editor">Editor</a> &mdash; design robot blueprints and write the
-  priority-rule programs they run. This is the game.</p>
-
-  <p><a href="/lobby">Lobbies</a> &mdash; create a match, invite players, start it.</p>
-
   <footer>
-    <a href="https://github.com/korjavin/robocolony">github.com/korjavin/robocolony</a>
-    &middot; <a href="/login">sign in</a>
-    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+    <a href="/login">sign in</a> &middot;
+    <form method="post" action="/auth/logout"><button type="submit">sign out</button></form>
+    &middot; <a href="https://github.com/korjavin/robocolony">github.com/korjavin/robocolony</a>
   </footer>
 </body>
 </html>
