@@ -6,64 +6,20 @@
 <title>Match &mdash; robocolony</title>
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 
+<!-- The palette lives in app.css: the renderer reads --terrain-*, --kind-* and
+     --colony-N off the document at runtime, and the legend and the score graph
+     reference the same names through var(). -->
+<link rel="stylesheet" href="/css/app.css">
 <style>
-  :root {
-    color-scheme: light dark;
-
-    /* Colony colours. The renderer reads these, so a reskin never touches JS. */
-    --colony-0: #2f7fd8;
-    --colony-1: #d8592f;
-    --colony-2: #2fa36b;
-    --colony-3: #a855d8;
-    --colony-4: #d8b62f;
-    --colony-5: #2fc2d8;
-    --colony-6: #d82f86;
-    --colony-7: #7f8a99;
-
-    /* Terrain, keyed by the init frame's legend names. */
-    --terrain-open: #cfd6dd;
-    --terrain-barrier: #4a4f57;
-    /* Rubble favours legs and blocks tracks; sand is the reverse. They must be
-       told apart at a glance: terrain now decides where a robot can go. */
-    --terrain-rubble: #a89a86;
-    --terrain-sand: #ddc98d;
-    --terrain-unknown: #8d939b;
-    --grid-line: #00000012;
-
-    /* Loose components, keyed by catalogue kind. */
-    --kind-locomotion: #8b6b3a;
-    --kind-armor: #6f7a86;
-    --kind-manipulator: #3aa08b;
-    --kind-radar: #4f6fd0;
-    --kind-weapon: #c23b3b;
-    --kind-unknown: #999999;
-
-    --vision: #ffffff;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --terrain-open: #333a42;
-      --terrain-barrier: #14171b;
-      --terrain-rubble: #4c443a;
-      --terrain-sand: #5c5233;
-      --terrain-unknown: #565c64;
-      --grid-line: #ffffff10;
-    }
-  }
-  body {
-    margin: 0 auto; padding: 1.5rem 1.25rem; max-width: 78rem;
-    font: 16px/1.6 system-ui, sans-serif;
-  }
-  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  :root { --page: 78rem; }
+  body { padding-bottom: 2rem; }
+  h1 { font-size: 1.6rem; }
   h2 { font-size: 1.05rem; margin: 1.4rem 0 .4rem; }
+  /* A section kicker inside a panel, not a heading in prose. */
   h3 { font-size: .9rem; margin: .8rem 0 .2rem; text-transform: uppercase;
        letter-spacing: .06em; opacity: .7; }
-  .tag { margin: 0 0 1rem; opacity: .65; }
-  .meta { font-size: .85rem; opacity: .7; }
-  .err { color: #c0392b; font-weight: 600; min-height: 1.6em; }
-  table { border-collapse: collapse; width: 100%; }
-  td, th { padding: .15rem .8rem .15rem 0; text-align: left; vertical-align: top; }
-  footer { margin-top: 2rem; font-size: .85rem; opacity: .6; }
+  .tag { margin: 0 0 1rem; }
+  table { width: 100%; }
 
   .bar {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem;
@@ -72,9 +28,9 @@
   .clock { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
   .conn { border: 1px solid; border-radius: .4rem; padding: .05rem .5rem;
           font-size: .8rem; }
-  .conn.live { color: #2f8f4e; }
-  .conn.retry { color: #c98a00; }
-  .conn.over { color: #7f8a99; }
+  .conn.live { color: var(--ok); }
+  .conn.retry { color: var(--warn); }
+  .conn.over { color: var(--colony-7); }
 
   .cols { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-start; }
   .arena { flex: 1 1 24rem; min-width: 18rem; }
@@ -82,11 +38,10 @@
 
   canvas {
     width: 100%; height: auto; display: block;
-    border: 1px solid; border-radius: .4rem; cursor: crosshair;
+    border: 1px solid var(--line); border-radius: .4rem; cursor: crosshair;
     background: var(--terrain-open);
   }
 
-  .panel { border: 1px solid; border-radius: .5rem; padding: .6rem .8rem; }
   .swatch { display: inline-block; width: .7rem; height: .7rem;
             border-radius: .2rem; margin-right: .35rem; }
 
@@ -110,23 +65,21 @@
   /* A colony with no robots and nothing its base can build is out for good
      (design §5.3). It must not read as merely between builds. */
   .out { font-size: .72rem; font-weight: 700; text-transform: uppercase;
-         letter-spacing: .06em; color: #c0392b; border: 1px solid currentColor;
+         letter-spacing: .06em; color: var(--bad); border: 1px solid currentColor;
          border-radius: .3rem; padding: 0 .25rem; margin-left: .35rem; }
   .out:first-child { margin-left: 0; }
   #stats tr.outrow td { opacity: .6; }
   /* Same red, said in a sentence, for the player it happened to. */
   .spectating { margin: 0 0 1rem; padding: .4rem .7rem; font-size: .92rem;
-                border: 1px solid #c0392b; border-left-width: .35rem;
+                border: 1px solid var(--bad); border-left-width: .35rem;
                 border-radius: .4rem; }
 
   /* The standing carries nine columns now that the §4.4 telemetry is on the
-     wire. It scrolls sideways in a narrow panel rather than wrapping the
-     numbers into an unreadable stack. */
-  .tablewrap { overflow-x: auto; }
+     wire. .tablewrap (app.css) scrolls it sideways in a narrow panel rather
+     than wrapping the numbers into an unreadable stack. */
   .tablewrap table { min-width: 22rem; }
   #stats td, #stats th { padding-right: .6rem; }
-  #stats td.num { font-variant-numeric: tabular-nums; text-align: right;
-                  padding-right: .9rem; }
+  #stats td.num { padding-right: .9rem; }
   /* One line per colony: a wrapped name makes every row two rows tall, which
      is a worse trade than scrolling the last column into view. */
   #stats td.who { white-space: nowrap; }
@@ -136,19 +89,19 @@
                 font-size: .85rem; margin: .2rem 0 .3rem; }
   .graph-head select { padding: .1rem .4rem; font-size: .85rem; }
   .graph { display: block; width: 100%; height: 9rem;
-           border: 1px solid; border-radius: .4rem; background: #7f8a9914; }
+           border: 1px solid var(--line); border-radius: .4rem; background: var(--wash); }
   .graph polyline { fill: none; stroke-width: 2; stroke-linejoin: round;
                     stroke-linecap: round; }
 
   .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
         overflow: hidden; margin: .2rem 0 .4rem; }
-  .hp > i { display: block; height: 100%; background: #2f8f4e; }
-  .hp.hurt > i { background: #c98a00; }
-  .hp.crit > i { background: #c0392b; }
+  .hp > i { display: block; height: 100%; background: var(--ok); }
+  .hp.hurt > i { background: var(--warn); }
+  .hp.crit > i { background: var(--bad); }
 
   /* The active rule is the point of the inspector (design §13, criterion 9). */
-  .rule { border: 1px solid; border-left-width: .35rem; border-radius: .4rem;
-          padding: .45rem .7rem; margin: .3rem 0 .6rem; }
+  .rule { border: 1px solid var(--line); border-left-width: .35rem;
+          border-radius: .4rem; padding: .45rem .7rem; margin: .3rem 0 .6rem; }
   .rule.idle { opacity: .75; }
   .rule .idx { font-size: 1.15rem; font-weight: 700; }
   .rule .act { font-family: ui-monospace, monospace; font-size: .95rem; }
@@ -160,22 +113,19 @@
   code { font-family: ui-monospace, monospace; font-size: .9em; }
   ul.tight { list-style: none; padding: 0; margin: .2rem 0; font-size: .92rem; }
 
-  /* Recall and reprogramming (design §4.2). Same controls as the lobby page:
-     one visual language, not two. */
-  button, select { font: inherit; padding: .3rem .8rem; border-radius: .4rem;
-                   cursor: pointer; }
-  button[disabled], select[disabled] { cursor: not-allowed; opacity: .5; }
+  /* Recall and reprogramming (design §4.2). The controls themselves come from
+     app.css, so they are the lobby page's controls: one visual language. */
   .cmd { display: grid; gap: .4rem; }
   .cmd .row { display: flex; gap: .4rem; }
   .cmd .row select { flex: 1 1 auto; min-width: 0; }
   .cmd .state { font-size: .92rem; }
-  .cmd .state.back { color: #c98a00; font-weight: 600; }
-  .cmd .state.home { color: #2f8f4e; font-weight: 600; }
+  .cmd .state.back { color: var(--warn); font-weight: 600; }
+  .cmd .state.home { color: var(--ok); font-weight: 600; }
   .cmd .note { margin: 0; font-size: .9rem; min-height: 1.2em; }
-  .cmd .note.ok  { color: #2f8f4e; font-weight: 600; }
-  .cmd .note.bad { color: #c0392b; font-weight: 600; }
+  .cmd .note.ok  { color: var(--ok); font-weight: 600; }
+  .cmd .note.bad { color: var(--bad); font-weight: 600; }
   /* Design §13, criterion 6 is verified by eye right here. */
-  ul.tight.cleared { border-left: .2rem solid #2f8f4e; padding-left: .5rem; }
+  ul.tight.cleared { border-left: .2rem solid var(--ok); padding-left: .5rem; }
 
   /* Robot roster. Rows are <button>s so focus, Enter and Space come for free. */
   .roster { max-height: 18rem; overflow-y: auto; overflow-x: hidden;
@@ -190,8 +140,8 @@
   .roster .row.sel { border-color: currentColor; background: #7f8a9933; }
   .roster .row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .roster .row .num { font-size: .85rem; font-variant-numeric: tabular-nums; opacity: .8; }
-  .roster .row .num.hurt { color: #c98a00; opacity: 1; }
-  .roster .row .num.crit { color: #c0392b; opacity: 1; }
+  .roster .row .num.hurt { color: var(--warn); opacity: 1; }
+  .roster .row .num.crit { color: var(--bad); opacity: 1; }
   .roster .row .sub {
     grid-column: 2 / 4; display: flex; gap: .5rem; justify-content: space-between;
     font-size: .8rem; line-height: 1.35; opacity: .75; min-width: 0;
@@ -217,11 +167,26 @@
   .hist .why { font-size: .85rem; opacity: .8; }
   .hist .also { font-size: .78rem; opacity: .65; }
   .hist .chip { font-size: .8rem; }
-  .hist .chip.mem::before { content: "✎ "; color: #2f8f4e; }
+  .hist .chip.mem::before { content: "✎ "; color: var(--ok); }
   .hist .chip.sig::before { content: "📡 "; }
 </style>
 </head>
 <body>
+  <!-- Outside .cols, and a long way outside #inspector: that panel is
+       replaceChildren()-ed ten times a second. aria-current="true" rather than
+       "page" on Lobbies — a match has no link of its own in a nav that cannot
+       know its id, and the lobbies page is where you came from and where the
+       running ones are listed. -->
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby" aria-current="true">Lobbies</a>
+    <a href="/editor">Editor</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
   <h1>Match</h1>
   <p class="tag" id="subtitle">Connecting to the world stream&hellip;</p>
   <p class="err" id="err"></p>
@@ -392,8 +357,6 @@
       <div class="panel" id="base"><p class="meta">No colony selected.</p></div>
     </div>
   </div>
-
-  <footer><a href="/editor">editor</a> &middot; <a href="/lobby">lobbies</a> &middot; <a href="/">home</a></footer>
 
 <script type="module" src="/js/match.js"></script>
 </body>

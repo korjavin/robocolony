@@ -4,30 +4,38 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0 auto; padding: 6rem 1.25rem; max-width: 24rem; text-align: center;
-    font: 16px/1.6 system-ui, sans-serif;
-  }
-  h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  /* Wide enough for the nav to sit on one line; the sign-in card itself is
+     narrower and centred. This page used to link nowhere at all. */
+  :root { --page: 40rem; }
+  main { max-width: 24rem; margin: 4rem auto 0; text-align: center; }
+  h1 { font-size: 2rem; }
   .tag { margin: 0 0 2.5rem; opacity: .65; }
-  .btn {
-    display: inline-block; padding: .7rem 1.4rem; border-radius: .5rem;
-    border: 1px solid currentColor; text-decoration: none; font-weight: 600;
-    color: inherit;
-  }
-  .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
-  footer { margin-top: 3rem; font-size: .85rem; opacity: .6; }
+  .btn { padding: .7rem 1.4rem; }
+  footer { border: 0; margin-top: 2.5rem; text-align: center; opacity: .6; }
 </style>
 </head>
 <body>
-  <h1>robocolony</h1>
-  <p class="tag">Sign in to build blueprints and programs.</p>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby">Lobbies</a>
+    <a href="/editor">Editor</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login" aria-current="page">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
 
-  <!-- A plain link: the server mints the state and PKCE challenge. -->
-  <a class="btn" href="/auth/login">Sign in with Google</a>
+  <main>
+    <h1>robocolony</h1>
+    <p class="tag">Sign in to build blueprints and programs.</p>
 
-  <footer>Your Google account identifies you; nothing else is read from it.</footer>
+    <!-- A plain link: the server mints the state and PKCE challenge. -->
+    <a class="btn" href="/auth/login">Sign in with Google</a>
+
+    <footer>Your Google account identifies you; nothing else is read from it.</footer>
+  </main>
 </body>
 </html>

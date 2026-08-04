@@ -48,6 +48,11 @@ func TestRoutes(t *testing.T) {
 		// directive stops matching web/js, the page 404s in the browser and
 		// nothing else in the build notices.
 		{path: "/js/match.js", wantCode: http.StatusOK, wantBody: "EventSource"},
+		// Same trap, one directory over: every page now links /css/app.css, and
+		// an embed directive that stops matching web/css leaves six unstyled
+		// pages that nothing else in the build notices. The property asserted is
+		// one the canvas reads back with getComputedStyle.
+		{path: "/css/app.css", wantCode: http.StatusOK, wantBody: "--terrain-open"},
 		{path: "/api/matches/1/stream", accept: "application/json", wantCode: http.StatusUnauthorized},
 	}
 
