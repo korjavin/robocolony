@@ -785,7 +785,9 @@ function renderStats() {
   t.replaceChildren();
   if (!snap) return;
   const head = document.createElement("tr");
-  for (const c of ["#", "Colony", "Robots", "Score", "Fleet value", "Parts"]) head.append(el("th", null, c));
+  for (const c of ["#", "Colony", "Robots", "Score", "Fleet", "Stock", "Parts", "Lost", "Kills"]) {
+    head.append(el("th", null, c));
+  }
   t.append(head);
 
   // Rank by score, not fleet value: the design §9 score is fleet value plus a
@@ -796,7 +798,7 @@ function renderStats() {
   rows.forEach((c, i) => {
     const tr = document.createElement("tr");
     tr.append(el("td", null, String(i + 1)));
-    const name = el("td");
+    const name = el("td", "who");
     const sw = el("span", "swatch");
     sw.style.background = colonyColor(c.colony);
     name.append(sw, document.createTextNode(colonyName(c.colony)));
@@ -805,11 +807,119 @@ function renderStats() {
       name.append(el("span", "out", "out"));
       tr.title = "no robots left and nothing the base can build — design §5.3";
     }
-    tr.append(name, el("td", null, String(c.robots)), el("td", null, String(c.score)),
-      el("td", null, String(c.fleet_value)), el("td", null, String(c.inventory)));
+    // Parts / Lost / Kills are sim.Stats, cumulative since tick 0 — what the
+    // colony has *done*, next to what it currently holds. ticks_active has no
+    // column of its own: it is one number about a colony that is already
+    // described by its robot count, so it rides that cell as a tooltip.
+    const robots = el("td", "num", String(c.robots));
+    const secs = Math.round((c.ticks_active || 0) / (init?.tick_rate || 10));
+    robots.title = `fielded a robot for ${secs}s of the match so far`;
+    tr.append(name, robots,
+      el("td", "num", String(c.score)), el("td", "num", String(c.fleet_value)),
+      el("td", "num", String(c.inventory)), el("td", "num", String(c.collected ?? 0)),
+      el("td", "num", String(c.losses ?? 0)), el("td", "num", String(c.kills ?? 0)));
     t.append(tr);
   });
 }
+
+// ------------------------------------------------------------------- graph
+//
+// Score over time (design §4.4), as one SVG polyline per colony. No charting
+// library: this is a coordinate transform and a string, and a dependency here
+// would buy axes nobody asked for.
+//
+// The series comes down on the init frame (internal/lobby/history.go) already
+// downsampled, and grows from the tick stream — so nothing rides the 10 Hz
+// frame, and a reload or a late join still shows the whole match.
+//
+// The graph is built once and updated in place, and it lives in the Colonies
+// panel rather than in #inspector, which is cleared on every tick.
+
+const SVGNS = "http://www.w3.org/2000/svg";
+
+// GRAPH_MAX bounds the series in the browser the way historyCap bounds it on
+// the server: once past it, every second sample is dropped and the interval
+// doubles. A page left open on a long match must not grow without limit.
+const GRAPH_MAX = 512;
+
+const METRICS = { score: "score", robots: "robots", collected: "parts collected" };
+
+let series = null; // {interval, ticks, colonies:[{colony, score, robots, collected}]}
+
+function seriesReset(h) {
+  series = h && Array.isArray(h.ticks) && h.interval > 0 ? h : null;
+  drawGraph();
+}
+
+// seriesAppend adds this snapshot to the series if it lands on a sampling tick
+// and is newer than what is there. Both guards matter: the init frame can be
+// one sample ahead of the first tick frame (the server takes them under
+// separate locks), and a reconnect replays a tick already recorded.
+function seriesAppend(s) {
+  if (!series || s.tick % series.interval !== 0) return false;
+  const last = series.ticks.length ? series.ticks[series.ticks.length - 1] : -1;
+  if (s.tick <= last) return false;
+  series.ticks.push(s.tick);
+  for (const c of series.colonies) {
+    const st = s.colonies.find((x) => x.colony === c.colony) || {};
+    c.score.push(st.score || 0);
+    c.robots.push(st.robots || 0);
+    c.collected.push(st.collected || 0);
+  }
+  if (series.ticks.length > GRAPH_MAX) {
+    const half = (a) => a.filter((_, i) => i % 2 === 0);
+    series.interval *= 2;
+    series.ticks = half(series.ticks);
+    for (const c of series.colonies) {
+      c.score = half(c.score); c.robots = half(c.robots); c.collected = half(c.collected);
+    }
+  }
+  return true;
+}
+
+const mmss = (ticks) => {
+  const s = Math.round(ticks / (init?.tick_rate || 10));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+function drawGraph() {
+  const lines = $("graph-lines");
+  const note = $("graph-note");
+  const metric = $("graph-metric").value;
+  if (!series || series.ticks.length < 2) {
+    lines.replaceChildren();
+    setText(note, "Waiting for the first samples — one every "
+      + `${mmss(series?.interval || 100)} of match time.`);
+    return;
+  }
+
+  const W = 600, H = 180, pad = 6;
+  const t0 = series.ticks[0];
+  const span = Math.max(1, series.ticks[series.ticks.length - 1] - t0);
+  let peak = 0;
+  for (const c of series.colonies) for (const v of c[metric]) peak = Math.max(peak, v);
+  const scale = peak || 1;
+
+  lines.replaceChildren(...series.colonies.map((c) => {
+    const p = document.createElementNS(SVGNS, "polyline");
+    p.setAttribute("points", series.ticks.map((t, i) =>
+      `${((t - t0) / span * W).toFixed(1)},`
+      + `${(H - pad - (c[metric][i] || 0) / scale * (H - 2 * pad)).toFixed(1)}`).join(" "));
+    // var(), not a resolved colour: the same custom property the map and the
+    // legend read, so a theme switch needs no redraw.
+    p.style.stroke = `var(${colonyVar(c.colony)})`;
+    p.setAttribute("vector-effect", "non-scaling-stroke");
+    const t = document.createElementNS(SVGNS, "title");
+    t.textContent = colonyName(c.colony);
+    p.append(t);
+    return p;
+  }));
+  setText(note, `${METRICS[metric]} — peak ${peak}, ${mmss(t0)} to `
+    + `${mmss(series.ticks[series.ticks.length - 1])}, `
+    + `one point per ${mmss(series.interval)}. Colours match the standing above.`);
+}
+
+$("graph-metric").addEventListener("change", drawGraph);
 
 // baseColony is the colony the base panel last showed. It sticks: without it
 // the panel jumps back to the first base the instant the selected robot dies —
@@ -890,6 +1000,9 @@ function render() {
     histReset();
     pollHistory();
   }
+  // Only on a sampling tick, so the graph is rebuilt once every interval and
+  // not ten times a second.
+  if (snap && seriesAppend(snap)) drawGraph();
   draw();
   renderClock();
   renderSpectate();
@@ -928,6 +1041,9 @@ function connect() {
     document.title = `${init.name} — robocolony`;
     bakeTerrain();
     buildLegend();
+    // The server's series is authoritative and covers the whole match, so a
+    // reconnect adopts it rather than keeping whatever this page observed.
+    seriesReset(init.history);
     render();
   });
 

@@ -39,6 +39,18 @@ type Init struct {
 	// an inventory stack without hardcoding the numbers.
 	Components []Component `json:"components"`
 	Colonies   []Colony    `json:"colonies"`
+
+	// History is the sampled score/robots/collected series so far
+	// (internal/lobby/history.go). It is on this frame and not on the tick
+	// frame on purpose: a series on the tick frame would grow the 10 Hz payload
+	// against E4.1's 64 KB budget, and a client that reloads mid-match, or
+	// joins late, would still have no history. Here it costs one send per
+	// connection and the client appends the rest from the tick stream.
+	//
+	// It is lobby.History rather than a projection of it: like lobby.Info, it
+	// is already a wire payload with its own tags, and a second copy of three
+	// int slices would be a layer with no decision in it.
+	History lobby.History `json:"history"`
 }
 
 // Colony is one seat: who is playing it, under which colony id.
@@ -205,16 +217,28 @@ type Loose struct {
 // fraction of the base stock — and FleetValue is the fleet term on its own, so
 // the client can keep showing what a robot is worth without recomputing the
 // discount. A client that only knows fleet_value still renders.
+//
+// Collected, Losses, Kills and TicksActive are sim.Stats, which the simulation
+// has always maintained (world.go) and E4.2 left off the wire. They are a
+// projection of state that already exists: four ints per colony per frame, and
+// design §4.4 asks for every one of them.
 type ColonyStats struct {
 	Colony     int `json:"colony"`
 	Robots     int `json:"robots"`
 	Inventory  int `json:"inventory"`
 	FleetValue int `json:"fleet_value"`
 	Score      int `json:"score"`
+
+	Collected   int    `json:"collected"`    // components banked in the base
+	Losses      int    `json:"losses"`       // own robots destroyed
+	Kills       int    `json:"kills"`        // enemy robots destroyed
+	TicksActive uint64 `json:"ticks_active"` // ticks ended with a robot alive
 }
 
-// NewInit builds the connect frame. Callers must hold the match lock over w.
-func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World) Init {
+// NewInit builds the connect frame. Callers must hold the match lock over w —
+// and must therefore have taken hist (Match.History) outside it, since that
+// takes the same lock.
+func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World, hist lobby.History) Init {
 	specs := sim.TerrainSpecs()
 	legend := make([]TerrainClass, 0, len(specs))
 	for _, s := range specs {
@@ -255,6 +279,7 @@ func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World) Init {
 		Width: w.Width, Height: w.Height,
 		Terrain: rows, TerrainLegend: legend,
 		Components: comps, Colonies: seats,
+		History: hist,
 	}
 }
 
@@ -318,6 +343,8 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 			IdleReason: b.IdleReason(),
 		}
 		st := stat(b.Colony)
+		st.Collected, st.Losses = b.Stats.Collected, b.Stats.Losses
+		st.Kills, st.TicksActive = b.Stats.Kills, b.Stats.TicksActive
 		for _, e := range inv {
 			dto.Inventory = append(dto.Inventory, InvEntry{Variant: int(e.Variant), Count: e.Count})
 			st.Inventory += e.Count

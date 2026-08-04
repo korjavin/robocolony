@@ -119,6 +119,27 @@
                 border: 1px solid #c0392b; border-left-width: .35rem;
                 border-radius: .4rem; }
 
+  /* The standing carries nine columns now that the §4.4 telemetry is on the
+     wire. It scrolls sideways in a narrow panel rather than wrapping the
+     numbers into an unreadable stack. */
+  .tablewrap { overflow-x: auto; }
+  .tablewrap table { min-width: 22rem; }
+  #stats td, #stats th { padding-right: .6rem; }
+  #stats td.num { font-variant-numeric: tabular-nums; text-align: right;
+                  padding-right: .9rem; }
+  /* One line per colony: a wrapped name makes every row two rows tall, which
+     is a worse trade than scrolling the last column into view. */
+  #stats td.who { white-space: nowrap; }
+
+  /* Score-over-time graph. Colours come from --colony-N, never a literal. */
+  .graph-head { display: flex; align-items: baseline; gap: .5rem;
+                font-size: .85rem; margin: .2rem 0 .3rem; }
+  .graph-head select { padding: .1rem .4rem; font-size: .85rem; }
+  .graph { display: block; width: 100%; height: 9rem;
+           border: 1px solid; border-radius: .4rem; background: #7f8a9914; }
+  .graph polyline { fill: none; stroke-width: 2; stroke-linejoin: round;
+                    stroke-linecap: round; }
+
   .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
         overflow: hidden; margin: .2rem 0 .4rem; }
   .hp > i { display: block; height: 100%; background: #2f8f4e; }
@@ -330,11 +351,42 @@
       </div>
 
       <h2>Colonies</h2>
-      <div class="panel"><table id="stats"></table>
+      <div class="panel">
+        <div class="tablewrap"><table id="stats"></table></div>
         <p class="meta">Standing by design §9 score: fleet value plus a quarter
         of the base inventory, so stockpiling counts but fielding counts four
-        times more. Losses, kills and production history are not on the wire
-        yet.</p></div>
+        times more. Parts, losses and kills are what the colony has done since
+        tick 0.</p>
+
+        <!-- Score over time (design §4.4 "production history"). Its own panel
+             section, built once and updated in place: it is deliberately not in
+             #inspector, which is replaceChildren()-ed ten times a second.
+
+             The series arrives on the init frame and grows from the tick
+             stream, so a reload and a late join both get the whole match. No
+             charting library: a <polyline> per colony is the whole chart, and
+             it takes its stroke from the same --colony-N custom property the
+             map and the legend read, so it re-themes for free. -->
+        <h3>Over time</h3>
+        <div class="graph-head">
+          <label for="graph-metric">Series</label>
+          <select id="graph-metric">
+            <option value="score">Score</option>
+            <option value="robots">Robots</option>
+            <option value="collected">Parts collected</option>
+          </select>
+        </div>
+        <!-- preserveAspectRatio="none" stretches the box to the panel width;
+             the strokes keep their weight through vector-effect, and every
+             label is HTML below rather than <text> that the stretch would
+             distort. -->
+        <svg class="graph" id="graph" viewBox="0 0 600 180"
+             preserveAspectRatio="none" role="img"
+             aria-label="Colony series over the match so far">
+          <g id="graph-lines"></g>
+        </svg>
+        <p class="meta" id="graph-note">Waiting for the first samples&hellip;</p>
+      </div>
 
       <h2>Base</h2>
       <div class="panel" id="base"><p class="meta">No colony selected.</p></div>

@@ -69,9 +69,9 @@ func startMatch(t *testing.T) (*lobby.Registry, *lobby.Match) {
 func TestTerrainLegendMatchesSpecs(t *testing.T) {
 	_, m := startMatch(t)
 
-	info := m.Info()
+	info, hist := m.Info(), m.History()
 	var in Init
-	m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w) })
+	m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist) })
 
 	specs := sim.TerrainSpecs()
 	if len(in.TerrainLegend) != len(specs) {
@@ -108,11 +108,11 @@ func TestTerrainLegendMatchesSpecs(t *testing.T) {
 func TestSnapshotShape(t *testing.T) {
 	_, m := startMatch(t)
 
-	info := m.Info()
+	info, hist := m.Info(), m.History()
 	var init Init
 	var snap Snapshot
 	m.Read(func(w *sim.World, rt *prog.Runtime) {
-		init = NewInit(info, m.Colonies, w)
+		init = NewInit(info, m.Colonies, w, hist)
 		snap = NewSnapshot(w, rt, info.EndTick)
 	})
 
