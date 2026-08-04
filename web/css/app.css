@@ -1,0 +1,168 @@
+/* app.css — the one stylesheet every page loads.
+ *
+ * It exists because six pages had six <style> blocks and the shared parts had
+ * already drifted: three different panel borders, two button sizes, three
+ * spellings of the same red. What lives here is what more than one page needs
+ * — the palette, the page frame, the site nav, and the handful of components
+ * (panel, button, .meta, table, form control) the pages build everything from.
+ * Genuinely page-specific rules stay in that page's <style> block.
+ *
+ * Two things to know before editing:
+ *
+ *  - The canvas renderer reads --terrain-*, --kind-* and --colony-N at runtime
+ *    with getComputedStyle (web/js/match.js), and the match legend, the score
+ *    graph and the still frame on the landing page all reference the same
+ *    properties through var(). Rename one and four things change at once —
+ *    which is the point, but do it deliberately.
+ *  - There is no build step. Plain CSS, no imports, no external assets.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Colony colours. The renderer reads these, so a reskin never touches JS. */
+  --colony-0: #2f7fd8;
+  --colony-1: #d8592f;
+  --colony-2: #2fa36b;
+  --colony-3: #a855d8;
+  --colony-4: #d8b62f;
+  --colony-5: #2fc2d8;
+  --colony-6: #d82f86;
+  --colony-7: #7f8a99;
+
+  /* Terrain, keyed by the init frame's legend names. Rubble favours legs and
+     blocks tracks; sand is the reverse. They must be told apart at a glance:
+     terrain decides where a robot can go. */
+  --terrain-open: #cfd6dd;
+  --terrain-barrier: #4a4f57;
+  --terrain-rubble: #a89a86;
+  --terrain-sand: #ddc98d;
+  --terrain-unknown: #8d939b;
+  --grid-line: #00000012;
+
+  /* Loose components, keyed by catalogue kind. */
+  --kind-locomotion: #8b6b3a;
+  --kind-armor: #6f7a86;
+  --kind-manipulator: #3aa08b;
+  --kind-radar: #4f6fd0;
+  --kind-weapon: #c23b3b;
+  --kind-unknown: #999999;
+
+  /* Status. Three colours, said once: green is fine, amber is a warning, red
+     is a failure or a loss. Every page used to spell these out itself. */
+  --ok: #2f8f4e;
+  --warn: #c98a00;
+  --bad: #c0392b;
+
+  /* Hairline. It resolves against the element's own colour, so it is one
+     value in light and dark alike. */
+  --line: color-mix(in srgb, currentColor 25%, transparent);
+  --wash: color-mix(in srgb, currentColor 5%, transparent);
+
+  /* Page width. Each page sets it: the editor and the match view are
+     instruments and want the room, the landing page is prose and does not. */
+  --page: 52rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --terrain-open: #333a42;
+    --terrain-barrier: #14171b;
+    --terrain-rubble: #4c443a;
+    --terrain-sand: #5c5233;
+    --terrain-unknown: #565c64;
+    --grid-line: #ffffff10;
+    --ok: #46b06a;
+    --warn: #d9a021;
+    --bad: #e0614f;
+  }
+}
+
+/* Page frame ------------------------------------------------------------- */
+
+body {
+  margin: 0 auto;
+  padding: 0 1.25rem 3rem;
+  max-width: var(--page);
+  font: 16px/1.6 system-ui, sans-serif;
+}
+
+h1 { font-size: 1.8rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+h2 { font-size: 1.15rem; margin: 1.8rem 0 .5rem; }
+h3 { font-size: 1rem; margin: 1.4rem 0 .3rem; }
+
+.tag { margin: 0 0 1.5rem; opacity: .65; }
+.meta { font-size: .85rem; opacity: .7; }
+.err { color: var(--bad); font-weight: 600; min-height: 1.6em; }
+code { font-family: ui-monospace, monospace; font-size: .92em; }
+
+footer {
+  margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+  font-size: .85rem; opacity: .7;
+}
+
+/* Site navigation --------------------------------------------------------- */
+
+/* The same markup on every page — web/nav_test.go fails the build if one of
+   them drifts — so any page reaches any other. The only per-page difference is
+   which link carries aria-current.
+   /match is not a link here because a match needs an id; it is reached from
+   the lobbies page, which lists the ones that are running. */
+nav.site {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1.1rem;
+  margin: 0 0 1.75rem; padding: .9rem 0;
+  border-bottom: 1px solid var(--line); font-size: .92rem;
+}
+nav.site a, nav.site button {
+  color: inherit; text-decoration: none; opacity: .65;
+}
+nav.site a:hover, nav.site button:hover { opacity: 1; text-decoration: underline; }
+nav.site .brand {
+  font-weight: 700; font-size: 1.05rem; letter-spacing: -.02em;
+  opacity: 1; margin-right: .3rem;
+}
+/* The marker is a rule under the word rather than a filled pill: it says where
+   you are without becoming the loudest thing on a dense page. */
+nav.site [aria-current] {
+  opacity: 1; font-weight: 600;
+  box-shadow: inset 0 -2px 0 0 currentColor;
+}
+nav.site .grow { flex: 1 1 auto; }
+nav.site form { display: inline; margin: 0; }
+nav.site button {
+  font: inherit; font-size: .92rem; padding: 0; border: 0;
+  background: none; cursor: pointer;
+}
+
+/* Components -------------------------------------------------------------- */
+
+/* The bordered box that groups anything: a match panel, a lobby row, a form. */
+.panel, fieldset {
+  border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem;
+}
+fieldset { margin: 0 0 1rem; }
+legend { font-size: .85rem; opacity: .75; }
+
+button, select, input, textarea { font: inherit; }
+button, select {
+  padding: .3rem .75rem; border-radius: .4rem; cursor: pointer;
+}
+button[disabled], select[disabled] { cursor: not-allowed; opacity: .5; }
+input[type=text], input[type=number], input:not([type]) {
+  padding: .15rem .3rem; border-radius: .3rem;
+}
+
+/* A link that acts as a button. */
+.btn {
+  display: inline-block; padding: .6rem 1.2rem; border-radius: .5rem;
+  border: 1px solid currentColor; text-decoration: none; font-weight: 600;
+  color: inherit;
+}
+.btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+table { border-collapse: collapse; }
+th, td { padding: .15rem .8rem .15rem 0; text-align: left; vertical-align: top; }
+/* A wide table scrolls inside its panel rather than wrapping its numbers into
+   an unreadable stack. */
+.tablewrap { overflow-x: auto; }
+td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }

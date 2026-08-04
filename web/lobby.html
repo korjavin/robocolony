@@ -4,35 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lobbies &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0 auto; padding: 2.5rem 1.25rem; max-width: 52rem;
-    font: 16px/1.6 system-ui, sans-serif;
-  }
-  h1 { font-size: 1.8rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
-  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
-  .tag { margin: 0 0 2rem; opacity: .65; }
-  fieldset { border: 1px solid; border-radius: .5rem; opacity: .95; }
   label { display: inline-block; margin: .25rem .75rem .25rem 0; }
-  input { width: 8rem; font: inherit; padding: .15rem .3rem; }
+  input { width: 8rem; }
   input[name=name] { width: 16rem; }
-  button { font: inherit; padding: .3rem .8rem; border-radius: .4rem; cursor: pointer; }
+  /* Lobby and match rows: a list of panels, so the border matches every other
+     grouped box in the app. */
   ul { list-style: none; padding: 0; }
-  li { border: 1px solid; border-radius: .5rem; padding: .6rem .8rem; margin: .5rem 0; }
-  .meta { font-size: .85rem; opacity: .7; }
-  .err { color: #c0392b; font-weight: 600; min-height: 1.6em; }
-  table { border-collapse: collapse; }
-  td, th { padding: .15rem .8rem .15rem 0; text-align: left; }
-  footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
+  li { border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem; margin: .5rem 0; }
+  li button, li select { margin: .3rem .3rem 0 0; }
+  /* A running match is the one thing on this page you cannot get back to any
+     other way, so it reads as a link and not as one more grey row. */
+  .watch { font-weight: 600; }
 </style>
 </head>
 <body>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby" aria-current="page">Lobbies</a>
+    <a href="/editor">Editor</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
   <h1>Lobbies</h1>
   <p class="tag">Create a lobby, wait for players, start the match. A match keeps
-  running while you are away.</p>
+  running while you are away &mdash; and this page is how you get back to it.</p>
 
   <p class="err" id="err"></p>
+
+  <h2>Matches in progress</h2>
+  <ul id="running"></ul>
 
   <h2>Open lobbies</h2>
   <ul id="lobbies"></ul>
@@ -55,8 +61,6 @@
 
   <h2>Match</h2>
   <div id="match"><p class="meta">No match selected.</p></div>
-
-  <footer><a href="/">home</a> &middot; <a href="/editor">editor</a> &middot; <a href="/login">sign in</a></footer>
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
@@ -90,9 +94,39 @@ async function loadLibrary() {
   } catch (e) { err(e.message); }
 }
 
+// A lobby leaves the open list the moment it starts, and /match?id=N is the
+// only way back into a running match. Until this list existed, navigating away
+// from one lost it: the link was minted once, by the Start button, and never
+// again.
+function renderRunning(list) {
+  const ul = $("running");
+  ul.replaceChildren();
+  if (list.length === 0) {
+    const li = document.createElement("li");
+    li.className = "meta";
+    li.textContent = "Nothing running. A match you start appears here until it ends.";
+    ul.append(li);
+    return;
+  }
+  for (const l of list) {
+    const li = document.createElement("li");
+    const a = link(`/match?id=${l.id}`, `Watch ${l.name}`);
+    a.className = "watch";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const ai = l.settings.ai || [];
+    meta.textContent = l.members.map((m) => m.display_name).join(", ")
+      + (ai.length ? ` · AI: ${ai.join(", ")}` : "")
+      + ` · ${l.settings.duration_sec}s`;
+    li.append(a, meta);
+    ul.append(li);
+  }
+}
+
 async function refresh() {
   const data = await api("GET", "/api/lobbies");
   if (!data) return;
+  renderRunning(data.running || []);
   const list = $("lobbies");
   list.replaceChildren();
   if (data.lobbies.length === 0) {

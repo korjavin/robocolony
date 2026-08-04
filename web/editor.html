@@ -4,29 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Program editor &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 25%, transparent); }
-  body {
-    margin: 0 auto; padding: 2rem 1.25rem; max-width: 74rem;
-    font: 16px/1.6 system-ui, sans-serif;
-  }
-  h1 { font-size: 1.8rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  :root { --page: 74rem; }
   h2 { font-size: 1.05rem; margin: 1.6rem 0 .5rem; }
-  .tag { margin: 0 0 1.5rem; opacity: .65; }
   .cols { display: grid; grid-template-columns: 18rem 1fr; gap: 1.5rem; align-items: start; }
   @media (max-width: 60rem) { .cols { grid-template-columns: 1fr; } }
-  button, select, input { font: inherit; }
-  button { padding: .2rem .6rem; border-radius: .4rem; cursor: pointer; }
-  button:disabled { cursor: not-allowed; opacity: .45; }
-  input[type=text] { padding: .15rem .3rem; }
-  input[type=number] { width: 4.5rem; padding: .15rem .3rem; }
+  input[type=number] { width: 4.5rem; }
   ul { list-style: none; padding: 0; margin: 0; }
   .lib li { border: 1px solid var(--line); border-radius: .5rem; padding: .4rem .6rem; margin: .35rem 0; cursor: pointer; }
   .lib li.on { border-color: currentColor; font-weight: 600; }
+  /* Denser than the shared .meta: this page says it after nearly every control. */
   .meta { font-size: .82rem; opacity: .68; font-weight: 400; }
-  .err { color: #c0392b; font-weight: 600; min-height: 1.6em; }
-  fieldset { border: 1px solid var(--line); border-radius: .5rem; margin: 0 0 1rem; }
-  legend { font-size: .85rem; opacity: .75; }
   .bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 
   .rule { border: 1px solid var(--line); border-radius: .6rem; padding: .6rem .8rem; margin: .6rem 0; }
@@ -71,10 +61,9 @@
   /* Import is a file input wearing its own label as the button, so the
      browser's "no file chosen" text stays out of the toolbar. The input is
      hidden but still focusable, and the label shows where the focus is. */
-  .filebtn { padding: .2rem .6rem; border: 1px solid var(--line); border-radius: .4rem; cursor: pointer; }
+  .filebtn { padding: .3rem .75rem; border: 1px solid var(--line); border-radius: .4rem; cursor: pointer; }
   .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .filebtn:focus-within { outline: 2px solid currentColor; outline-offset: 1px; }
-  footer { margin-top: 2.5rem; font-size: .85rem; opacity: .6; }
 
   /* Blueprint editor. The palette is grouped by the catalogue's own kind, and
      every number in .stats is derived server-side. */
@@ -100,6 +89,16 @@
 </style>
 </head>
 <body>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby">Lobbies</a>
+    <a href="/editor" aria-current="page">Editor</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
   <h1>Program editor</h1>
   <p class="tag">You write the rules, not the moves. Rules are checked top to
   bottom every tick, and the first one that matches decides what the robot does.
@@ -168,9 +167,6 @@
       <button id="addrule">Add rule</button>
     </div>
   </div>
-
-  <footer><a href="/">home</a> &middot; <a href="/lobby">lobbies</a> &middot;
-  <a href="/help">rule language guide</a></footer>
 
 <script type="module" src="/js/editor.js"></script>
 </body>

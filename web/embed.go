@@ -7,5 +7,5 @@ import "embed"
 // FS holds the static assets. Add each new directory to the directive as it
 // appears — go:embed fails the build on a pattern that matches nothing.
 //
-//go:embed index.html login.html lobby.html editor.html match.html help.html js/*.js
+//go:embed index.html login.html lobby.html editor.html match.html help.html js/*.js css/*.css
 var FS embed.FS

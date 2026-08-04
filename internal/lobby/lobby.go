@@ -227,7 +227,19 @@ func (s *Service) Create(ctx context.Context, userID int64, name string, set Set
 
 // List returns the open lobbies.
 func (s *Service) List(ctx context.Context) ([]LobbyView, error) {
-	lobbies, err := s.db.ListLobbies(ctx, db.LobbyOpen)
+	return s.listState(ctx, db.LobbyOpen)
+}
+
+// Running returns the lobbies whose match is under way. It is what makes a
+// running match reachable at all: starting one takes the lobby out of the open
+// list, and before this the /match?id=N link existed only in the response to
+// the Start button — navigate away and the match was gone.
+func (s *Service) Running(ctx context.Context) ([]LobbyView, error) {
+	return s.listState(ctx, db.LobbyRunning)
+}
+
+func (s *Service) listState(ctx context.Context, state string) ([]LobbyView, error) {
+	lobbies, err := s.db.ListLobbies(ctx, state)
 	if err != nil {
 		return nil, err
 	}
@@ -562,17 +574,25 @@ func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	if lobbies == nil {
-		lobbies = []LobbyView{}
+	// The matches already under way ride the same response: the lobby page is
+	// the only door back into one, and a second round trip to open that door
+	// would be a second thing to get wrong.
+	running, err := s.Running(r.Context())
+	if err != nil {
+		writeErr(w, r, err)
+		return
 	}
 	user, _ := auth.UserFrom(r.Context())
-	for i, v := range lobbies {
-		lobbies[i] = v.forUser(user.ID)
+	for _, list := range [][]LobbyView{lobbies, running} {
+		for i, v := range list {
+			list[i] = v.forUser(user.ID)
+		}
 	}
 	// ai_profiles is the menu a lobby screen builds its "add an AI opponent"
 	// control from, so the client never hard-codes the profile names.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"lobbies": lobbies, "defaults": DefaultSettings(), "ai_profiles": Profiles(),
+		"lobbies": lobbies, "running": running,
+		"defaults": DefaultSettings(), "ai_profiles": Profiles(),
 	})
 }
 

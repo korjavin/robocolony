@@ -5,50 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>robocolony</title>
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<!-- The palette, the page frame, the nav and the shared components. The still
+     frame below is drawn from the same --terrain-* and --colony-N properties
+     the live renderer reads, so it is a still of that renderer rather than an
+     artist's impression, and it re-themes with it. -->
+<link rel="stylesheet" href="/css/app.css">
 <style>
-  :root {
-    color-scheme: light dark;
-
-    /* The observer view's palette, copied from match.html so the frame below
-       is drawn in the colours a live match is actually drawn in. Keep the two
-       in step: this is a still of that renderer, not an artist's impression. */
-    --colony-0: #2f7fd8;
-    --colony-1: #d8592f;
-    --terrain-open: #cfd6dd;
-    --terrain-barrier: #4a4f57;
-    --terrain-rubble: #a89a86;
-    --terrain-sand: #ddc98d;
-    --kind-manipulator: #3aa08b;
-    --kind-radar: #4f6fd0;
-    --kind-weapon: #c23b3b;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --terrain-open: #333a42;
-      --terrain-barrier: #14171b;
-      --terrain-rubble: #4c443a;
-      --terrain-sand: #5c5233;
-    }
-  }
-  body {
-    margin: 0 auto; padding: 3rem 1.25rem; max-width: 46rem;
-    font: 16px/1.6 system-ui, sans-serif;
-  }
-  h1 { font-size: 2.2rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
-  h2 { font-size: 1.15rem; margin: 2.2rem 0 .5rem; }
+  :root { --page: 46rem; }
+  /* The landing page is prose: its headings and lead run a size larger than
+     the instrument pages'. */
+  h1 { font-size: 2.2rem; }
+  h2 { margin: 2.2rem 0 .5rem; }
   .tag { margin: 0 0 .75rem; font-size: 1.1rem; opacity: .8; }
-  .meta { font-size: .85rem; opacity: .7; }
   .alpha {
-    border: 1px solid; border-radius: .5rem; padding: .5rem .8rem;
+    border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .8rem;
     margin: 0 0 2rem; font-size: .9rem; opacity: .85;
   }
   .cta { margin: 1.5rem 0; }
-  .btn {
-    display: inline-block; padding: .6rem 1.2rem; border-radius: .5rem;
-    border: 1px solid currentColor; text-decoration: none; font-weight: 600;
-    color: inherit; margin-right: .5rem;
-  }
-  .btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+  .btn { margin-right: .5rem; }
 
   /* The frame and the inspector card sit side by side on a wide screen and
      stack on a narrow one; two flex children do it without a media query. */
@@ -63,8 +37,8 @@
     paint-order: stroke;
   }
   .card {
-    flex: 1 1 12rem; min-width: 0; border: 1px solid; border-radius: .5rem;
-    padding: .6rem .8rem; font-size: .85rem;
+    flex: 1 1 12rem; min-width: 0; border: 1px solid var(--line);
+    border-radius: .5rem; padding: .6rem .8rem; font-size: .85rem;
   }
   .card h3 {
     font-size: .75rem; margin: 0 0 .4rem; text-transform: uppercase;
@@ -81,18 +55,19 @@
   ul { padding-left: 1.2rem; }
   ol { padding-left: 1.3rem; }
   ol li { margin: .5rem 0; }
-  footer {
-    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid;
-    font-size: .9rem; opacity: .75;
-  }
-  footer form { display: inline; }
-  footer button {
-    font: inherit; padding: 0; border: 0; background: none; color: inherit;
-    text-decoration: underline; cursor: pointer;
-  }
 </style>
 </head>
 <body>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/" aria-current="page">robocolony</a>
+    <a href="/lobby">Lobbies</a>
+    <a href="/editor">Editor</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
   <h1>robocolony</h1>
   <p class="tag">You design the robots and write the rules they follow. Then they
   compete without you &mdash; including while you are logged out.</p>
@@ -237,9 +212,7 @@
   </ul>
 
   <footer>
-    <a href="/login">sign in</a> &middot;
-    <form method="post" action="/auth/logout"><button type="submit">sign out</button></form>
-    &middot; <a href="https://github.com/korjavin/robocolony">github.com/korjavin/robocolony</a>
+    <a href="https://github.com/korjavin/robocolony">github.com/korjavin/robocolony</a>
   </footer>
 </body>
 </html>
