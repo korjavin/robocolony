@@ -352,6 +352,15 @@ function renderCommand(r) {
   cmd.update(r); // in place: never detaches cmd.node
 }
 
+// ruleName is what took the tick. Rule -1 with an action is not "no rule
+// matched" — it is the deposit reflex (design §10.5's caveat), and labelling it
+// as a failure to match would make the one automatic action in the game look
+// like a bug. The reason line beside it says which reflex.
+function ruleName(t) {
+  if (t.rule >= 0) return `rule ${t.rule + 1}`;
+  return t.action ? "reflex, no rule needed" : "no rule matched";
+}
+
 function ruleBox(r) {
   const t = r.trace;
   const div = el("div", "rule");
@@ -363,7 +372,7 @@ function ruleBox(r) {
     return div;
   }
   if (t.idle) div.classList.add("idle");
-  div.append(el("div", "idx", t.rule < 0 ? "no rule matched" : `rule ${t.rule + 1}`));
+  div.append(el("div", "idx", ruleName(t)));
   div.append(el("div", "act", t.action ? t.action : "idle"));
   div.append(el("div", "why", t.reason || ""));
   if (snap && t.tick !== snap.tick) {
@@ -504,7 +513,7 @@ function histEntry(e) {
   const node = el("div", "hist" + (e.idle ? " idle" : " acted"));
   const when = el("div", "when");
   const head = el("div", "head");
-  head.append(el("span", "idx", e.rule < 0 ? "no rule matched" : `rule ${e.rule + 1}`),
+  head.append(el("span", "idx", ruleName(e)),
     el("span", "act", e.action || "idle"));
   // The cell the action aimed at. It cannot be worked out from the arena later:
   // the component or enemy it was aimed at has moved or is gone.

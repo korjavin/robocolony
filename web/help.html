@@ -105,12 +105,35 @@
     writes and the two broadcasts &mdash; costs no time. It runs and the walk
     <strong>continues</strong> down the list.</li>
     <li>If no rule matches at all, the robot idles for the tick. That is safe,
-    but it is also a robot doing nothing.</li>
+    but it is also a robot doing nothing &mdash; with one exception, below.</li>
   </ol>
   <p class="note">This is the one rule of the language you have to hold in your
   head. A rule that only remembers something is not a decision &mdash; it is a
   note taken on the way past, and a lower rule still gets to act on the same
   tick.</p>
+
+  <h3>The one thing you never have to program</h3>
+  <p><strong>A robot standing at its own base holding a component puts it in the
+  base.</strong> No rule needed. You can write one &mdash; and if you do, it
+  runs &mdash; but you do not have to, and the template does not. It is part of
+  running your program, so a <em>recalled</em> robot &mdash; whose program is
+  suspended while it walks home &mdash; holds its cargo until you install a
+  program on it, and only then is anything, reflex included, deciding its
+  ticks again.</p>
+  <p>It is the only reflex in the language, and it is there because it is not a
+  decision: a component you are carrying is worth nothing to your score, you can
+  only carry one at a time, and your base is the only thing that will take it.
+  There is no program that wants to stand on its own base holding a component it
+  refuses to put down.</p>
+  <p>It never overrules you. The reflex only takes a tick the program was going
+  to waste anyway &mdash; nothing matched, or the rule that matched had nothing
+  to aim at, or it said <em>go home</em> while already home. Anything you
+  actually chose wins: a turn, an attack, <code>drop_component</code>, even
+  <code>stop</code>. If you want the component left on the ground at your own
+  base rather than scored, say so with <code>drop_component</code> and that is
+  what happens. In the match inspector these ticks read
+  <em>at own base carrying a component: depositing is automatic</em>, so you can
+  always see when it was the reflex and not one of your rules.</p>
 
   <h2 id="order">Rule order <em>is</em> the program</h2>
   <p>Below is one tick of a scavenger that is carrying a component and can see
@@ -125,9 +148,9 @@
     </div>
     <div class="r">
       <span class="n">2</span>
-      <span class="what">WHEN at_own_base AND carrying_component THEN deposit_component_at_base</span>
+      <span class="what">WHEN carrying_component AND sees_enemy_robot THEN move_away_from_target</span>
       <span class="mark">no match</span>
-      <span class="say">Not standing at the base, so this rule is skipped &mdash; but it is above rule 3 for a reason.</span>
+      <span class="say">Nothing hostile in the wedge, so this rule is skipped &mdash; but it is above rule 3 for a reason.</span>
     </div>
     <div class="r hit">
       <span class="n">3</span>
@@ -149,10 +172,10 @@
 
   <p>Three things follow, and every one of them has bitten somebody:</p>
   <ul>
-    <li><strong>Swap rules 2 and 3 and the robot never scores.</strong> Rule 3
-    matches whenever rule 2 does, so the deposit rule has to sit above it. A
-    rule that a higher rule always covers is dead code, and the editor marks it
-    <code>unreachable_rule</code>.</li>
+    <li><strong>Swap rules 2 and 3 and the robot walks home through the
+    enemy.</strong> Rule 3 matches whenever rule 2 does, so the more specific
+    rule has to sit above it. A rule that a higher rule always covers is dead
+    code, and the editor marks it <code>unreachable_rule</code>.</li>
     <li><strong>Nothing is a subroutine.</strong> Rule 3 does not "walk home";
     it takes one step home. Next tick the whole list runs again, and if an enemy
     appears, a higher combat rule pre-empts the walk mid-journey. That is the
@@ -399,7 +422,9 @@
 
   <h2 id="worked">The three worked programs, and the badges they earn</h2>
   <p>The editor's <em>Start from a template&hellip;</em> menu loads the three
-  programs from the design document, exactly as printed. All three are worth
+  programs from the design document, as printed &mdash; except that the
+  scavenger no longer carries the deposit rule the document opens it with, since
+  that is the reflex above. All three are worth
   reading, and none of them is clean &mdash; which is the useful part, because
   the editor tells you why.</p>
 
@@ -441,11 +466,10 @@
   and notes never do.</p>
 
   <h2 id="first">Write your first scavenger</h2>
-  <p>Six rules, in this order. Every one of them is a dropdown in the editor.</p>
+  <p>Five rules, in this order. Every one of them is a dropdown in the editor.
+  There is no deposit rule: arriving home with a component puts it in the base
+  on its own.</p>
   <ol>
-    <li><code>WHEN at_own_base AND carrying_component THEN deposit_component_at_base</code>
-        &mdash; scoring first, or a later rule will keep walking you home while
-        already there.</li>
     <li><code>WHEN carrying_component THEN move_to_own_base</code> &mdash; one
         step per tick, re-decided every tick.</li>
     <li><code>WHEN component_in_reach AND carrying_nothing THEN pick_up_component</code>

@@ -661,3 +661,198 @@ func TestRadarNeverAimsAtABase(t *testing.T) {
 		})
 	}
 }
+
+// TestScavengerNeedsNoDepositRule is rc-tad.13's acceptance case. §10.7 opens
+// with a rule nobody ever made a decision on — at your own base, carrying, put
+// it down — and the evaluator now does that by reflex. Deleting the rule must
+// therefore change nothing at all.
+//
+// "Nothing at all" is checked the strongest way available: both worlds are
+// stepped together and their StateHash compared every tick. Equal hashes mean
+// the five-rule program is not merely equivalent in outcome but tick-for-tick
+// the same run, so no balance number measured on the six-rule version moved.
+func TestScavengerNeedsNoDepositRule(t *testing.T) {
+	build := func(p Program) (*sim.World, *sim.Base) {
+		w := sim.Generate(7, sim.GenOpts{Width: 16, Height: 16, Colonies: 1, BarrierDensity: 0.08, Richness: 0.05})
+		bp := scavengerBlueprint()
+		mustValidate(t, p, bp)
+		addRobot(w, w.Bases[0].Coord, sim.North, bp)
+		rt := NewRuntime()
+		rt.Install(bp.ProgramID, p)
+		w.Control = rt.Control
+		return w, w.Bases[0]
+	}
+
+	six := scavengerProgram()
+	five := scavengerProgram()
+	five.Rules = five.Rules[1:] // drop "at_own_base AND carrying -> deposit"
+
+	withRule, baseWith := build(six)
+	without, baseWithout := build(five)
+	for i := 0; i < 3000; i++ {
+		withRule.Step()
+		without.Step()
+		if withRule.StateHash() != without.StateHash() {
+			t.Fatalf("the programs diverged at tick %d: %d collected with the deposit rule, %d without",
+				i, baseWith.Stats.Collected, baseWithout.Stats.Collected)
+		}
+	}
+	// Not vacuous: the run has to actually deliver something, or two idle
+	// robots would agree just as well.
+	if baseWithout.Stats.Collected == 0 {
+		t.Fatal("neither program delivered a component in 3000 ticks")
+	}
+	t.Logf("both programs delivered %d components, hash-identical throughout", baseWithout.Stats.Collected)
+}
+
+// TestDepositReflexOnlyTakesAWastedTick is the other half: the reflex is a
+// fallback, never an override. Anything the program actually chose to do with
+// the tick wins, including choosing to do nothing on purpose with stop.
+func TestDepositReflexOnlyTakesAWastedTick(t *testing.T) {
+	bp := scavengerBlueprint()
+	cargo := sim.Manipulator
+
+	for _, tc := range []struct {
+		name       string
+		program    Program
+		wantCargo  sim.Variant // what the robot still holds after the tick
+		wantLoose  int         // loose components on the floor
+		wantAction ActionID
+	}{
+		{"nothing matches: the reflex takes it",
+			Program{V: SchemaVersion}, sim.VariantNone, 0, DepositComponentAtBase},
+		{"an unresolvable action wastes the tick, so the reflex takes it",
+			Program{V: SchemaVersion, Rules: []Rule{
+				{When: Pred(CarryingComponent), Then: []Action{DoArg(MoveToPoint, 1)}},
+			}}, sim.VariantNone, 0, DepositComponentAtBase},
+		{"go home while already home is the same wasted tick",
+			Program{V: SchemaVersion, Rules: []Rule{
+				{When: Pred(CarryingComponent), Then: []Action{Do(MoveToOwnBase)}},
+			}}, sim.VariantNone, 0, DepositComponentAtBase},
+		{"drop_component is a decision and wins",
+			Program{V: SchemaVersion, Rules: []Rule{
+				{When: Pred(CarryingComponent), Then: []Action{Do(DropComponent)}},
+			}}, sim.VariantNone, 1, DropComponent},
+		{"stop is a decision to do nothing and wins",
+			Program{V: SchemaVersion, Rules: []Rule{
+				{When: Pred(CarryingComponent), Then: []Action{Do(Stop)}},
+			}}, cargo, 0, Stop},
+		{"turning away is a decision and wins",
+			Program{V: SchemaVersion, Rules: []Rule{
+				{When: Pred(CarryingComponent), Then: []Action{Do(TurnLeft)}},
+			}}, cargo, 0, TurnLeft},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := flatWorld(t, 5, 16)
+			base := w.Bases[0]
+			r := addRobot(w, base.Coord, sim.East, bp)
+			r.Cargo = cargo
+			rt := NewRuntime()
+			rt.Install(bp.ProgramID, tc.program)
+			w.Control = rt.Control
+
+			w.Step()
+			tr, _ := rt.Trace(r.ID)
+			if r.Cargo != tc.wantCargo {
+				t.Errorf("robot holds %v, want %v (trace %+v)", r.Cargo, tc.wantCargo, tr)
+			}
+			if len(w.Loose) != tc.wantLoose {
+				t.Errorf("%d loose components, want %d", len(w.Loose), tc.wantLoose)
+			}
+			if tr.Action != tc.wantAction {
+				t.Errorf("trace action = %q, want %q (%+v)", tr.Action, tc.wantAction, tr)
+			}
+			// A reflex tick is not "no rule matched", and it is not idle: the
+			// match inspector shows both to the player.
+			if tc.wantAction == DepositComponentAtBase {
+				if tr.Idle || tr.Reason == reasonNoMatch {
+					t.Errorf("a reflex tick reads as an idle tick: %+v", tr)
+				}
+				// And no rule is credited with it: a rule that matched and came
+				// to nothing must not be shown as having done the deposit.
+				if tr.Rule != -1 {
+					t.Errorf("the reflex credited rule %d with the deposit: %+v", tr.Rule, tr)
+				}
+			}
+		})
+	}
+}
+
+// TestInertStartSurvivesTheReflex keeps the inert_start warning honest. It
+// claims nothing in the world can start a program none of whose rules match a
+// freshly built robot, and a reflex is exactly the kind of thing that could
+// have turned that claim into a lie. It does not: the reflex needs cargo, and
+// cargo only ever arrives through pick_up_component, which is a rule.
+func TestInertStartSurvivesTheReflex(t *testing.T) {
+	p := scoutProgram() // design §10.8, the program the warning is written about
+	bp := scavengerBlueprint()
+	warned := false
+	for _, w := range Validate(p, bp).Warnings {
+		warned = warned || w.Code == "inert_start"
+	}
+	if !warned {
+		t.Fatalf("the §10.8 scout no longer earns inert_start: %+v", Validate(p, bp).Warnings)
+	}
+
+	w := flatWorld(t, 5, 16)
+	base := w.Bases[0]
+	r := addRobot(w, base.Coord, sim.East, bp)
+	rt := NewRuntime()
+	rt.Install(bp.ProgramID, p)
+	w.Control = rt.Control
+	for i := 0; i < 50; i++ {
+		w.Step()
+	}
+	if r.Coord != base.Coord || r.Cargo != sim.VariantNone || base.Stats.Collected != 0 {
+		t.Fatalf("an inert program acted: robot at %v carrying %v, base collected %d",
+			r.Coord, r.Cargo, base.Stats.Collected)
+	}
+	if tr, _ := rt.Trace(r.ID); !tr.Idle {
+		t.Fatalf("an inert program produced a non-idle tick: %+v", tr)
+	}
+}
+
+// TestDepositReflexNeedsAllThreeConditions pins the reflex's guard. Cargo, own
+// base and a manipulator: drop any one and the tick idles exactly as it did
+// before rc-tad.13 — in particular a robot with no manipulator must not spend
+// the longer interaction tick on a deposit sim would refuse.
+func TestDepositReflexNeedsAllThreeConditions(t *testing.T) {
+	handless := sim.Blueprint{ID: "bp-handless", Name: "handless", ProgramID: "prog-scavenge",
+		Components: []sim.Variant{sim.Tracks, sim.MediumArmor, sim.PartsRadar}}
+
+	for _, tc := range []struct {
+		name  string
+		bp    sim.Blueprint
+		cargo sim.Variant
+		away  bool
+		want  bool // the reflex deposits
+	}{
+		{"at base, carrying, handed", scavengerBlueprint(), sim.Manipulator, false, true},
+		{"empty handed carries nothing to deposit", scavengerBlueprint(), sim.VariantNone, false, false},
+		{"out in the field", scavengerBlueprint(), sim.Manipulator, true, false},
+		{"no manipulator", handless, sim.Manipulator, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := flatWorld(t, 5, 16)
+			base := w.Bases[0]
+			at := base.Coord
+			if tc.away {
+				at = sim.Coord{X: base.Coord.X + 6, Y: base.Coord.Y}
+			}
+			r := addRobot(w, at, sim.East, tc.bp)
+			r.Cargo = tc.cargo
+			rt := NewRuntime()
+			rt.Install(tc.bp.ProgramID, Program{V: SchemaVersion})
+			w.Control = rt.Control
+
+			w.Step()
+			tr, _ := rt.Trace(r.ID)
+			if got := base.Stats.Collected > 0; got != tc.want {
+				t.Errorf("deposited = %v, want %v (trace %+v)", got, tc.want, tr)
+			}
+			if !tc.want && (!tr.Idle || tr.Reason != reasonNoMatch) {
+				t.Errorf("the tick should have idled unchanged: %+v", tr)
+			}
+		})
+	}
+}

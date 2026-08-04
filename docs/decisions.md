@@ -119,12 +119,70 @@ NOT:
   read as dominating `p` and mark a live rule dead. A missed warning costs a
   player nothing; a wrong one tells them working code is dead.
 
+## Reflexes: the actions that need no rule
+
+**Depositing at your own base is a reflex, not a rule** (rc-tad.13, 4 August
+2026). §10.5 says "if no rule matches, the robot idles"; there is now exactly one
+exception, and it is the answer to a complaint from playing the game — *"deposit
+component at base is obvious, there is no other logical action, so it should be
+without programming at all"*.
+
+The axis is **which actions are decisions and which are reflexes**, and the test
+applied to each one was: *is there a plausible program that wants the opposite?*
+
+- `deposit_component_at_base`, at own base, carrying — **no**. A carried
+  component is worth zero (`World.FleetValue` sums *installed* components, not
+  cargo), capacity is exactly one, and the base is the only thing that can take
+  it. Not depositing is never a strategy, it is a forgotten rule. **Reflex.**
+- `pick_up_component`, in reach, hands empty — **yes**. A hunter that ignores
+  loot and keeps its tick is a real design. **Stays a decision.**
+- Obstacle handling, wandering, attacking, fleeing — **yes**, several sensible
+  variants each (turn left, turn right, turn random, retreat, path around).
+  **All stay decisions.**
+
+So the list is one entry long, deliberately. A wrong reflex is far more expensive
+than a missing one: it silently overrides intent, and the player has no syntax to
+argue with it.
+
+**Mechanism.** The reflex fires only on a tick the program was going to waste,
+which is what keeps it from changing any existing program: nothing matched, or
+the matched rule's action had no target, or the action was "go home" while
+already home. Anything the program actually chose — a turn, an attack, a drop, a
+`stop`, a move that goes somewhere — wins, so an explicit deposit rule is still
+in charge. Three alternatives were considered:
+
+1. **Fallback on no-match alone** was the obvious minimum and does not work:
+   §10.7's rule 2 (`carrying_component → move_to_own_base`) matches at the base
+   too, so the robot arrives home and stands there re-issuing a move to the cell
+   it occupies. Nothing "fails to match", the fallback never runs, and the
+   scavenger silently stops delivering. Hence the "already home" clause — measured,
+   not assumed.
+2. **Removing the action and always auto-depositing** overrides live programs and
+   forecloses the mechanics `drop_component` exists for.
+3. **Pre-filling the rule in the editor** leaves the ceremony on screen and still
+   costs a rule slot, which is the complaint.
+
+**Evidence it changed nothing.** `TestScavengerNeedsNoDepositRule` runs the §10.7
+scavenger with and without its deposit rule in the same generated arena and
+compares `World.StateHash` on every one of 3000 ticks. They are identical, so the
+starter program shipped one rule shorter (`lobby.DefaultProgram`) without
+retuning any balance measurement above.
+
+The reflex reads only the robot's view, never `w.rng`, and the trace says
+`at own base carrying a component: depositing is automatic` rather than `no rule
+matched` — the match inspector shows that string to players. `inert_start` is
+unaffected and was checked, not assumed: the reflex needs cargo, a freshly built
+robot has empty hands, and cargo only ever arrives through `pick_up_component`,
+which is a rule (`TestInertStartSurvivesTheReflex`).
+
 ## Corrections to the design doc's own examples
 
 All three worked programs in §10 are subtly wrong as printed. They are still
 useful — as teaching material, paired with the warnings that catch them.
 
-- **§10.7 component scavenger** requires a **parts radar**. Rule 4 is
+- **§10.7 component scavenger** opens with a rule that is now ceremony: the
+  deposit reflex above does it, so the shipped template is the same program minus
+  rule 1. It also requires a **parts radar**. Rule 4 is
   `move_to_radar_target`, which validation *errors* on without one; and with the
   radar removed no rule reads vision, so the program degenerates into a blind
   random walk.

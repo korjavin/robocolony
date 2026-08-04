@@ -35,8 +35,10 @@ func TestDryRunScavengerScavenges(t *testing.T) {
 		t.Errorf("rules = %d rows, want one per rule", len(out.Rules))
 	}
 	// The rules that carry the scavenge loop must all show activity, or the
-	// report is not telling the player anything they could act on.
-	for _, i := range []int{0, 1, 2, 3} {
+	// report is not telling the player anything they could act on. That is the
+	// first three now, not the first four: the deposit rule §10.7 opens with is
+	// gone, because the evaluator deposits by reflex (rc-tad.13).
+	for _, i := range []int{0, 1, 2} {
 		if out.Rules[i].Fired == 0 || out.Rules[i].FirstTick < 0 {
 			t.Errorf("rule %d never fired: %+v", i, out.Rules[i])
 		}

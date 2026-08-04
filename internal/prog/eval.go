@@ -11,7 +11,8 @@ import "github.com/korjavin/robocolony/internal/sim"
 //   - a rule holding only side effects (memory writes, broadcasts) executes
 //     them and evaluation continues down the list (AGENTS.md, design §10.8);
 //   - nothing matched, or the matched rule's target does not exist: the robot
-//     idles. Programs are untrusted input, so no path here panics.
+//     idles, unless the deposit reflex below has something to do with the tick.
+//     Programs are untrusted input, so no path here panics.
 //
 // Work per tick is bounded: the rule list is walked at most once, and each
 // condition walk is depth-capped. A program cannot make a tick do unbounded
@@ -63,6 +64,12 @@ func (t Trace) Matched(rule int) bool {
 }
 
 const reasonNoMatch = "no rule matched"
+
+// reasonReflexDeposit is what the match inspector shows for a tick the deposit
+// reflex took. A reflex tick is emphatically not "no rule matched": the robot
+// did something, and the player has to be able to read why from the trace
+// without knowing this file exists.
+const reasonReflexDeposit = "at own base carrying a component: depositing is automatic"
 
 // New wraps a program in an evaluator. It truncates an over-long rule list
 // rather than rejecting it: Decode and Validate are where a bad program is
@@ -133,9 +140,84 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 		break
 	}
 
+	if idleAtOwnBaseWithCargo(v, act) {
+		act.Kind, act.Coord = sim.ActDeposit, sim.Coord{}
+		// Rule goes back to -1: no rule did this. Leaving it pointing at the
+		// rule whose action came to nothing would print "rule 3 deposited" in
+		// the inspector over a rule that says move_to_point. The matched bitset
+		// is untouched, so that rule still shows as having matched — which it
+		// did — and the observer sees the reflex took the tick from it.
+		tr.Rule, tr.Action, tr.Idle, tr.Reason = -1, DepositComponentAtBase, false, reasonReflexDeposit
+	}
+
 	e.trace = tr
 	e.record(tr, v, act)
 	return act
+}
+
+// idleAtOwnBaseWithCargo reports whether this tick is one the deposit reflex
+// should take: the robot is standing at its own base holding a component, and
+// what the program chose to do with the tick accomplishes nothing.
+//
+// The reflex exists because depositing there is not a decision. A carried
+// component is worth zero — sim.World.FleetValue sums *installed* components,
+// not cargo — capacity is exactly one, and the base is the only thing that can
+// take it. There is no program that wants to stand on its own base holding a
+// component it will not put down, so making the player write a rule for it is
+// ceremony (rc-tad.13). drop_component is the action for the interesting case,
+// and it is a real action: an explicit rule still wins.
+//
+// "Accomplishes nothing" is the whole safety argument, and it is deliberately
+// narrow:
+//
+//   - ActNone — nothing matched, or the matched rule's action had no target.
+//     The tick was going to be spent idling.
+//   - ActMoveTo the cell the robot already stands on, which sim resolves to a
+//     TargetReached and an idle tick.
+//   - ActMoveTo own base while already at own base. at_own_base is a radius
+//     (sim's interact range), so "go home" from one cell out is a step that
+//     changes nothing a program can want while carrying: the robot could
+//     already deposit from where it stands. This is the clause that makes the
+//     §10.7 scavenger without its deposit rule tick-for-tick identical to the
+//     one with it.
+//
+// Anything else — a turn, an attack, a pick-up, a drop, stop, a move that goes
+// somewhere — is a decision the program made and the reflex keeps its hands
+// off. stop in particular: a rule that says stand still said it on purpose.
+//
+// The manipulator check is not decoration. sim refuses a deposit without one,
+// and an unarmed-handed robot would otherwise burn the longer interact tick
+// cost every tick to accomplish exactly the idling it was already doing.
+//
+// Scope: this is part of running a program, so a recalled robot — whose program
+// sim suspends entirely (design §4.2, World.Step) — does not deposit on arrival
+// and holds its cargo until it is reprogrammed. Deliberate. Making recall
+// deposit would be a change to sim's recall contract and to the score of every
+// match that ever used it, to save a robot one tick after a reprogram it is
+// standing still for anyway.
+//
+// One accepted edge, in the ActMoveTo branch: sim would have set
+// target_reached on a move to the cell the robot already stands on, and a
+// deposit does not. So a program that both wastes a tick this way at its own
+// base while carrying *and* reads target_reached afterwards loses that flag
+// transition. It is left as is deliberately — preserving it would mean widening
+// sim.Action so a controller can raise a perception flag without acting, which
+// is a much larger change to a package under the determinism guard, in service
+// of a program whose distinguishing behaviour is standing on its own base
+// holding a component it never puts down.
+//
+// Reads nothing but the view: deterministic, and it cannot touch w.rng.
+func idleAtOwnBaseWithCargo(v sim.RobotView, act sim.Action) bool {
+	if v.Cargo == sim.VariantNone || !v.AtBase || !v.Blueprint.Has(sim.KindManipulator) {
+		return false
+	}
+	switch act.Kind {
+	case sim.ActNone:
+		return true
+	case sim.ActMoveTo:
+		return act.Coord == v.Coord || (v.HasBase && act.Coord == v.Base)
+	}
+	return false
 }
 
 // matcher evaluates one rule's condition against one view. It also remembers

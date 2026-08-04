@@ -174,11 +174,17 @@ func variantsOfKind(k sim.ComponentKind) []sim.Variant {
 	return out
 }
 
-// DefaultProgram is the design §10.7 component scavenger, rule for rule.
+// DefaultProgram is the design §10.7 component scavenger, minus its first rule.
+//
+// §10.7 opens with at_own_base AND carrying_component -> deposit_component_at_base,
+// which the evaluator now does by reflex (rc-tad.13, prog.idleAtOwnBaseWithCargo):
+// rule 1 below tells the robot to go home, and arriving home with cargo deposits
+// it. The two programs are not merely equivalent in outcome — they produce the
+// same sim.World.StateHash tick for tick, which is what TestScavengerNeedsNoDepositRule
+// asserts, so nothing measured on the six-rule version was retuned by dropping
+// the line. It is the first program a player reads, and it is one rule shorter.
 func DefaultProgram() prog.Program {
 	return prog.Program{V: prog.SchemaVersion, Name: "component scavenger", Rules: []prog.Rule{
-		{When: prog.And(prog.Pred(prog.AtOwnBase), prog.Pred(prog.CarryingComponent)),
-			Then: []prog.Action{prog.Do(prog.DepositComponentAtBase)}},
 		{When: prog.Pred(prog.CarryingComponent),
 			Then: []prog.Action{prog.Do(prog.MoveToOwnBase)}},
 		{When: prog.And(prog.Pred(prog.ComponentInReach), prog.Pred(prog.CarryingNothing)),
