@@ -33,6 +33,13 @@ sees nothing. Any fixture exercising a random selection needs **at least two
 live options for the whole run** — and enough stock, health or fuel that the
 second option does not quietly disappear halfway through.
 
+- **A hole the replay test is structurally blind to.** Making the history
+  sampler consume the rng did *not* fail `TestReplayPreservesStateHash` — a
+  replay re-runs the same sampler, so live and replayed worlds diverge
+  *identically* and the comparison still matches. Any change that affects both
+  paths the same way is invisible to a test that compares them. Caught only by a
+  separate bare-world check.
+
 **Therefore:** when you touch `internal/sim`, do the deliberate break. Swap one
 roll to package-level `math/rand`, confirm the guard *fails*, restore it, and
 say so in the PR. If the break passes, your test is too weak and strengthening
