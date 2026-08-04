@@ -14,7 +14,6 @@
   :root { --page: 78rem; }
   body { padding-bottom: 2rem; }
   h1 { font-size: 1.6rem; }
-  h2 { font-size: 1.05rem; margin: 1.4rem 0 .4rem; }
   /* A section kicker inside a panel, not a heading in prose. */
   h3 { font-size: .9rem; margin: .8rem 0 .2rem; text-transform: uppercase;
        letter-spacing: .06em; opacity: .7; }
@@ -32,9 +31,23 @@
   .conn.retry { color: var(--warn); }
   .conn.over { color: var(--colony-7); }
 
+  /* The arena takes three parts of the spare width to the panels' one: the
+     canvas is capped at its baked size and was being drawn at two-thirds of it
+     on a full-width window, which is the whole point of this screen. */
   .cols { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-start; }
-  .arena { flex: 1 1 24rem; min-width: 18rem; }
+  .arena { flex: 3 1 30rem; min-width: 18rem; }
   .side { flex: 1 1 20rem; min-width: 17rem; }
+
+  /* Foldable panels. <details> is native: it needs no JavaScript to fold, and
+     its control lives in the <summary>, which is outside #inspector — that
+     element is replaceChildren()-ed ten times a second and would destroy any
+     control put inside it. match.js only remembers the open ones. */
+  details.fold { margin: .6rem 0; }
+  details.fold > summary { cursor: pointer; font-size: 1.05rem; font-weight: 600; }
+  details.fold[open] > summary {
+    margin-bottom: .45rem; padding-bottom: .35rem;
+    border-bottom: 1px solid var(--line);
+  }
 
   canvas {
     width: 100%; height: auto; display: block;
@@ -61,6 +74,12 @@
   ul.lg svg { display: block; width: 1.15rem; height: 1.15rem; flex: none;
               border-radius: .2rem; }
   ul.lg .note { opacity: .65; }
+  /* A robot in the legend is the path match.js fills, inserted by it — see
+     SHAPES. non-scaling-stroke keeps the outline one weight whatever scale the
+     glyph's <g> carries, so the geometry lives in exactly one place. */
+  ul.lg .body { fill: var(--colony-1); stroke: #000; stroke-width: .8;
+                vector-effect: non-scaling-stroke; }
+  ul.lg .barrel { fill: var(--kind-weapon); }
 
   /* A colony with no robots and nothing its base can build is out for good
      (design §5.3). It must not read as merely between builds. */
@@ -210,13 +229,21 @@
 
       <!-- The legend lives here, under the canvas, in its own container: not
            inside #inspector, which is cleared with replaceChildren() every
-           tick. The three lists below are filled once from the init frame; the
-           marks are static because the renderer draws them unconditionally. -->
-      <details class="legend" id="legend" open>
+           tick. The four lists below are filled once from the init frame, and
+           the marks are static except for the robot body in each, which comes
+           from the renderer's own shape table. -->
+      <details class="legend fold" id="legend" open>
         <summary>Legend</summary>
 
         <h4>Terrain</h4>
         <ul class="lg" id="lg-terrain"></ul>
+
+        <!-- Chassis and the armed mark. Filled by match.js from the same SHAPES
+             table the canvas draws from, over the locomotion rows of the
+             catalogue on the init frame, so neither a renamed component nor a
+             new one can leave a stale shape here. -->
+        <h4>Chassis &mdash; the shape a robot is drawn as</h4>
+        <ul class="lg" id="lg-chassis"></ul>
 
         <h4>Loose components, by kind</h4>
         <ul class="lg" id="lg-kinds"></ul>
@@ -224,6 +251,9 @@
         <h4>Colonies</h4>
         <ul class="lg" id="lg-colonies"></ul>
 
+        <!-- Every .lg-body group below is filled by match.js with the same path
+             the renderer fills, so a mark cannot illustrate a robot the canvas
+             never draws. Only the overlay beside it is written here. -->
         <h4>Marks</h4>
         <ul class="lg">
           <li>
@@ -238,7 +268,7 @@
           </li>
           <li>
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
+              <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
               <text x="8" y="8.4" text-anchor="middle" fill="#fff" stroke="#0008"
                     stroke-width=".5" font-size="9" font-weight="700"
                     font-family="system-ui, sans-serif">S</text>
@@ -247,17 +277,15 @@
           </li>
           <li>
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
-              <path d="M8 8 L13 3" stroke="#000" stroke-width="2.6" fill="none"/>
+              <g class="lg-body" transform="translate(8 8) rotate(45) scale(5.6)"></g>
             </svg>
-            Heading notch <span class="note">&mdash; where it faces, and all it can see</span>
+            Heading <span class="note">&mdash; the nose: where it faces, and all it can see</span>
           </li>
           <li>
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <rect width="16" height="16" style="fill: var(--terrain-open)"/>
               <path d="M8 13 L-4 1 H20 Z" fill-opacity=".18" style="fill: var(--colony-1)"/>
-              <circle cx="8" cy="13" r="2.8" style="fill: var(--colony-1)"/>
-              <path d="M8 13 L8 8.5" stroke="#000" stroke-width="1.4" fill="none"/>
+              <g class="lg-body" transform="translate(8 13) scale(2.6)"></g>
             </svg>
             Vision wedge <span class="note">&mdash; drawn for the selected robot only</span>
           </li>
@@ -270,14 +298,14 @@
           </li>
           <li>
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.4" style="fill: var(--colony-1)"/>
-              <circle cx="13" cy="3" r="2.9" style="fill: var(--kind-weapon)"/>
+              <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
+              <circle cx="12.5" cy="3.5" r="2.9" style="fill: var(--kind-weapon)"/>
             </svg>
             Cargo <span class="note">&mdash; the component it is carrying, by kind</span>
           </li>
           <li>
             <svg viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="8" cy="8" r="5.2" style="fill: var(--colony-1)"/>
+              <g class="lg-body" transform="translate(8 8) scale(4.6)"></g>
               <circle cx="8" cy="8" r="6.6" fill="none" stroke="#fff" stroke-width="1.6"/>
               <circle cx="8" cy="8" r="7.4" fill="none" stroke="#000" stroke-width=".8"/>
             </svg>
@@ -287,36 +315,46 @@
       </details>
     </div>
 
+    <!-- Every panel here folds, and match.js remembers which are open across a
+         reload. The defaults are the ones below, and they are the answer to
+         "what does somebody watching a match want on screen": the field, the
+         robot they just clicked, and the standing. The roster is a second way
+         to reach a robot the canvas already offers; the trace history and the
+         base are answers to a specific question, and the trace panel also holds
+         one of the server's eight recording slots while it is open. -->
     <div class="side">
       <!-- The roster sits above the inspector on purpose: the inspector grows
            by a whole Command section when the selection is the viewer's own
            robot, and a list below it would jump under the pointer. -->
-      <h2>Robots</h2>
-      <div class="panel">
+      <details class="panel fold" id="p-roster">
+        <summary>Robots</summary>
         <div class="roster" id="roster"></div>
         <p class="meta" id="roster-empty">No robots yet.</p>
         <p class="meta">Every robot in the match, by colony, with what it is
         doing this tick.</p>
-      </div>
+      </details>
 
-      <h2>Selected robot</h2>
-      <div class="panel" id="inspector"><p class="meta">No robot selected.</p></div>
       <!-- Command lives outside #inspector on purpose: that panel is cleared
            with replaceChildren() every tick, and detaching a <select> from the
-           document closes any dropdown the player has open. -->
-      <div class="panel" id="command" hidden></div>
+           document closes any dropdown the player has open. The fold control is
+           outside it for the same reason, which is what <summary> gives free. -->
+      <details class="panel fold" id="p-selected" open>
+        <summary>Selected robot</summary>
+        <div id="inspector"><p class="meta">No robot selected.</p></div>
+        <div id="command" hidden></div>
+      </details>
 
       <!-- Design §10.10's trace history. Its own panel rather than a section of
            the inspector: the inspector is rebuilt on every tick, and a scrolled
            list inside it would lose its position ten times a second. -->
-      <h2>Recent decisions</h2>
-      <div class="panel">
+      <details class="panel fold" id="p-history">
+        <summary>Recent decisions</summary>
         <div class="hist-list" id="history-list"></div>
         <p class="meta" id="history-note">Select a robot to start recording why it acts.</p>
-      </div>
+      </details>
 
-      <h2>Colonies</h2>
-      <div class="panel">
+      <details class="panel fold" id="p-colonies" open>
+        <summary>Colonies</summary>
         <div class="tablewrap"><table id="stats"></table></div>
         <p class="meta">Standing by design §9 score: fleet value plus a quarter
         of the base inventory, so stockpiling counts but fielding counts four
@@ -351,10 +389,12 @@
           <g id="graph-lines"></g>
         </svg>
         <p class="meta" id="graph-note">Waiting for the first samples&hellip;</p>
-      </div>
+      </details>
 
-      <h2>Base</h2>
-      <div class="panel" id="base"><p class="meta">No colony selected.</p></div>
+      <details class="panel fold" id="p-base">
+        <summary>Base</summary>
+        <div id="base"><p class="meta">No colony selected.</p></div>
+      </details>
     </div>
   </div>
 

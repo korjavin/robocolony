@@ -27,6 +27,8 @@ const colonyVar = (id) => `--colony-${((id % 8) + 8) % 8}`;
 const colonyColor = (id) => css(colonyVar(id), "#888");
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
+const SVGNS = "http://www.w3.org/2000/svg";
+
 let init = null;       // init frame
 let snap = null;       // last tick frame
 let over = false;      // end frame seen
@@ -70,6 +72,82 @@ function bakeTerrain() {
   }
 }
 
+// ------------------------------------------------------------ silhouettes
+//
+// A robot's shape is its loadout. Design §1.1's fifth pillar is a *readable*
+// simulation, and until this existed every robot on the board was the same
+// colony-coloured circle with a letter in it: the only way to tell a tracked
+// scavenger from a legged gunner was to click one and read the inspector.
+//
+// Two facts, and deliberately only two:
+//
+//   - **Chassis**, because it is the one component every blueprint must carry,
+//     and because design §3.1 makes it the robot's identity: where it can go,
+//     what slows it down, what it can cross. Angular, limbed and hovering read
+//     apart at a glance.
+//   - **Armed or not**, because that is the question a player watching a fight
+//     is actually asking.
+//
+// Armour tier, weapon *count*, radar and manipulator are not encoded. A cell is
+// about 14px at the default arena size; an outline weight, a second barrel or a
+// dish are invisible there, and a silhouette that tries to say six things says
+// none. The manipulator is already implied by the cargo dot, and the radars
+// change what a robot knows rather than what it does.
+//
+// The paths are unit space, centred on the origin, spanning about ±1, and drawn
+// pointing north — heading 0 — so one rotate() orients a robot and the shape's
+// nose *is* the heading mark. That replaces the black notch line: forward vision
+// is the core mechanic, and a shape whose front you can see says it without
+// spending a second mark on it.
+//
+// The same strings drive the canvas (through Path2D) and the legend's inline
+// SVG, which is the only reason the legend cannot drift from the map.
+const SHAPES = {
+  // Tracks: flat sides, square tail, blunt mass. The workhorse reads as a hull.
+  tracks: "M0-1.25L.9-.5L.9.9L-.9.9L-.9-.5Z",
+  // Legs: the same body carried on splayed limbs. The spurs are the silhouette.
+  legs: "M0-1.15L.5-.55L1.15-.45L.6.05L1 1.15L.3.45L-.3.45L-1 1.15L-.6.05L-1.15-.45L-.5-.55Z",
+  // Anti-gravity: a smooth lens with nothing angular on it and no ground contact.
+  "anti-gravity-platform": "M0-1.25C.85-.8.95.3 0 .95C-.95.3-.85-.8 0-1.25Z",
+  // A locomotion the catalogue has grown and this file has never heard of, or a
+  // robot whose blueprint is not on this frame: a plain body, still with a nose,
+  // so an unknown chassis never costs the player the heading.
+  unknown: "M0-1.3L.72-.7A1 1 0 1 1-.72-.7Z",
+};
+
+// A barrel past the nose, in the same unit space and in the weapon colour the
+// loose components and the legend already use. Binary: one weapon or two draws
+// the same barrel, because two barrels 2px apart is noise, not information.
+const MUZZLE = "M-.26-.9L.26-.9L.26-1.8L-.26-1.8Z";
+
+const BODY = Object.fromEntries(Object.entries(SHAPES).map(([k, d]) => [k, new Path2D(d)]));
+const BARREL = new Path2D(MUZZLE);
+
+// Silhouettes are cached per (colony, blueprint): up to ~160 robots are redrawn
+// ten times a second and none of them may walk the base's blueprint list to do
+// it. A blueprint id means one design for the whole match, so the entry never
+// goes stale; the map is cleared with the rest of the match state on init.
+const styles = new Map();
+const UNKNOWN_STYLE = { shape: "unknown", armed: false };
+
+function robotStyle(r) {
+  const key = `${r.colony}|${r.blueprint}`;
+  const hit = styles.get(key);
+  if (hit) return hit;
+  const bp = blueprintOf(r);
+  // Not cached: the blueprint is missing from this frame, not from the match.
+  if (!bp) return UNKNOWN_STYLE;
+  const parts = bp.components.map(catalogue);
+  const loco = parts.find((c) => c && c.kind === "locomotion");
+  const name = loco ? slug(loco.name) : "unknown";
+  const style = {
+    shape: SHAPES[name] ? name : "unknown",
+    armed: parts.some((c) => c && c.kind === "weapon"),
+  };
+  styles.set(key, style);
+  return style;
+}
+
 // ---------------------------------------------------------------- legend
 //
 // Built once from the init frame, into its own container under the canvas —
@@ -99,6 +177,39 @@ function legendList(host, items) {
   }));
 }
 
+// bodyPath is one silhouette as SVG. Both the chassis list and the static mark
+// glyphs in match.html go through it, so every robot drawn in the legend is
+// literally the path the canvas fills. Stroke and fill come from CSS, and
+// vector-effect keeps the outline one weight whatever the <g> is scaled to.
+function bodyPath(d, cls) {
+  const p = document.createElementNS(SVGNS, "path");
+  p.setAttribute("d", d);
+  p.setAttribute("class", cls || "body");
+  return p;
+}
+
+function shapeGlyph(shape, armed) {
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const g = document.createElementNS(SVGNS, "g");
+  // An armed glyph has to fit a barrel 1.8 units out; an unarmed one does not.
+  g.setAttribute("transform", `translate(8 8) scale(${armed ? 4.2 : 5.6})`);
+  if (armed) g.append(bodyPath(MUZZLE, "body barrel"));
+  g.append(bodyPath(SHAPES[shape] || SHAPES.unknown));
+  svg.append(g);
+  return svg;
+}
+
+function legendShapes(host, items) {
+  host.replaceChildren(...items.map(([label, shape, armed, note]) => {
+    const li = el("li");
+    li.append(shapeGlyph(shape, armed), document.createTextNode(label));
+    if (note) li.append(el("span", "note", ` — ${note}`));
+    return li;
+  }));
+}
+
 function terrainLabel(t) {
   const names = (vs) => vs.map(compName).join(", ");
   const effects = [];
@@ -118,14 +229,37 @@ function buildLegend() {
 
   legendList($("lg-colonies"), init.colonies.map((c) =>
     [c.display_name, `var(${colonyVar(c.id)})`]));
+
+  // Chassis, off the catalogue rather than off a list of three: a locomotion
+  // added server-side appears here either with its own silhouette or visibly
+  // falling back to the plain body, which is the signal to draw it one.
+  const locos = init.components.filter((c) => c.kind === "locomotion");
+  legendShapes($("lg-chassis"), locos.map((c) => [c.name, slug(c.name), false, ""]).concat([
+    ["armed", locos.length ? slug(locos[0].name) : "unknown", true,
+      "a weapon of any kind, on any chassis, puts a barrel past the nose"],
+  ]));
+
+  // The mark glyphs draw a real body rather than a stand-in circle, from the
+  // same table: a mark that illustrated a robot the renderer never draws is
+  // exactly how a legend goes quietly wrong. Tracks is the exemplar; the chassis
+  // list above is where the shapes are told apart.
+  for (const g of document.querySelectorAll(".lg-body")) {
+    g.replaceChildren(bodyPath(SHAPES.tracks));
+  }
 }
 
 // ---------------------------------------------------------------- drawing
+
+// weaponColor is read once per frame rather than once per armed robot: css()
+// is a getComputedStyle call, and there are up to ~160 robots ten times a
+// second. Per frame it still follows a theme switch without a reload.
+let weaponColor = "#c23b3b";
 
 function draw() {
   if (!init || !terrain) return;
   ctx.drawImage(terrain, 0, 0);
   if (!snap) return;
+  weaponColor = css("--kind-weapon", "#c23b3b");
 
   const sel = snap.robots.find((r) => r.id === selected);
   if (sel) drawVision(sel);
@@ -176,26 +310,37 @@ function drawLoose(l) {
 }
 
 function drawRobot(r, isSelected) {
-  const cx = r.x * cell + cell / 2, cy = r.y * cell + cell / 2, rad = cell * 0.4;
-  ctx.fillStyle = colonyColor(r.colony);
-  ctx.beginPath();
-  ctx.arc(cx, cy, rad, 0, Math.PI * 2);
-  ctx.fill();
+  // rad and the glyph size are the two numbers that decide whether any of this
+  // is readable at ~14px a cell. The body is a little larger than the circle it
+  // replaces and the letter a little smaller, because a letter sized to fill a
+  // circle covers the outline that now carries the loadout. Neither changes what
+  // a click selects: the hit test is in cells (see HIT_CELLS).
+  const cx = r.x * cell + cell / 2, cy = r.y * cell + cell / 2, rad = cell * 0.44;
+  const { shape, armed } = robotStyle(r);
 
-  // Heading notch. Forward vision is the whole game: a robot whose facing you
-  // cannot see is a robot whose program you cannot debug.
-  const [hx, hy] = DELTA[r.heading % 8];
-  const n = Math.hypot(hx, hy) || 1;
+  // The silhouette carries the chassis, the barrel says it is armed, and the
+  // nose is the heading — see SHAPES. Drawn in unit space and scaled, so the
+  // one place the geometry lives is that table. The black outline is not
+  // decoration: it is what separates a robot from the terrain colour under it.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate((r.heading % 8) * Math.PI / 4); // heading 0 is north; the shapes point north
+  ctx.scale(rad, rad);
+  ctx.lineWidth = 1 / rad; // one pixel, undoing the scale above
   ctx.strokeStyle = "#000";
-  ctx.lineWidth = Math.max(1.5, cell * 0.16);
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + (hx / n) * cell * 0.75, cy + (hy / n) * cell * 0.75);
-  ctx.stroke();
+  if (armed) {
+    ctx.fillStyle = weaponColor;
+    ctx.fill(BARREL);
+    ctx.stroke(BARREL);
+  }
+  ctx.fillStyle = colonyColor(r.colony);
+  ctx.fill(BODY[shape]);
+  ctx.stroke(BODY[shape]);
+  ctx.restore();
 
   // Archetype glyph: first letter of the blueprint name, which is player-chosen
   // and therefore cannot come from a hardcoded table.
-  glyph((r.archetype || "?").charAt(0).toUpperCase(), r.x, r.y, cell * 0.65);
+  glyph((r.archetype || "?").charAt(0).toUpperCase(), r.x, r.y, cell * 0.55);
 
   if (r.cargo) { // a carried component rides on the shoulder
     ctx.fillStyle = css(`--kind-${slug(catalogue(r.cargo)?.kind || "unknown")}`, "#999");
@@ -581,6 +726,12 @@ function histReset() {
 async function pollHistory() {
   const robot = selected;
   if (robot === null || !matchID || histBusy) return;
+  // Folded away: stop asking. Asking is what makes the server record, and the
+  // watch registry is capped at 8 (internal/server/trace.go) — a panel nobody
+  // has open must not hold one of them. Unfolding resumes from histSince, so it
+  // needs no re-selection; the decisions taken while it was shut are simply not
+  // recorded, which is the point.
+  if (!$("p-history").open) return;
   histBusy = true;
   let data = null;
   try {
@@ -844,8 +995,6 @@ function renderStats() {
 // The graph is built once and updated in place, and it lives in the Colonies
 // panel rather than in #inspector, which is cleared on every tick.
 
-const SVGNS = "http://www.w3.org/2000/svg";
-
 // GRAPH_MAX bounds the series in the browser the way historyCap bounds it on
 // the server: once past it, every second sample is dropped and the interval
 // doubles. A page left open on a long match must not grow without limit.
@@ -1001,6 +1150,36 @@ function renderClock() {
   $("tick").textContent = `tick ${snap.tick} / ${snap.end_tick}`;
 }
 
+// -------------------------------------------------------------- folding
+//
+// The arena is the product; the five panels beside it are answers to questions
+// a player has occasionally. They are <details>, which is native, needs no
+// JavaScript to fold and puts the control in a <summary> — outside #inspector,
+// which is replaceChildren()-ed ten times a second.
+//
+// This is only the memory: which panels are open survives a reload, so the
+// choice is made once rather than on every visit. The defaults are in the HTML.
+// The legend is in the set too, so it gets the same memory for free.
+//
+// localStorage throws rather than no-ops in a few configurations (private
+// windows, third-party-cookie blocking on an embedded page). Losing the memory
+// is acceptable; an uncaught exception on every toggle is not.
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* nothing to do */ } },
+};
+
+for (const d of document.querySelectorAll("details.fold")) {
+  const key = `rc.fold.${d.id}`;
+  const saved = store.get(key);
+  if (saved !== null) d.open = saved === "1";
+  d.addEventListener("toggle", () => store.set(key, d.open ? "1" : "0"));
+}
+
+// Unfolding the trace panel starts the poll again now rather than up to half a
+// second from now: the panel is opened to answer a question about this tick.
+$("p-history").addEventListener("toggle", () => { if (!over) pollHistory(); });
+
 function render() {
   // A new selection starts a new history, and polls at once so the server
   // begins recording from this tick rather than from the next poll.
@@ -1008,6 +1187,10 @@ function render() {
     histRobot = selected;
     histReset();
     pollHistory();
+    // Picking a robot must visibly do something. A player who has folded the
+    // inspector away and then clicks the arena would otherwise get no answer at
+    // all; the fold is remembered, so this reopens it once and it stays open.
+    if (selected !== null) $("p-selected").open = true;
   }
   // Only on a sampling tick, so the graph is rebuilt once every interval and
   // not ten times a second.
@@ -1048,6 +1231,7 @@ function connect() {
     init = JSON.parse(ev.data);
     $("subtitle").textContent = `${init.name} — ${init.width}×${init.height}, seed ${init.seed}`;
     document.title = `${init.name} — robocolony`;
+    styles.clear(); // silhouettes are resolved against this catalogue, not the last one
     bakeTerrain();
     buildLegend();
     // The server's series is authoritative and covers the whole match, so a
