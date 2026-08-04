@@ -346,9 +346,14 @@ func dryRun(p prog.Program, bp sim.Blueprint, ticks int) DryRunResult {
 	rt.Install(dryRunProgramID, p)
 	rt.Install(dryRunSpotterProgramID, dryRunSpotterProgram())
 	rt.Install(dryRunEnemyProgramID, dryRunEnemyProgram())
-	// Forget is the pairing prog.Runtime documents. It also makes "the robot
-	// stopped deciding" unambiguous below: a destroyed robot has no trace left.
-	w.Control, w.OnDestroy = rt.Control, rt.Forget
+	// Deliberately no OnDestroy hook, unlike a match. rt.Forget runs inside
+	// Step's end-of-tick destroy sweep, so a robot killed on the same tick it
+	// decided would have its evaluator — and therefore its trace — dropped
+	// before the loop below reads it, and the rules it fired on its last tick
+	// would report as never firing. Forget exists to stop a six-thousand-tick
+	// match retaining evaluators for a fleet's worth of wrecks; three robots
+	// whose runtime is discarded with the response do not need it.
+	w.Control = rt.Control
 
 	out := DryRunResult{
 		Seed: dryRunSeed, Ticks: ticks, Width: w.Width, Height: w.Height,
