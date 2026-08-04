@@ -85,10 +85,15 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 		// live match it costs nothing: the loop below only sends a frame when
 		// the tick moves, so this is the frame it would have sent 100ms later.
 		info := m.Info()
+		// Outside Read: History takes the match lock itself, and this mutex is
+		// not reentrant. It may therefore be one sample ahead of the board
+		// below, which the client handles by appending only ticks newer than
+		// the last one in the series.
+		hist := m.History()
 		var initFrame Init
 		var board Snapshot
 		m.Read(func(world *sim.World, rt *prog.Runtime) {
-			initFrame = NewInit(info, m.Colonies, world)
+			initFrame = NewInit(info, m.Colonies, world, hist)
 			board = NewSnapshot(world, rt, info.EndTick)
 		})
 		n, err := send(w, flusher, "init", initFrame)
@@ -105,7 +110,8 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 			level = slog.LevelWarn
 		}
 		slog.Log(ctx, level, "world stream opened", "match_id", id, "tick", initFrame.Tick,
-			"init_bytes", n, "tick_bytes", tn, "robots", len(board.Robots), "loose", len(board.Loose))
+			"init_bytes", n, "tick_bytes", tn, "robots", len(board.Robots), "loose", len(board.Loose),
+			"history_points", len(hist.Ticks))
 
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()

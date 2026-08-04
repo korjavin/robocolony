@@ -58,6 +58,11 @@ type Match struct {
 	// the settings it is the whole match (see persist.go): it is what a restart
 	// replays, and it is why the world itself is never serialised.
 	log []Command
+
+	// history is the sampled score/robots/collected series behind the match
+	// view's graph (history.go). Observation, not state: a replay rebuilds it
+	// by re-stepping, and nothing in it is persisted.
+	history History
 }
 
 // newMatch generates the arena and puts every colony in it: one per member,
@@ -122,6 +127,14 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 		p := s.AI[i-len(members)]
 		m.Colonies[i] = Colony{ID: base.Colony, DisplayName: p.DisplayName(), AI: p}
 	}
+
+	// The graph starts where the match does: tick 0, every colony at its
+	// starting kit. Nothing else has touched m yet, so this needs no lock.
+	m.history = History{Interval: historyEvery, Colonies: make([]ColonyHistory, len(m.Colonies))}
+	for i, c := range m.Colonies {
+		m.history.Colonies[i].Colony = c.ID
+	}
+	m.sample()
 	return m, nil
 }
 
@@ -243,6 +256,9 @@ func (m *Match) step() bool {
 	}
 	m.world.Step()
 	m.spawnResources()
+	// Before the end check, so a match whose last tick is a sampling tick has
+	// its final point. Reads the world, writes nothing in it (history.go).
+	m.sample()
 	if m.world.Tick >= m.Settings.durationTicks() {
 		m.finished = true
 		return false
