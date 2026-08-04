@@ -420,6 +420,21 @@ function renderDryRun() {
     `Picked something up: ${when(d.picked_up)}.`,
     `Delivered to base: ${when(d.deposited)}.`,
   ];
+  // Combat. The attack line is only printed when the program actually took a
+  // shot: a scavenger design carries no weapon, and "never attacked" on a
+  // blueprint that cannot attack reads as a failure it is not. The damage line
+  // is unconditional, because it is the proof that there was an opponent — a
+  // report with no combat in it at all could otherwise be mistaken for the
+  // empty arena this replaced.
+  if (d.attacked.count > 0) {
+    lines.push(`Attacked: ${when(d.attacked)} — ${d.hit.count} of those took health off it,`
+      + ` ${d.damage_dealt} damage in total${d.kills > 0 ? `, destroying ${d.kills}` : ""}.`);
+  }
+  lines.push(d.survived
+    ? `Took ${d.damage_taken} damage from the sparring partner over ${d.took_damage.count} ticks;`
+      + ` ${d.health} of ${d.max_health} health left.`
+    : `Destroyed at tick ${d.destroyed_tick} after ${d.damage_taken} damage — nothing`
+      + " after that tick is your program.");
   if (d.idle.count > 0) {
     lines.push(`Idle on ${d.idle.count} decisions${d.idle_reason ? ` — last reason: ${d.idle_reason}` : ""}.`);
   }
@@ -429,6 +444,9 @@ function renderDryRun() {
   box.append(el("p", {
     className: "meta",
     textContent: `${d.ticks} ticks on a ${d.width}×${d.height} practice arena, seed ${d.seed}. `
+      + "You get one unarmed scout that calls out enemies it sees, against one hostile "
+      + "sparring partner that hunts you on radar — so combat, defensive and signal rules "
+      + "all have something to match. "
       + "Two runs of the same program are always comparable; this is a smoke test, not a match.",
   }));
   host.append(box);

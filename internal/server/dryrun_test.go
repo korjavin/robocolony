@@ -8,7 +8,19 @@ import (
 
 	"github.com/korjavin/robocolony/internal/lobby"
 	"github.com/korjavin/robocolony/internal/prog"
+	"github.com/korjavin/robocolony/internal/sim"
 )
+
+// defenderBlueprint is the seeded "defender" starter (programs.go), the
+// blueprint the §10.9 template is offered against. Spelled out here so a change
+// to the seed is a visible test failure rather than a silent change of subject.
+func defenderBlueprint() sim.Blueprint {
+	return sim.Blueprint{
+		ID:         "bp-test-defender",
+		Name:       starterDefender,
+		Components: []sim.Variant{sim.Tracks, sim.HeavyArmor, sim.Laser, sim.PartsRadar},
+	}
+}
 
 // TestDryRunScavengerScavenges is the bead's first acceptance case: the design
 // §10.7 program, unmodified, on the starter blueprint, reports that it actually
@@ -41,6 +53,140 @@ func TestDryRunScavengerScavenges(t *testing.T) {
 	for _, i := range []int{0, 1, 2} {
 		if out.Rules[i].Fired == 0 || out.Rules[i].FirstTick < 0 {
 			t.Errorf("rule %d never fired: %+v", i, out.Rules[i])
+		}
+	}
+	// rc-tad.14 put a hostile in the arena, and the reason it is the weakest
+	// weapon in the catalogue is right here: an unarmed scavenger has to still
+	// be scavenging at the end of the default run. It gets shot at — that is the
+	// point, and the report has to say so rather than looking like an empty
+	// arena — but being shot at must not be the same thing as being deleted.
+	if out.DamageTaken == 0 || out.TookDamage.Count == 0 {
+		t.Error("the scavenger was never shot at, so the arena has no opponent in it")
+	}
+	if !out.Survived {
+		t.Errorf("the starter scavenger was destroyed at tick %d of %d: the sparring partner is too strong",
+			out.DestroyedTick, out.Ticks)
+	}
+	if out.Attacked.Count != 0 || out.DamageDealt != 0 {
+		t.Errorf("an unarmed scavenger reports attacking: %+v, %d damage", out.Attacked, out.DamageDealt)
+	}
+}
+
+// TestDryRunResponderFights is rc-tad.14's acceptance case: design §10.9's
+// defensive responder — a shipped template — used to report every one of its
+// rules as never fired, because the practice arena had nobody in it to fight.
+// Its combat rule has to fire now, and the report has to carry the outcome, or
+// the player still cannot tell a working attack rule from a broken one.
+func TestDryRunResponderFights(t *testing.T) {
+	p := responderProgram()
+	out := dryRun(p, defenderBlueprint(), dryRunTicks)
+
+	// Rule 2 (§10.9's "enemy in sight and in weapon range → attack") is the one
+	// the empty arena made unreachable.
+	const attackRule = 2
+	if out.Rules[attackRule].Fired == 0 {
+		t.Errorf("the attack rule still never fires: %+v", out.Rules[attackRule])
+	}
+	for _, i := range out.NeverFired {
+		if i == attackRule {
+			t.Error("the attack rule is still reported as never fired")
+		}
+	}
+	if out.Attacked.Count == 0 || out.Attacked.FirstTick < 0 {
+		t.Errorf("attacked = %+v, want shots taken", out.Attacked)
+	}
+	if out.Hit.Count == 0 || out.DamageDealt == 0 {
+		t.Errorf("hit = %+v for %d damage: the shots never landed", out.Hit, out.DamageDealt)
+	}
+	if out.Hit.Count > out.Attacked.Count {
+		t.Errorf("hit %d times on %d attacks", out.Hit.Count, out.Attacked.Count)
+	}
+	if out.TookDamage.Count == 0 || out.DamageTaken == 0 {
+		t.Error("the responder was never shot at, so health_below can never hold")
+	}
+	if out.Health != out.MaxHealth-out.DamageTaken {
+		t.Errorf("health %d of %d after taking %d damage does not add up",
+			out.Health, out.MaxHealth, out.DamageTaken)
+	}
+	// The whole program must not have gone dark either: this is the case the
+	// bead calls a false negative, so "meaningfully" means most rules report.
+	if len(out.NeverFired) >= len(p.Rules)-1 {
+		t.Errorf("%d of %d rules still never fired: %v", len(out.NeverFired), len(p.Rules), out.NeverFired)
+	}
+}
+
+// TestDryRunKillIsReported is the other half: a design that can actually win
+// has to be told that it won. The sparring partner is deliberately soft enough
+// for this to be reachable — an armed program that destroys it and survives is
+// the clearest "yes, this works" the endpoint can give.
+func TestDryRunKillIsReported(t *testing.T) {
+	// A laser gunner on enemy radar: the same shape as the sparring partner,
+	// one armor tier up.
+	bp := sim.Blueprint{ID: "bp-test-gunner", Name: "gunner",
+		Components: []sim.Variant{sim.Tracks, sim.MediumArmor, sim.Laser, sim.EnemyRadar}}
+	out := dryRun(dryRunEnemyProgram(), bp, dryRunTicks)
+
+	if out.Kills == 0 {
+		t.Errorf("a laser gunner never destroyed the sparring partner in %d ticks (%d damage dealt)",
+			out.Ticks, out.DamageDealt)
+	}
+	if !out.Survived || out.DestroyedTick != -1 {
+		t.Errorf("survived = %v, destroyed at %d", out.Survived, out.DestroyedTick)
+	}
+	if len(out.NeverFired) != 0 {
+		t.Errorf("never_fired = %v, want nothing: every rule of a hunter has a target now", out.NeverFired)
+	}
+}
+
+// TestDryRunFieldedKit pins the two robots the preview supplies. They are
+// deliberately not internal/lobby's AI profiles: those four are a measured
+// difficulty ladder, and retuning one must never silently change what a
+// player's dry run says about a program they did not touch.
+func TestDryRunFieldedKit(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		bp   sim.Blueprint
+		p    prog.Program
+		id   string
+	}{
+		{"sparring partner", dryRunEnemyBlueprint(), dryRunEnemyProgram(), dryRunEnemyProgramID},
+		{"scout", dryRunSpotterBlueprint(), dryRunSpotterProgram(), dryRunSpotterProgramID},
+	} {
+		if err := tc.bp.Validate(); err != nil {
+			t.Errorf("the %s is not a legal design: %v", tc.what, err)
+		}
+		if res := prog.Validate(tc.p, tc.bp); !res.OK() {
+			t.Errorf("the %s's program does not validate on its own hardware: %+v", tc.what, res.Errors)
+		}
+		if tc.bp.ProgramID != tc.id {
+			t.Errorf("%s blueprint program id = %q, want %q", tc.what, tc.bp.ProgramID, tc.id)
+		}
+		if tc.bp.ID == lobby.DefaultBlueprint().ID || tc.bp.ProgramID == dryRunProgramID {
+			t.Errorf("the %s shares an id with the player's install", tc.what)
+		}
+	}
+	// The scout is a witness, not a second player: it must never collect
+	// anything the player's report would then take credit for, and never land a
+	// hit the player's colony would be credited with.
+	scout := dryRunSpotterBlueprint()
+	if scout.Has(sim.KindManipulator) {
+		t.Error("the scout carries a manipulator, so it competes for components")
+	}
+	if len(scout.Weapons()) != 0 {
+		t.Error("the scout is armed, so a kill in the report may not be the player's")
+	}
+}
+
+// TestDryRunIsReproducible is the landmine PR #22 left behind: adding a second
+// colony must not have made the run depend on anything but the seed. The
+// endpoint-level test below covers two users; this one covers the same call
+// twice, including everything the opponent contributes.
+func TestDryRunIsReproducible(t *testing.T) {
+	for _, ticks := range []int{dryRunTicks, maxDryRunTicks} {
+		a := dryRun(responderProgram(), defenderBlueprint(), ticks)
+		b := dryRun(responderProgram(), defenderBlueprint(), ticks)
+		if !reflect.DeepEqual(a, b) {
+			t.Errorf("two runs at %d ticks differ:\n%+v\n%+v", ticks, a, b)
 		}
 	}
 }
