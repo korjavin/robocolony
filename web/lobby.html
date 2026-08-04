@@ -59,9 +59,6 @@
     </fieldset>
   </form>
 
-  <h2>Match</h2>
-  <div id="match"><p class="meta">No match selected.</p></div>
-
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -79,7 +76,6 @@ async function api(method, path, body) {
 }
 
 let me = null;
-let matchID = null;
 // The caller's own library, fetched once: the menu the loadout picker offers.
 // Reading /api/blueprints also seeds the starter designs for a new player, so
 // the picker is never empty for somebody who has not opened the editor yet.
@@ -279,53 +275,18 @@ async function act(path) {
   catch (e) { err(e.message); }
 }
 
+// Starting a match takes you to it. This page used to render a summary table
+// inline and leave the player looking at a list of lobbies while the simulation
+// they had just started ran somewhere else, with the arena as one more link to
+// notice. The summary went with it: /match is the same information, live, and
+// "Matches in progress" above is how you get back after navigating away.
 async function start(id) {
   err("");
   try {
     const info = await api("POST", `/api/lobbies/${id}/start`);
-    matchID = info.id;
-    renderMatch(info);
-    await refresh();
+    location.href = `/match?id=${info.id}`;
   } catch (e) { err(e.message); }
 }
-
-function renderMatch(info) {
-  const el = $("match");
-  el.replaceChildren();
-  const h = document.createElement("p");
-  const secs = Math.round(info.tick / info.tick_rate);
-  const total = Math.round(info.end_tick / info.tick_rate);
-  h.textContent = `${info.name} — ${info.state}, tick ${info.tick}/${info.end_tick} (${secs}/${total}s), seed ${info.seed}`;
-  const table = document.createElement("table");
-  const head = document.createElement("tr");
-  for (const c of ["Colony", "Player", "Robots", "Inventory"]) {
-    const th = document.createElement("th");
-    th.textContent = c;
-    head.append(th);
-  }
-  table.append(head);
-  for (const c of info.colonies) {
-    const tr = document.createElement("tr");
-    for (const v of [c.id, c.display_name, c.robots, c.inventory]) {
-      const td = document.createElement("td");
-      td.textContent = v;
-      tr.append(td);
-    }
-    table.append(tr);
-  }
-  const watch = document.createElement("a");
-  watch.href = `/match?id=${info.id}`;
-  watch.textContent = "Watch the arena";
-  el.append(h, table, watch);
-}
-
-// Polling, not SSE: the live world stream is E4.1. This only refreshes the
-// scoreboard, which is why one second is plenty.
-setInterval(async () => {
-  if (matchID === null) return;
-  try { renderMatch(await api("GET", `/api/matches/${matchID}`)); }
-  catch (e) { err(e.message); matchID = null; }
-}, 1000);
 
 $("create").addEventListener("submit", async (ev) => {
   ev.preventDefault();
