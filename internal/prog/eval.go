@@ -189,6 +189,16 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 // and an unarmed-handed robot would otherwise burn the longer interact tick
 // cost every tick to accomplish exactly the idling it was already doing.
 //
+// One accepted edge, in the ActMoveTo branch: sim would have set
+// target_reached on a move to the cell the robot already stands on, and a
+// deposit does not. So a program that both wastes a tick this way at its own
+// base while carrying *and* reads target_reached afterwards loses that flag
+// transition. It is left as is deliberately — preserving it would mean widening
+// sim.Action so a controller can raise a perception flag without acting, which
+// is a much larger change to a package under the determinism guard, in service
+// of a program whose distinguishing behaviour is standing on its own base
+// holding a component it never puts down.
+//
 // Reads nothing but the view: deterministic, and it cannot touch w.rng.
 func idleAtOwnBaseWithCargo(v sim.RobotView, act sim.Action) bool {
 	if v.Cargo == sim.VariantNone || !v.AtBase || !v.Blueprint.Has(sim.KindManipulator) {
