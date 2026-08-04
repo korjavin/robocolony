@@ -768,6 +768,11 @@ func TestDepositReflexOnlyTakesAWastedTick(t *testing.T) {
 				if tr.Idle || tr.Reason == reasonNoMatch {
 					t.Errorf("a reflex tick reads as an idle tick: %+v", tr)
 				}
+				// And no rule is credited with it: a rule that matched and came
+				// to nothing must not be shown as having done the deposit.
+				if tr.Rule != -1 {
+					t.Errorf("the reflex credited rule %d with the deposit: %+v", tr.Rule, tr)
+				}
 			}
 		})
 	}

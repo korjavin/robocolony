@@ -142,7 +142,12 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 
 	if idleAtOwnBaseWithCargo(v, act) {
 		act.Kind, act.Coord = sim.ActDeposit, sim.Coord{}
-		tr.Action, tr.Idle, tr.Reason = DepositComponentAtBase, false, reasonReflexDeposit
+		// Rule goes back to -1: no rule did this. Leaving it pointing at the
+		// rule whose action came to nothing would print "rule 3 deposited" in
+		// the inspector over a rule that says move_to_point. The matched bitset
+		// is untouched, so that rule still shows as having matched — which it
+		// did — and the observer sees the reflex took the tick from it.
+		tr.Rule, tr.Action, tr.Idle, tr.Reason = -1, DepositComponentAtBase, false, reasonReflexDeposit
 	}
 
 	e.trace = tr
