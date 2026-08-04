@@ -189,6 +189,13 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 // and an unarmed-handed robot would otherwise burn the longer interact tick
 // cost every tick to accomplish exactly the idling it was already doing.
 //
+// Scope: this is part of running a program, so a recalled robot — whose program
+// sim suspends entirely (design §4.2, World.Step) — does not deposit on arrival
+// and holds its cargo until it is reprogrammed. Deliberate. Making recall
+// deposit would be a change to sim's recall contract and to the score of every
+// match that ever used it, to save a robot one tick after a reprogram it is
+// standing still for anyway.
+//
 // One accepted edge, in the ActMoveTo branch: sim would have set
 // target_reached on a move to the cell the robot already stands on, and a
 // deposit does not. So a program that both wastes a tick this way at its own
