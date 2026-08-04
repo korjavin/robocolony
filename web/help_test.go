@@ -353,6 +353,49 @@ func TestNotClaimsMatchValidation(t *testing.T) {
 	}
 }
 
+// TestDepositReflexClaimsMatchTheEvaluator keeps the guide's one reflex honest
+// the same way the diagrams are kept honest: the page quotes the phrase the
+// match inspector prints, so the phrase is produced here by actually running a
+// robot into the reflex rather than transcribed. The rest of the claim — that
+// the reflex fires with no deposit rule anywhere in the program — is the same
+// run, and a fallback that stopped firing would take the page down with it.
+func TestDepositReflexClaimsMatchTheEvaluator(t *testing.T) {
+	page := helpHTML(t)
+	bp := lobby.DefaultBlueprint()
+
+	w := sim.Generate(5, sim.GenOpts{Width: 16, Height: 16, Colonies: 1})
+	base := w.Bases[0]
+	r := &sim.Robot{ID: w.NextID(), Colony: base.Colony, Coord: base.Coord, Heading: sim.East,
+		Health: sim.StartingHealth(bp), Blueprint: bp, ProgramID: "reflex", Cargo: sim.Manipulator}
+	w.Robots = append(w.Robots, r)
+	rt := prog.NewRuntime()
+	rt.Install("reflex", prog.Program{V: prog.SchemaVersion}) // no rules at all
+	w.Control = rt.Control
+	w.Step()
+
+	if base.Stats.Collected != 1 || r.Cargo != sim.VariantNone {
+		t.Fatalf("the guide says a robot at its own base deposits without a rule; "+
+			"base collected %d, robot still holds %v", base.Stats.Collected, r.Cargo)
+	}
+	tr, ok := rt.Trace(r.ID)
+	if !ok {
+		t.Fatal("no trace recorded for the reflex tick")
+	}
+	if !strings.Contains(page, tr.Reason) {
+		t.Errorf("help.html quotes a reason the evaluator does not print.\n"+
+			"Replace the quoted phrase with: %s", tr.Reason)
+	}
+	// The starter template is the design §10.7 scavenger minus that rule, which
+	// is what the page tells the player they will find in the editor.
+	for _, rule := range lobby.DefaultProgram().Rules {
+		for _, a := range rule.Then {
+			if a.Do == prog.DepositComponentAtBase {
+				t.Error("help.html says the scavenger template carries no deposit rule; it does")
+			}
+		}
+	}
+}
+
 func codes(r prog.Result) []string {
 	var out []string
 	for _, group := range [][]prog.Issue{r.Errors, r.Warnings, r.Notes} {

@@ -359,6 +359,8 @@ Target-selection filters such as nearest, farthest, component type, enemy bluepr
 
 - **Safe failure.** If no rule matches, the robot idles. Invalid or unreachable targets must not crash the simulation.
 
+> **Caveat — one exception to "the robot idles", added 4 August 2026.** A robot standing at its own base holding a component deposits it, whether or not a rule said so. It is the only reflex in the language: a carried component scores nothing, capacity is one, and the base is the only thing that can take it, so there is no program that wants the opposite. The reflex takes a tick that was going to accomplish nothing — nothing matched, the matched action had no target, or the action was "go home" while already home — and any rule that chooses a real action still wins. See `docs/decisions.md`, "Reflexes: the actions that need no rule". "No implicit reaction" above is unchanged: *perception* still does nothing on its own.
+
 ## 10.6 Memory semantics
 
 - Each point stores exactly one coordinate or an empty value.
@@ -396,6 +398,8 @@ Target-selection filters such as nearest, farthest, component type, enemy bluepr
 ```
 
 Implementation note: the deposit rule must remain above the generic carrying rule. This example shows why rule ordering and action-completion semantics require clear editor feedback.
+
+> **Caveat — rule 1 is no longer needed, and the ordering lesson moved.** Depositing at your own base is a reflex as of 4 August 2026 (§10.5's caveat), so the program the editor offers as "§10.7" is the five rules below rule 1. Deleting it changes nothing: `TestScavengerNeedsNoDepositRule` runs both versions in the same arena and compares `StateHash` every tick for 3000 ticks. Rule 2 arriving home with cargo is what triggers the reflex, so the implementation note above — *the deposit rule must remain above the generic carrying rule* — is still exactly right about **why** order matters (a specific rule placed under a general one that also matches never runs, and the editor says so with `unreachable_rule`), it just no longer has this program to demonstrate it on. The lesson is not lost: a specific rule placed *below* a general rule that also matches never runs at all, which is precisely what the validator's `unreachable_rule` warning reports — on this very pair, if a player writes it back in the wrong order.
 
 > **Caveat — this program does not run on every blueprint.** Rule 4 is `move_to_radar_target`, so the blueprint needs a **parts radar**; without one the validator raises a `missing_component` *error* and the program cannot be saved. Deleting rule 4 instead of fitting the radar does not help: no remaining rule steers the robot toward a component, so it degenerates into a blind random walk that only picks up what it happens to bump into. As printed it is correct — on a blueprint with a manipulator *and* a parts radar.
 

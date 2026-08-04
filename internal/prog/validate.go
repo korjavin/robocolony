@@ -149,6 +149,15 @@ func cleanStart(b sim.Blueprint) sim.RobotView {
 // Neither outcome is ever an error: a
 // fragment meant to be combined with another program is legal to save, and may
 // well be installed on a robot that is already carrying something.
+//
+// The deposit reflex (eval.go, rc-tad.13) does not make either verdict a lie,
+// and the reason is cleanStart: a freshly built robot has empty hands, and
+// nothing in the world can put a component in them — cargo only ever arrives
+// through pick_up_component, which is a rule. So a program no rule of which
+// matches at spawn still does nothing at spawn, which is exactly what both
+// findings claim. On a robot that is *already* carrying, an inert program now
+// deposits once and is then inert again — the case the paragraph above already
+// carves out.
 func warnInertStart(r *Result, p Program, b sim.Blueprint) {
 	if len(p.Rules) == 0 {
 		return // empty_program already said it, and said it better
