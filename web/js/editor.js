@@ -107,6 +107,7 @@ const badge = (text, title) => el("span", { className: "badge", textContent: tex
 // be wrapped or unwrapped like any other node.
 function renderCond(node, replace, remove) {
   if (node.op === "and" || node.op === "or") return renderGroup(node, replace, remove);
+  if (node.op === "not") return renderNot(node, replace, remove);
 
   const spec = preds.get(node.pred);
   const row = el("div", { className: "row" });
@@ -121,13 +122,44 @@ function renderCond(node, replace, remove) {
   if (spec && spec.needs && spec.needs.length) {
     row.append(badge(`needs ${spec.needs.join(" + ")}`));
   }
-  row.append(
-    iconButton("AND", "wrap this condition in an ALL group", () => replace({ op: "and", of: [node, firstPred()] })),
-    iconButton("OR", "wrap this condition in an ANY group", () => replace({ op: "or", of: [node, firstPred()] })),
-  );
+  row.append(...wrapButtons(node, replace), notButton(node, replace));
   if (remove) row.append(iconButton("✕", "remove this condition", remove));
   if (spec && spec.desc) row.append(el("p", { className: "help", textContent: spec.desc }));
   return row;
+}
+
+// wrapButtons put a node inside a new parent. They sit on the predicate row and
+// on the NOT header, so both "NOT (A AND B)" and "(NOT A) AND B" are reachable
+// whichever end the player starts from — and, because a NOT draws as its own
+// labelled box, the two are visibly different pictures rather than a precedence
+// rule to remember (design §10.10).
+const wrapButtons = (node, replace) => [
+  iconButton("AND", "wrap this condition in an ALL group", () => replace({ op: "and", of: [node, firstPred()] })),
+  iconButton("OR", "wrap this condition in an ANY group", () => replace({ op: "or", of: [node, firstPred()] })),
+];
+
+const notButton = (node, replace) =>
+  iconButton("NOT", "invert this condition: true exactly when it is false",
+    () => replace({ op: "not", of: [node] }));
+
+// renderNot draws the negation as a box of its own around its single operand.
+// The operand has no ✕ — a NOT holds exactly one condition, and emptying it
+// would produce a node the server refuses. "unwrap" is how the NOT goes away.
+function renderNot(node, replace, remove) {
+  const box = el("div", { className: "group not" });
+  const head = el("div", { className: "row" },
+    el("span", { className: "glabel", textContent: "NOT — true when the condition inside is false" }),
+    // These wrap the NOT itself, giving "(NOT A) AND B". Pressing AND on the
+    // condition *inside* the box gives "NOT (A AND B)" instead — two different
+    // boxes on screen, which is the whole point of drawing it this way.
+    ...wrapButtons(node, replace),
+    iconButton("unwrap", "drop the NOT and keep the condition inside",
+      () => replace(node.of[0] || firstPred())));
+  if (remove) head.append(iconButton("✕", "remove this condition", remove));
+  const kids = el("div", { className: "kids" },
+    renderCond(node.of[0] ?? firstPred(), (next) => { node.of = [next]; changed(); }, null));
+  box.append(head, kids);
+  return box;
 }
 
 function renderGroup(node, replace, remove) {
@@ -142,7 +174,8 @@ function renderGroup(node, replace, remove) {
     iconButton("+ condition", "add a condition to this group", () => { node.of.push(firstPred()); changed(); }),
     iconButton("+ group", "add a nested group", () => { node.of.push({ op: "and", of: [firstPred()] }); changed(); }),
     iconButton("unwrap", "replace this group with its first condition",
-      () => replace(node.of[0] || firstPred())));
+      () => replace(node.of[0] || firstPred())),
+    notButton(node, replace));
   if (remove) head.append(iconButton("✕", "remove this group", remove));
   const kids = el("div", { className: "kids" });
   node.of.forEach((kid, i) => {
@@ -663,6 +696,11 @@ function renderable(node, depth) {
   if (depth > lang.limits.max_cond_depth) return false;
   if (node.op === "and" || node.op === "or") {
     return Array.isArray(node.of) && node.of.every((k) => renderable(k, depth + 1));
+  }
+  // A NOT is exactly one condition. Anything else is what the server refuses,
+  // and renderNot would quietly draw only the first operand of it.
+  if (node.op === "not") {
+    return Array.isArray(node.of) && node.of.length === 1 && renderable(node.of[0], depth + 1);
   }
   return node.op === "pred" && typeof node.pred === "string";
 }

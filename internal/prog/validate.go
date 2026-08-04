@@ -94,7 +94,7 @@ func Validate(p Program, b sim.Blueprint) Result {
 			r.err(i, "multiple_primary", "rule %s has %d primary actions, at most one is allowed",
 				ordinal(i), primaries)
 		}
-		warnDeadPredicates(&r, i, rule.When, b, 0)
+		warnDeadPredicates(&r, i, rule.When, b, 0, false)
 	}
 
 	warnForwardOnly(&r, p)
@@ -135,7 +135,18 @@ func cleanStart(b sim.Blueprint) sim.RobotView {
 // world-observable predicate optimistically true and see whether it matches. It
 // is a per-predicate classification (PredicateSpec.World), not a search over
 // rule interactions — general reachability analysis stays declined here for the
-// same reason unreachable_rule declines it. Neither outcome is ever an error: a
+// same reason unreachable_rule declines it.
+//
+// "Optimistically true" is polarity-sensitive, and matcher.pred is where that
+// lives: under a NOT the optimistic reading of a world predicate is false, not
+// true, because a clean start is exactly the state in which nothing is seen,
+// heard or detected. The optimism therefore stays optimism in both directions
+// and never claims a working program is stuck. It remains an over-approximation
+// — sees_enemy_robot AND NOT sees_enemy_robot reads as reactive rather than as
+// the contradiction it is — which is the same direction this walk has always
+// erred in, and the safe one: it under-warns, it does not over-warn.
+//
+// Neither outcome is ever an error: a
 // fragment meant to be combined with another program is legal to save, and may
 // well be installed on a robot that is already carrying something.
 func warnInertStart(r *Result, p Program, b sim.Blueprint) {
@@ -165,8 +176,14 @@ func warnInertStart(r *Result, p Program, b sim.Blueprint) {
 }
 
 // warnDeadPredicates flags predicates whose sensor the blueprint lacks. Legal,
-// just permanently false, so it is a warning.
-func warnDeadPredicates(r *Result, rule int, c Condition, b sim.Blueprint, depth int) {
+// just permanently false — so it is a warning, not an error.
+//
+// Negation turns the same fact into a different and louder one: inside an odd
+// number of NOTs the missing sensor is permanently *true*, which is a rule that
+// fires unconditionally rather than one that never fires. It gets its own code
+// and its own wording, because "always false" printed over a rule that runs
+// every tick is worse than saying nothing.
+func warnDeadPredicates(r *Result, rule int, c Condition, b sim.Blueprint, depth int, neg bool) {
 	if depth >= MaxCondDepth {
 		return
 	}
@@ -176,13 +193,32 @@ func warnDeadPredicates(r *Result, rule int, c Condition, b sim.Blueprint, depth
 		if !ok {
 			return
 		}
-		if lack := missing(spec.Needs, b); len(lack) > 0 {
+		lack := missing(spec.Needs, b)
+		switch {
+		case len(lack) == 0:
+		case neg:
+			// Deliberately says only what is true of this leaf. What the rest
+			// of the condition then does depends on where the NOT sits — under
+			// "A AND NOT b" the other conditions decide, under "NOT (A AND b)"
+			// the rule fires unconditionally — and guessing at that from a
+			// per-leaf walk is how a warning ends up lying.
+			r.warn(rule, "always_true_predicate", "rule %s: NOT %s can never fail, the blueprint has no %s — "+
+				"the negation tests nothing",
+				ordinal(rule), c.Pred, strings.Join(lack, " or "))
+		default:
 			r.warn(rule, "dead_predicate", "rule %s: %s is always false, the blueprint has no %s",
 				ordinal(rule), c.Pred, strings.Join(lack, " or "))
 		}
 	case OpAnd, OpOr:
 		for _, k := range c.Of {
-			warnDeadPredicates(r, rule, k, b, depth+1)
+			warnDeadPredicates(r, rule, k, b, depth+1, neg)
+		}
+	case OpNot:
+		// Ranging rather than indexing Of[0]: a malformed NOT is structure's
+		// error to report, and this walk must not be the thing that panics on
+		// it. Two operands flip polarity for both, which is the safe reading.
+		for _, k := range c.Of {
+			warnDeadPredicates(r, rule, k, b, depth+1, !neg)
 		}
 	}
 }
@@ -211,7 +247,7 @@ func warnForwardOnly(r *Result, p Program) {
 // warnDominated flags a rule an earlier rule always pre-empts. Sound but
 // deliberately incomplete: it only recognises conjunction containment, which
 // is the case editors actually produce (rule 5 = A AND B under rule 2 = A).
-// Anything containing an OR is skipped rather than guessed at.
+// Anything containing an OR or a NOT is skipped rather than guessed at.
 //
 // Only a rule with a primary action can dominate: under the locked action
 // model a side-effect-only rule fires and evaluation continues down the list
@@ -263,8 +299,17 @@ func subset(want []string, have map[string]bool) bool {
 }
 
 // conjuncts flattens nested ANDs into predicate keys. It returns nil for any
-// tree containing an OR or an unknown node: implication is only decidable
-// cheaply for pure conjunctions.
+// tree containing an OR, a NOT or an unknown node: implication is only
+// decidable cheaply for pure conjunctions.
+//
+// NOT is declined on purpose, and it is not a gap left to fill later. Set
+// containment answers implication for conjunctions of positive literals only.
+// The moment a literal can be negated, deciding whether one rule covers
+// another is general propositional implication — the same SAT-shaped problem
+// OR was already declined for, made strictly worse. Treating NOT p as just
+// another opaque key would be worse still: it reads p AND NOT p as a rule that
+// dominates, and marks live rules below it unreachable_rule. A missed warning
+// costs a player nothing; a wrong one tells them working code is dead.
 func conjuncts(c Condition, depth int) ([]string, bool) {
 	if depth >= MaxCondDepth {
 		return nil, false

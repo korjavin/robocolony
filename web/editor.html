@@ -38,13 +38,21 @@
   .kw { font-size: .78rem; letter-spacing: .1em; opacity: .6; margin: .5rem 0 .2rem; }
   .row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .2rem 0; }
 
-  /* Explicit nesting: every AND/OR group is a labelled box, so precedence is
-     read off the indentation and never guessed (design §10.10). */
+  /* Explicit nesting: every AND/OR/NOT group is a labelled box, so precedence
+     is read off the indentation and never guessed (design §10.10). */
   .group {
     border: 1px solid var(--line); border-left: 4px solid currentColor;
     border-radius: .4rem; padding: .3rem .5rem; margin: .2rem 0 .2rem 0;
     background: color-mix(in srgb, currentColor 4%, transparent);
   }
+  /* A NOT is a box like any other group — that is the whole point, because it
+     makes NOT (A AND B) and (NOT A) AND B two different pictures instead of a
+     precedence rule. Its own colour so the inversion is not read past. */
+  .group.not {
+    border-left-color: #c0392b;
+    background: color-mix(in srgb, #c0392b 8%, transparent);
+  }
+  .group.not > .row > .glabel { color: #c0392b; opacity: 1; font-weight: 600; }
   .group > .kids { padding-left: 1rem; }
   .group > .kids > * { position: relative; }
   .glabel { font-size: .78rem; letter-spacing: .08em; opacity: .7; }

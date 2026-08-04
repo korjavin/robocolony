@@ -85,6 +85,40 @@ default beat the aggressive profile outright and drops a good custom design from
 The harness is kept, not thrown away:
 `ROBOCOLONY_BALANCE=1 go test ./internal/lobby/ -run TestBalance -v`.
 
+**The rule language has `NOT`, which §10.2's EBNF does not** (rc-tad.12, 3 August
+2026). One operand, JSON `{"op":"not","of":[…]}`, and the schema version stayed
+at 1: `"v"` gates what a build will *read*, every stored program is still
+readable, and bumping it would reject them all to announce an extension none of
+them use. A program written *with* a NOT is not readable by an older build, but
+one binary serves both the JS and the API, so that pairing cannot outlive a
+reload — the same call PR #48 made for a wire change.
+
+The evaluator case is one line. The cost is that three static analyses walk
+condition trees assuming positive polarity, and each answers differently under a
+NOT:
+
+- **`inert_start` / `reactive_start`** walks each rule with world-observable
+  predicates optimistically *true*. Under a NOT the optimistic reading is the
+  opposite one, because a clean start is precisely the state in which nothing is
+  seen, heard or detected: `NOT sees_enemy_robot` is satisfied at spawn. The
+  walk therefore tracks polarity and lets the clean-start view answer inside a
+  negation. Forcing `true` regardless would report a working
+  `sees_component AND NOT sees_enemy_robot` program as stuck. It stays an
+  over-approximation — `p AND NOT p` reads as reactive rather than as the
+  contradiction it is — which is the direction this analysis has always erred
+  in: it under-warns rather than over-warns.
+- **`dead_predicate`** (a predicate whose sensor the blueprint lacks, hence
+  permanently false) becomes **`always_true_predicate`** under an odd number of
+  NOTs: a rule that fires unconditionally, not one that never fires. Different
+  shape, different code, different message — printing "always false" over a rule
+  that runs every tick is worse than saying nothing.
+- **`unreachable_rule` declines NOT**, exactly as it already declines `OR`. Set
+  containment decides implication for conjunctions of *positive* literals only;
+  once a literal can be negated it is general propositional implication. Reading
+  `NOT p` as one more opaque key would be actively wrong — `p AND NOT p` would
+  read as dominating `p` and mark a live rule dead. A missed warning costs a
+  player nothing; a wrong one tells them working code is dead.
+
 ## Corrections to the design doc's own examples
 
 All three worked programs in §10 are subtly wrong as printed. They are still

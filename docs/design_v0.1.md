@@ -316,6 +316,8 @@ CONDITION := predicate
            | ( CONDITION )
 ```
 
+> **Caveat — the build has one operator this grammar does not.** `NOT CONDITION` was added on 3 August 2026 (rc-tad.12), so a rule can say "when there is *no* enemy in sight" directly instead of being contorted around the positive form. It takes exactly one condition; zero or two is a validation error. Grouping is unchanged and still explicit, which is what keeps `NOT (A AND B)` distinguishable from `(NOT A) AND B` without a precedence table — the editor draws each as its own nested box. Negation is not free of consequences for the static checks: `dead_predicate` becomes `always_true_predicate` under a NOT, and `unreachable_rule` declines negated conditions exactly as it already declines `OR`. See `docs/decisions.md` and `internal/prog/validate.go`.
+
 The exact simulation tick rate, action duration, and whether a rule may contain multiple immediate bookkeeping actions before one movement/combat action remain implementation decisions. A recommended constraint is one primary action per rule, with memory writes and signal sends represented as explicit actions.
 
 ## 10.3 Condition catalogue
