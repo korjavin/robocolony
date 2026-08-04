@@ -123,6 +123,17 @@ func TestLobbyLifecycle(t *testing.T) {
 	if open, err = svc.List(ctx); err != nil || len(open) != 0 {
 		t.Fatalf("List() after start = %d lobbies, %v, want none", len(open), err)
 	}
+	// An empty list must still be a JSON array: the lobby page reads
+	// data.lobbies.length before it renders anything, and null would throw.
+	if open == nil {
+		t.Error("List() returned nil, which encodes as JSON null")
+	}
+	// It moves to the running list instead, which is the lobby page's only door
+	// back into a match once the Start button's response is gone.
+	running, err := svc.Running(ctx)
+	if err != nil || len(running) != 1 || running[0].ID != created.ID {
+		t.Fatalf("Running() after start = %+v, %v, want just the started lobby", running, err)
+	}
 	if _, err := svc.Match(ctx, created.ID); err != nil {
 		t.Fatalf("Match() = %v", err)
 	}
