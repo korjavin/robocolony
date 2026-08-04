@@ -23,6 +23,31 @@ const heartbeatEvery = 15 * time.Second
 // maxFrameBytes is the size above which full snapshots stop being a reasonable
 // answer. Exceeding it is logged, not worked around: deltas are a bead, not
 // something to invent inside a stream handler.
+//
+// Measured, not extrapolated (rc-w9s.31): eight colonies on the full 64×64
+// arena, seed 0x5eed, replayed to the tick shown, tick frame in bytes.
+// framesize_test.go is the harness and re-runs this.
+//
+//	                        tick 600  tick 1800  tick 3600  tick 6000
+//	default settings          10,351     11,680     11,212     11,444
+//	  robots                      23         27         25         25
+//	every setting at its max  36,755     44,040     47,288     60,317
+//	  robots                      55        112        125        164
+//
+// The two extrapolations this budget was argued against — 45 KB in E4.1, then
+// 75 KB while adding statistics — were both pessimistic by about six times:
+// they assumed 8 colonies × 20 robots, and a default board sustains about 25
+// robots in total, because the loose components run out and production stalls.
+// An ordinary match sits at a sixth of this budget.
+//
+// The bottom row is a lobby created with richness, spawn rate and starting
+// budget all at the ceiling Settings.Validate accepts. It is legal, its
+// population keeps growing while the components keep coming, and it is what
+// this WARN is for: before the rc-w9s.31 trim (the approved designs moved to
+// the init frame — 11 KB a frame of data that cannot change while a match
+// runs) it crossed the budget by tick 6000. It will cross it again on a long
+// enough match, and that is the signal to build deltas — with a real
+// deployment behind it rather than an extrapolation.
 const maxFrameBytes = 64 << 10
 
 // pollInterval is how often the stream checks for a new tick. Deliberately

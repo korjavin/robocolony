@@ -172,8 +172,21 @@ func TestSnapshotShape(t *testing.T) {
 	if len(snap.Bases) != len(m.Colonies) {
 		t.Fatalf("snapshot has %d bases, want %d", len(snap.Bases), len(m.Colonies))
 	}
-	if len(snap.Bases[0].Blueprints) == 0 {
-		t.Error("base has no approved blueprints")
+	// Blueprints ride the init frame, not the tick frame (rc-w9s.31), so every
+	// robot's blueprint id has to resolve against its colony's list there —
+	// that lookup is how the client names a design, draws its silhouette and
+	// decides whether a program fits it.
+	for _, r := range snap.Robots {
+		i := slices.IndexFunc(init.Colonies, func(c Colony) bool { return c.ID == r.Colony })
+		if i < 0 {
+			t.Fatalf("robot %d is in colony %d, which is not on the init frame", r.ID, r.Colony)
+		}
+		if len(init.Colonies[i].Blueprints) == 0 {
+			t.Fatalf("colony %d has no approved blueprints on the init frame", r.Colony)
+		}
+		if !slices.ContainsFunc(init.Colonies[i].Blueprints, func(b Blueprint) bool { return b.ID == r.Blueprint }) {
+			t.Errorf("robot %d blueprint %q is not among colony %d's approved designs", r.ID, r.Blueprint, r.Colony)
+		}
 	}
 	if len(snap.Loose) == 0 {
 		t.Error("snapshot has no loose components: the default richness scatters some")

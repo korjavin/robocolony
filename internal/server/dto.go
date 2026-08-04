@@ -61,6 +61,15 @@ type Colony struct {
 	// AI is the profile driving a computer colony (design §12 P2), and empty
 	// for a human seat. UserID is 0 alongside it.
 	AI string `json:"ai,omitempty"`
+
+	// Blueprints is what this colony's base may produce. It is on the init
+	// frame because nothing writes it after the match is built — a colony's
+	// approved designs are fixed by its kit (internal/lobby/starter.go) and
+	// there is no command that adds one — and because it was the single
+	// largest constant cost on the tick frame: 18 designs per colony is 11 KB
+	// of unchanging JSON, which was half of an ordinary 8-colony frame and
+	// went out ten times a second (rc-w9s.31, see maxFrameBytes).
+	Blueprints []Blueprint `json:"blueprints"`
 }
 
 // TerrainClass is one row of the design §3.1 traversal matrix, projected onto
@@ -91,9 +100,10 @@ type Component struct {
 // Snapshot is one tick's full world state. Design §4.3: the observer has no fog
 // of war, so this carries every colony's robots, bases and stats.
 //
-// Full snapshots, not deltas: at the POC arena size a frame is a few KB (the
-// stream logs the measured size per connection). Deltas get a bead if that
-// stops being true.
+// Full snapshots, not deltas: an eight-colony match measures ~12 KB a frame
+// (the stream logs the measured size per connection, and maxFrameBytes in
+// stream.go carries the numbers). Anything on it that cannot change during the
+// match belongs on Init instead — that is what keeps this true.
 type Snapshot struct {
 	Tick    uint64 `json:"tick"`
 	EndTick uint64 `json:"end_tick"`
@@ -162,14 +172,15 @@ type Trace struct {
 	Idle   bool   `json:"idle"`
 }
 
-// Base is a colony's base, its stock and what it is currently assembling.
+// Base is a colony's base, its stock and what it is currently assembling. The
+// designs it may build are not here but on the init frame's Colony: they do not
+// change while the match runs.
 type Base struct {
-	Colony     int         `json:"colony"`
-	X          int         `json:"x"`
-	Y          int         `json:"y"`
-	Inventory  []InvEntry  `json:"inventory"` // variant order, never map order
-	Blueprints []Blueprint `json:"blueprints"`
-	Build      *Build      `json:"build,omitempty"`
+	Colony    int        `json:"colony"`
+	X         int        `json:"x"`
+	Y         int        `json:"y"`
+	Inventory []InvEntry `json:"inventory"` // variant order, never map order
+	Build     *Build     `json:"build,omitempty"`
 
 	// IdleReason is why nothing is being assembled, empty while Build is set.
 	// The match view renders it instead of a bare "Idle.": a base that is
@@ -266,11 +277,22 @@ func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World, hist lobby.
 		})
 	}
 
+	bases := make(map[sim.ColonyID]*sim.Base, len(w.Bases))
+	for _, b := range w.Bases {
+		bases[b.Colony] = b
+	}
 	seats := make([]Colony, 0, len(colonies))
 	for _, c := range colonies {
-		seats = append(seats, Colony{
+		seat := Colony{
 			ID: int(c.ID), UserID: c.UserID, DisplayName: c.DisplayName, AI: string(c.AI),
-		})
+			Blueprints: []Blueprint{},
+		}
+		if b, ok := bases[c.ID]; ok {
+			for _, bp := range b.Blueprints {
+				seat.Blueprints = append(seat.Blueprints, blueprint(bp))
+			}
+		}
+		seats = append(seats, seat)
 	}
 
 	return Init{
@@ -339,7 +361,6 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 		inv := b.SortedInventory()
 		dto := Base{Colony: int(b.Colony), X: b.Coord.X, Y: b.Coord.Y,
 			Inventory:  make([]InvEntry, 0, len(inv)),
-			Blueprints: make([]Blueprint, 0, len(b.Blueprints)),
 			IdleReason: b.IdleReason(),
 		}
 		st := stat(b.Colony)
@@ -348,9 +369,6 @@ func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
 		for _, e := range inv {
 			dto.Inventory = append(dto.Inventory, InvEntry{Variant: int(e.Variant), Count: e.Count})
 			st.Inventory += e.Count
-		}
-		for _, bp := range b.Blueprints {
-			dto.Blueprints = append(dto.Blueprints, blueprint(bp))
 		}
 		if b.Build.Ticks > 0 {
 			dto.Build = &Build{
