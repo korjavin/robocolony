@@ -917,6 +917,10 @@ func TestTickLoopIsDeterministic(t *testing.T) {
 // The default density strands nothing, but the lobby may set it much higher:
 // at 0.30 more than half of all seeds grow pockets of open ground no base can
 // reach, so sweep the densities a match can actually be configured with.
+//
+// Bases must be reachable on the starter chassis; loose components need only be
+// reachable by *something* since rc-rhd.2 put a share of the loot inside the
+// regions. TestGenerationSolvable holds the tracks share to a floor.
 func TestGeneratedArenasAreConnected(t *testing.T) {
 	for _, density := range []float64{0.0, 0.08, 0.30, 0.45} {
 		for seed := int64(1); seed <= 30; seed++ {
@@ -929,9 +933,13 @@ func TestGeneratedArenasAreConnected(t *testing.T) {
 					t.Fatalf("density %.2f seed %d: base %d at %v is walled off", density, seed, b.Colony, b.Coord)
 				}
 			}
+			// Anti-gravity enters every terrain but a hard barrier, so its
+			// flood is the union of everywhere any chassis can go.
+			union := w.reachable(w.Bases[0].Coord, AntiGrav)
 			for _, l := range w.Loose {
-				if !reach[w.index(l.Coord)] {
-					t.Fatalf("density %.2f seed %d: loose component %d at %v is unreachable", density, seed, l.ID, l.Coord)
+				if !union[w.index(l.Coord)] {
+					t.Fatalf("density %.2f seed %d: loose component %d at %v (%s) is unreachable by every locomotion",
+						density, seed, l.ID, l.Coord, w.At(l.Coord).Terrain)
 				}
 			}
 		}

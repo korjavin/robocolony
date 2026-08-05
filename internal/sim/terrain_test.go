@@ -223,6 +223,14 @@ func TestTurnCostScalesWithChassis(t *testing.T) {
 	}
 }
 
+// preE8LoosePerArena is how many loose components the pre-E8 generator placed
+// on a mean default arena, measured over the same 100 seeds at rev 96994a2 (the
+// commit before the regions landed). Regions took the non-open share of the map
+// from 16% to 31%, and since a bad draw is dropped rather than retried that
+// alone cost 19% of the loot (54.3 per arena) at an unchanged Richness. The
+// number is a floor here, not a target: generation may place more, never fewer.
+const preE8LoosePerArena = 67.10
+
 // TestGenerationSolvable is the connectivity contract, in the owner's terms:
 // **no unreachable place**, where unreachable means *no* locomotion can get
 // there. A region one chassis cannot cross is not a bug — since E8 it is the
@@ -230,8 +238,20 @@ func TestTurnCostScalesWithChassis(t *testing.T) {
 // arena" assertion is gone. What replaces it is stricter where it matters:
 // every non-barrier cell of every arena must be reachable by *something*, and
 // every base must reach every other base by *everything*.
+//
+// Loot follows the same shape since rc-rhd.2. It is no longer confined to
+// ground every chassis can walk — that made the regions barren scenery — so the
+// universal assertion becomes a floor plus a fraction: nothing may be placed
+// where no locomotion can collect it, and the bulk must stay collectable by
+// tracks, the starter locomotion (internal/lobby/starter.go), so a colony that
+// has not scavenged legs yet is never starved.
 func TestGenerationSolvable(t *testing.T) {
 	const seeds = 100
+	// The share of loot a tracks-only colony must be able to collect from every
+	// one of its bases. looseCommonShare of the *target* is placed under the
+	// strict rule, so this is that share as a floor on the realised placement.
+	const wantTracksShare = 0.70
+
 	opts := DefaultGenOpts()
 	cells := opts.Width * opts.Height
 
@@ -240,8 +260,21 @@ func TestGenerationSolvable(t *testing.T) {
 		worstFrac[loco] = 1
 	}
 	worstUnion := 0.0
+	placed, tracksCollectable := 0, 0
+	onTerrain := map[Terrain]int{}
 	for seed := int64(1); seed <= seeds; seed++ {
 		w := Generate(seed, opts)
+		placed += len(w.Loose)
+		for _, l := range w.Loose {
+			onTerrain[w.At(l.Coord).Terrain]++
+		}
+		// Both are per component and AND-ed over every base: a component only
+		// counts as collectable if it is collectable from all of them.
+		anyLoco := make([]bool, len(w.Loose))
+		byTracks := make([]bool, len(w.Loose))
+		for i := range w.Loose {
+			anyLoco[i], byTracks[i] = true, true
+		}
 
 		// 1. No sealed pockets. Anti-gravity enters every terrain except a hard
 		// barrier, so its flood from base 0 is the union of everywhere anything
@@ -268,8 +301,9 @@ func TestGenerationSolvable(t *testing.T) {
 			worstUnion = frac
 		}
 
-		for _, loco := range locomotionVariants() {
-			for _, b := range w.Bases {
+		for _, b := range w.Bases {
+			reachedSomehow := make([]bool, len(w.Loose))
+			for _, loco := range locomotionVariants() {
 				reach := w.reachable(b.Coord, loco)
 				n := 0
 				for _, ok := range reach {
@@ -289,18 +323,74 @@ func TestGenerationSolvable(t *testing.T) {
 							seed, loco, other.Colony, b.Colony)
 					}
 				}
-				// 3. Every loose component is collectable by every chassis from
-				// every base — nothing generates into a pocket. (rc-rhd.2 will
-				// relax this; until then it must hold.)
-				for _, l := range w.Loose {
-					if !reach[w.index(l.Coord)] {
-						t.Errorf("seed %d: %s cannot reach loose component %d at %v from base %d",
-							seed, loco, l.ID, l.Coord, b.Colony)
+				for i, l := range w.Loose {
+					ok := reach[w.index(l.Coord)]
+					reachedSomehow[i] = reachedSomehow[i] || ok
+					if loco == Tracks {
+						byTracks[i] = byTracks[i] && ok
 					}
 				}
 			}
+			// 3. Nothing generates into a pocket: every loose component is
+			// collectable by *some* chassis from this base. Which chassis is
+			// the player's problem — that is the point of the regions — but
+			// loot no locomotion can reach is loot that never enters the game.
+			for i, l := range w.Loose {
+				anyLoco[i] = anyLoco[i] && reachedSomehow[i]
+				if !reachedSomehow[i] {
+					t.Errorf("seed %d: no locomotion reaches loose component %d at %v (%s) from base %d",
+						seed, l.ID, l.Coord, w.At(l.Coord).Terrain, b.Colony)
+				}
+			}
+		}
+		for i := range w.Loose {
+			if anyLoco[i] && byTracks[i] {
+				tracksCollectable++
+			}
 		}
 	}
+
+	// 4. The tracks floor. Placement puts looseCommonShare of the target on
+	// ground every chassis can walk; this is the assertion that the realised
+	// arenas honour it, so a colony still on its starter chassis is never
+	// locked out of the board.
+	if frac := float64(tracksCollectable) / float64(placed); frac < wantTracksShare {
+		t.Errorf("%d seeds: only %.1f%% of loose components are collectable by tracks from every base, want >=%.0f%%",
+			seeds, frac*100, wantTracksShare*100)
+	} else {
+		t.Logf("%d seeds: %.1f%% of loose components are collectable by tracks from every base (floor %.0f%%)",
+			seeds, frac*100, wantTracksShare*100)
+	}
+
+	// 5. The regions are stocked. Sand and rubble carrying loot is the whole
+	// reason to field tracks or legs rather than to treat terrain as scenery.
+	for _, terr := range []Terrain{Open, Sand, Rubble} {
+		t.Logf("%d seeds: %d loose components on %s (%.1f%% of all placed, %.2f per arena)",
+			seeds, onTerrain[terr], terr, 100*float64(onTerrain[terr])/float64(placed),
+			float64(onTerrain[terr])/seeds)
+	}
+	for _, terr := range []Terrain{Sand, Rubble} {
+		if onTerrain[terr] == 0 {
+			t.Errorf("%d seeds at Richness %.3f placed no loose component on %s: the regions are barren",
+				seeds, opts.Richness, terr)
+		}
+	}
+	if onTerrain[Barrier] != 0 {
+		t.Errorf("%d loose components generated inside a hard barrier", onTerrain[Barrier])
+	}
+
+	// 6. The count. Regions cost 19% of the loot at an unchanged Richness
+	// because a draw outside the pool is dropped; drawsFor pays for the misses,
+	// and this is the assertion that it kept paying.
+	perArena := float64(placed) / seeds
+	if perArena < preE8LoosePerArena {
+		t.Errorf("%d seeds: %.2f loose components per arena at Richness %.3f, want >=%.2f (the pre-E8 count)",
+			seeds, perArena, opts.Richness, preE8LoosePerArena)
+	} else {
+		t.Logf("%d seeds: %.2f loose components per arena at Richness %.3f, against %.2f pre-E8 and a %d target",
+			seeds, perArena, opts.Richness, preE8LoosePerArena, int(float64(cells)*opts.Richness))
+	}
+
 	t.Logf("%d seeds: largest non-barrier share of an arena = %.1f%%, all of it reachable by anti-gravity",
 		seeds, worstUnion*100)
 	for _, loco := range locomotionVariants() {
