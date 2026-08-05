@@ -443,7 +443,33 @@ canvas.addEventListener("click", (ev) => {
     const d = (r.x + .5 - px) ** 2 + (r.y + .5 - py) ** 2;
     if (d < best) { best = d; hit = r; }
   }
-  selected = hit ? hit.id : null;
+  // Bases share the one `best`, and they come second with a strict <, so the
+  // genuinely nearest thing wins and a robot standing on its base still beats
+  // the base underneath it.
+  let base = null;
+  for (const b of snap.bases) {
+    const d = (b.x + .5 - px) ** 2 + (b.y + .5 - py) ** 2;
+    if (d < best) { best = d; base = b; hit = null; }
+  }
+  if (base) {
+    // A base has no selection state of its own: the inspector, the roster
+    // highlight and the command panel all hang off `selected`, so clicking a
+    // base means "select this colony" and is routed through one of its robots —
+    // the one nearest the base, ties by id, so the same click twice does not
+    // jump between two equidistant robots. An eliminated colony has none, and
+    // then baseColony alone carries the panel (see renderBase).
+    baseColony = base.colony;
+    const d2 = (r) => (r.x - base.x) ** 2 + (r.y - base.y) ** 2;
+    const rep = snap.robots.filter((r) => r.colony === base.colony)
+      .sort((a, b) => d2(a) - d2(b) || a.id - b.id)[0];
+    selected = rep ? rep.id : null;
+    // The Base panel is closed by default, so without this the click looks like
+    // a no-op — the same reason render() reopens #p-selected on a robot pick.
+    $("p-base").open = true;
+    $("p-base").scrollIntoView({ block: "nearest" });
+  } else {
+    selected = hit ? hit.id : null;
+  }
   render();
 });
 
