@@ -3,6 +3,8 @@ package lobby
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"slices"
 
 	"github.com/korjavin/robocolony/internal/db"
 	"github.com/korjavin/robocolony/internal/prog"
@@ -143,12 +145,14 @@ func memberKit(m db.Member, budget int) (kit, error) {
 		// a program need no dedupe here.
 		k.programs = append(k.programs, namedProgram{bp.ProgramID, p})
 	}
-	k.start = startingRoster(k.blueprints, budget)
-	if len(k.start) == 0 {
-		// Reachable only by approving a body that costs more than the whole
-		// budget the host set. A colony with no robots and no
-		// inventory can never act again (design §5.3), so refuse rather than
-		// field one.
+	// The roster itself is drawn in equipColony, which is the first place with a
+	// world and therefore an rng (see startingRoster). What is checked here is
+	// only that the draw will have something to draw: a loadout whose *cheapest*
+	// approval costs more than the whole budget the host set would field no
+	// robots at all, and a colony with no robots and no inventory can never act
+	// again (design §5.3). It has to fail before an arena is generated.
+	k.choices = k.blueprints
+	if !slices.ContainsFunc(k.choices, func(bp sim.Blueprint) bool { return bp.Value() <= budget }) {
 		return kit{}, fmt.Errorf("lobby: member %d: no approved blueprint fits the starting budget", m.UserID)
 	}
 	return k, nil
@@ -165,11 +169,14 @@ func defaultStartingBudget() int { return startingRobots * DefaultBlueprint().Va
 // startingRoster is the robots a colony takes into the arena, and the whole of
 // the "nobody out-equips anybody" guarantee.
 //
-// The first approved blueprint is the starting body, repeated — the same shape
-// humanKit has always had, where the whole opening is three of one design and
-// the rest of the approved set exists for §5.2 production. Approving more
-// designs therefore never costs a player robots; it only widens what the base
-// can build once parts start arriving.
+// Each robot is drawn uniformly from the approvals that still fit what is left
+// of the budget, so a player who approves a mixed set fields a mixed opening
+// (rc-w9s.36) instead of three copies of whichever design happened to be first.
+// The draw is on the world's rng, never math/rand: the opening roster is world
+// state at tick zero, and a replay rebuilds it from the seed alone
+// (persist.go). That is also why this runs from equipColony rather than
+// memberKit — memberKit resolves kits before sim.Generate, where there is no
+// world to draw from.
 //
 // The budget is what bounds it in both directions:
 //
@@ -183,11 +190,22 @@ func defaultStartingBudget() int { return startingRobots * DefaultBlueprint().Va
 // What is left over is not wasted: equipColony converts it into base inventory
 // (design §12 P0), so spending less than the budget buys spares rather than
 // nothing.
-func startingRoster(bps []sim.Blueprint, budget int) []sim.Blueprint {
-	bp := bps[0]
-	n := startingRobots
-	if v := bp.Value(); v > 0 {
-		n = min(n, budget/v)
+func startingRoster(rng *rand.Rand, choices []sim.Blueprint, budget int) []sim.Blueprint {
+	out := make([]sim.Blueprint, 0, startingRobots)
+	fits := make([]sim.Blueprint, 0, len(choices))
+	for range startingRobots {
+		fits = fits[:0]
+		for _, bp := range choices {
+			if bp.Value() <= budget {
+				fits = append(fits, bp)
+			}
+		}
+		if len(fits) == 0 {
+			return out
+		}
+		bp := fits[rng.Intn(len(fits))]
+		out = append(out, bp)
+		budget -= bp.Value()
 	}
-	return repeat(bp, n)
+	return out
 }

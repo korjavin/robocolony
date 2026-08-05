@@ -3,8 +3,10 @@ package lobby
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/korjavin/robocolony/internal/db"
@@ -300,37 +302,160 @@ func TestStartingRosterIsEqual(t *testing.T) {
 		{"the starter scavenger spends the budget exactly", []sim.Blueprint{DefaultBlueprint()}},
 		{"a cheap body does not buy extra robots", []sim.Blueprint{cheap}},
 		{"an expensive body buys fewer of them", []sim.Blueprint{rich}},
-		{"only the first approval is fielded", []sim.Blueprint{rich, cheap, cheap}},
+		{"a mixed approval set stays inside both bounds", []sim.Blueprint{rich, cheap, DefaultBlueprint()}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			roster := startingRoster(tc.bps, budget)
-			if len(roster) == 0 {
-				t.Fatal("startingRoster() fielded nothing")
-			}
-			if len(roster) > startingRobots {
-				t.Errorf("startingRoster() fielded %d robots, the cap is %d", len(roster), startingRobots)
-			}
-			spent := 0
-			for _, bp := range roster {
-				spent += bp.Value()
-				if bp.Name != tc.bps[0].Name {
-					t.Errorf("startingRoster() fielded a %q, want only the first approval %q", bp.Name, tc.bps[0].Name)
+			// Several seeds: the draw is random, so one roster proves nothing
+			// about the bounds it has to hold under every draw.
+			for seed := range int64(8) {
+				roster := startingRoster(rand.New(rand.NewSource(seed)), tc.bps, budget)
+				if len(roster) == 0 {
+					t.Fatal("startingRoster() fielded nothing")
 				}
-			}
-			if spent > budget {
-				t.Errorf("startingRoster() spent %d, the budget is %d", spent, budget)
+				if len(roster) > startingRobots {
+					t.Errorf("startingRoster() fielded %d robots, the cap is %d", len(roster), startingRobots)
+				}
+				spent := 0
+				for _, bp := range roster {
+					spent += bp.Value()
+					if !slices.ContainsFunc(tc.bps, func(a sim.Blueprint) bool { return a.Name == bp.Name }) {
+						t.Errorf("startingRoster() fielded a %q, which the colony never approved", bp.Name)
+					}
+				}
+				if spent > budget {
+					t.Errorf("startingRoster() spent %d, the budget is %d", spent, budget)
+				}
 			}
 		})
 	}
 	// The starter scavenger is the reference: a colony approving it gets exactly
 	// the opening every colony used to get, which is what makes the budget
 	// "equal" rather than merely "bounded".
-	if got := startingRoster([]sim.Blueprint{DefaultBlueprint()}, budget); len(got) != startingRobots {
+	rng := rand.New(rand.NewSource(1))
+	if got := startingRoster(rng, []sim.Blueprint{DefaultBlueprint()}, budget); len(got) != startingRobots {
 		t.Errorf("the starter scavenger now fields %d robots, want the unchanged %d", len(got), startingRobots)
 	}
-	if got := startingRoster([]sim.Blueprint{rich}, budget); len(got) >= startingRobots {
+	if got := startingRoster(rng, []sim.Blueprint{rich}, budget); len(got) >= startingRobots {
 		t.Errorf("an armed body fields %d robots, want fewer than the %d unarmed ones", len(got), startingRobots)
+	}
+}
+
+// TestStartingRosterDrawsFromTheWholeLoadout is rc-w9s.36: approving a mixed set
+// used to buy nothing at tick 0, because the opening was the first approval
+// repeated. Now every robot is drawn from what still fits the remaining budget,
+// so a two-design loadout fields both designs over a handful of seeds — and the
+// same seed still fields exactly the same colony, which is what a replay rests
+// on (persist.go rebuilds a running match from seed + command log alone).
+//
+// Both designs cost under a third of the budget, so both stay affordable for
+// every one of the three draws: a fixture where only one option is ever
+// affordable makes Intn(1) return 0 from any rand source and would hide a
+// math/rand regression entirely (see docs/engineering-notes.md).
+func TestStartingRosterDrawsFromTheWholeLoadout(t *testing.T) {
+	seat := []db.Member{{UserID: 1, DisplayName: "ada", Loadout: twoDesignLoadout(t)}}
+	budget := defaultStartingBudget()
+
+	seen := map[string]bool{}
+	for seed := range int64(8) {
+		set := shortSettings(60)
+		set.Seed = seed
+		set.MaxPlayers = 1
+		m, err := newMatch(db.Lobby{ID: 1, Name: "draw"}, set, seat)
+		if err != nil {
+			t.Fatalf("newMatch() = %v", err)
+		}
+		roster := colonyRoster(m)
+		if len(roster) == 0 || len(roster) > startingRobots {
+			t.Fatalf("seed %d fielded %d robots, want 1..%d", seed, len(roster), startingRobots)
+		}
+		spent := 0
+		for _, name := range roster {
+			seen[name] = true
+		}
+		for _, r := range m.world.Robots {
+			if r.Colony == m.world.Bases[0].Colony {
+				spent += r.Blueprint.Value()
+			}
+		}
+		if spent > budget {
+			t.Errorf("seed %d fielded %d in component value, the budget is %d", seed, spent, budget)
+		}
+	}
+	if len(seen) < 2 {
+		t.Errorf("eight seeds fielded only %v, want both approved designs to come up", seen)
+	}
+
+	// Same seed, same members, same settings: the same opening roster.
+	set := shortSettings(60)
+	set.Seed = 7
+	set.MaxPlayers = 1
+	a, err := newMatch(db.Lobby{ID: 1, Name: "draw"}, set, seat)
+	if err != nil {
+		t.Fatalf("newMatch() = %v", err)
+	}
+	b, err := newMatch(db.Lobby{ID: 1, Name: "draw"}, set, seat)
+	if err != nil {
+		t.Fatalf("newMatch() = %v", err)
+	}
+	if x, y := colonyRoster(a), colonyRoster(b); !reflect.DeepEqual(x, y) {
+		t.Errorf("the same seed fielded %v in one match and %v in another: the draw is not on the world rng", x, y)
+	}
+}
+
+// colonyRoster is the first colony's starting robots, in world order.
+func colonyRoster(m *Match) []string {
+	var out []string
+	for _, r := range m.world.Robots {
+		if r.Colony == m.world.Bases[0].Colony {
+			out = append(out, r.Blueprint.Name)
+		}
+	}
+	return out
+}
+
+// twoDesignLoadout approves two scavengers that differ only in armor. Both are
+// affordable at every step of the draw, which is what makes it a fixture the
+// determinism guard can see through.
+func twoDesignLoadout(t *testing.T) json.RawMessage {
+	t.Helper()
+	entry := func(id int64, name string, armor sim.Variant) LoadoutEntry {
+		return LoadoutEntry{
+			BlueprintID: id, BlueprintName: name, ProgramID: 1, ProgramName: "scavenger",
+			Components: []int{int(sim.Tracks), int(armor), int(sim.Manipulator), int(sim.PartsRadar)},
+			Program:    mustEncode(t, DefaultProgram()),
+		}
+	}
+	l := Loadout{Entries: []LoadoutEntry{
+		entry(1, "medium scavenger", sim.MediumArmor),
+		entry(2, "light scavenger", sim.LightArmor),
+	}}
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatalf("encode loadout: %v", err)
+	}
+	return raw
+}
+
+// TestLoadoutTooExpensiveToFieldFails: the pre-generation guard. A loadout whose
+// cheapest approval costs more than the whole budget would field no robots, and
+// a colony with neither robots nor stock can never act again (design §5.3), so
+// the match must refuse to start rather than generate an arena for it.
+func TestLoadoutTooExpensiveToFieldFails(t *testing.T) {
+	raw, err := json.Marshal(Loadout{Entries: []LoadoutEntry{{
+		BlueprintID: 1, BlueprintName: "gunner", ProgramID: 1, ProgramName: "scavenger",
+		Components: []int{int(sim.Tracks), int(sim.HeavyArmor), int(sim.Laser), int(sim.EnemyRadar)},
+		Program:    mustEncode(t, DefaultProgram()),
+	}}})
+	if err != nil {
+		t.Fatalf("encode loadout: %v", err)
+	}
+	m := db.Member{UserID: 1, DisplayName: "ada", Loadout: raw}
+	if _, err := memberKit(m, 10); err == nil {
+		t.Fatal("memberKit() accepted a loadout no approval of which fits the budget")
+	}
+	if _, err := memberKit(m, defaultStartingBudget()); err != nil {
+		t.Fatalf("memberKit() with an affordable approval = %v", err)
 	}
 }
 

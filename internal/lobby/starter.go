@@ -204,7 +204,18 @@ func DefaultProgram() prog.Program {
 type kit struct {
 	blueprints []sim.Blueprint
 	programs   []namedProgram
-	start      []sim.Blueprint // one per starting robot
+
+	// start is a fixed opening, one entry per starting robot: the built-in
+	// human kit and every AI profile field exactly what is listed here. It is
+	// nil for a player's loadout, whose opening is drawn from choices instead.
+	start []sim.Blueprint
+
+	// choices is the pool the opening roster is drawn from, and is set only for
+	// a player's loadout (see startingRoster). humanKit and the AI profiles
+	// leave it nil and keep their fixed start: their openings are what the
+	// measured ladder in ai.go was tuned against, so randomising them would
+	// retune the ladder behind the numbers written there.
+	choices []sim.Blueprint
 
 	// budget is the match's starting budget when this is a player's colony,
 	// and zero for the canned AI kits. Design §2.1's equal budget is a rule
@@ -251,14 +262,21 @@ func repeat(bp sim.Blueprint, n int) []sim.Blueprint {
 // the same seed, member list and AI list start identical.
 func equipColony(w *sim.World, base *sim.Base, k kit) {
 	base.Blueprints = append(base.Blueprints, k.blueprints...)
+	start := k.start
+	if k.choices != nil {
+		// A player's loadout: the opening is drawn here rather than listed,
+		// because this is the first point in a match's life with an rng.
+		start = startingRoster(w.Rand(), k.choices, k.budget)
+	}
 	spent := 0
-	for _, bp := range k.start {
-		// The budget bounds the whole roster, not just the one startingRoster
-		// priced: the built-in kit is a fixed list of three robots, so a host
-		// who sets a budget below what it costs has to see it cut here or that
-		// colony would out-equip one whose player picked a loadout. The tail
-		// goes first, which keeps the cheapest body. What the cut frees is not
-		// lost; it comes back below as stock.
+	for _, bp := range start {
+		// The budget bounds a fixed start list too, not only a drawn one: the
+		// built-in kit is a fixed list of three robots, so a host who sets a
+		// budget below what it costs has to see it cut here or that colony
+		// would out-equip one whose player picked a loadout. The tail goes
+		// first, which keeps the cheapest body. What the cut frees is not lost;
+		// it comes back below as stock. A drawn roster is already inside the
+		// budget, so this never trims one.
 		if k.budget > 0 && spent+bp.Value() > k.budget {
 			break
 		}

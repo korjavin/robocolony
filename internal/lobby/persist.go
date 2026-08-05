@@ -176,9 +176,19 @@ var fingerprint = sync.OnceValue(func() string {
 	// be invisible here, and a build that converts differently would accept a
 	// log recorded by one that did not — the divergence would then be a colony
 	// that starts with stock it never had.
-	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 2, Seed: 0x5eed,
+	set := Settings{DurationSec: 600, Richness: 0.05, SpawnPerMin: 12, MaxPlayers: 3, Seed: 0x5eed,
 		StartingBudget: 500, AI: Profiles()}
-	members := []db.Member{{UserID: 1, DisplayName: "a"}, {UserID: 2, DisplayName: "b"}}
+	members := []db.Member{
+		{UserID: 1, DisplayName: "a"},
+		{UserID: 2, DisplayName: "b"},
+		// One seat brings a loadout, so the *drawn* opening roster
+		// (startingRoster) is hashed too. Without it the mini-match only ever
+		// equips the built-in kit, whose opening is a fixed list — and a build
+		// that draws a player's opening differently would then accept a log
+		// recorded by one that did not, replaying the commands into a colony
+		// that started with robots it never had.
+		{UserID: 3, DisplayName: "c", Loadout: fingerprintLoadout()},
+	}
 
 	h := fnv.New64a()
 	m, err := newMatch(db.Lobby{ID: 0, Name: "fingerprint"}, set, members)
@@ -205,3 +215,33 @@ var fingerprint = sync.OnceValue(func() string {
 // fingerprintTicks is long enough for the mini-match to build and deposit, and
 // short enough to compute at startup: ~10ms.
 const fingerprintTicks = 300
+
+// fingerprintLoadout is the mini-match's player loadout: two scavengers that
+// differ only in armor, both affordable for every draw of the opening roster.
+// Two live options on purpose — a pool with one affordable entry makes the
+// draw's Intn(1) return zero however it is drawn, which is the masking pattern
+// docs/engineering-notes.md records twice.
+//
+// A nil result (unreachable: these are constants) simply seats a member with no
+// loadout, which is a fingerprint that covers less rather than a wrong one.
+func fingerprintLoadout() json.RawMessage {
+	rules, err := DefaultProgram().Encode()
+	if err != nil {
+		return nil
+	}
+	entry := func(id int64, name string, armor sim.Variant) LoadoutEntry {
+		return LoadoutEntry{
+			BlueprintID: id, BlueprintName: name, ProgramID: 1, ProgramName: "scavenger",
+			Components: []int{int(sim.Tracks), int(armor), int(sim.Manipulator), int(sim.PartsRadar)},
+			Program:    rules,
+		}
+	}
+	raw, err := json.Marshal(Loadout{Entries: []LoadoutEntry{
+		entry(1, "medium scavenger", sim.MediumArmor),
+		entry(2, "light scavenger", sim.LightArmor),
+	}})
+	if err != nil {
+		return nil
+	}
+	return raw
+}
