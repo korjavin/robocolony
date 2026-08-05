@@ -64,14 +64,20 @@ surviving one in any of the 112 matches. Destroyed-enemy-value was considered an
 credit pays twice.
 
 **AI ladder** — 16 seeds × 6000 ticks, each profile against the default kit.
-After the base-guard change:
+Re-measured after the signal radius and mass-dependent build time landed; no
+profile was retuned, so these are the effect of those two changes on the
+profiles exactly as they were. `internal/lobby/ai.go` carries the same table in
+a comment and is the copy to trust if these ever disagree.
 
-| profile | wipes the human | earliest wipe |
-|---|---|---|
-| tutorial | 0/16 | — |
-| peaceful | 0/16 | — |
-| defensive | 1/16 | 4898 |
-| aggressive | 8/16 | ~636 |
+| profile | wipes the human | earliest wipe | avg wipe tick |
+|---|---|---|---|
+| tutorial | 0/16 | — | — |
+| peaceful | 0/16 | — | — |
+| defensive | 0/16 | — | — |
+| aggressive | 10/16 | 999 | 2167 |
+
+The radius is what softened the defensive rung: a spotter's `COME_HERE` no
+longer reaches a responder in the far corner.
 
 Tutorial and peaceful **cannot** kill: no blueprint in either carries a weapon,
 pinned by a static test.

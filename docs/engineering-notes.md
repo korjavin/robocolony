@@ -9,7 +9,7 @@ Every entry here cost real debugging time at least once.
 ## The determinism guard has holes, and they are not obvious
 
 `internal/sim` is deterministic given (seed, inputs), and `TestDeterminism` plus
-`TestStateHashCoversState` guard it. **Four separate changes have found holes in
+`TestStateHashCoversState` guard it. **Six separate changes have found holes in
 that guard**, each time by deliberately breaking determinism and discovering the
 test still passed:
 
@@ -25,6 +25,12 @@ test still passed:
   world approved a single blueprint, so production's `Intn(len(buildable))` was
   `Intn(1)` — zero from any stream, invisible to both the hash and the
   rng-consumption check. Found the fifth time someone ran the deliberate break.
+- **A hole the replay test is structurally blind to.** Making the history
+  sampler consume the rng did *not* fail `TestReplayPreservesStateHash` — a
+  replay re-runs the same sampler, so live and replayed worlds diverge
+  *identically* and the comparison still matches. Any change that affects both
+  paths the same way is invisible to a test that compares them. Caught only by a
+  separate bare-world check.
 
 **The masking pattern is worth naming, because it has now appeared twice:** a
 fixture that offers exactly *one* choice makes a random draw return the same
@@ -32,13 +38,6 @@ value from any source, so swapping the rand source changes nothing and the guard
 sees nothing. Any fixture exercising a random selection needs **at least two
 live options for the whole run** — and enough stock, health or fuel that the
 second option does not quietly disappear halfway through.
-
-- **A hole the replay test is structurally blind to.** Making the history
-  sampler consume the rng did *not* fail `TestReplayPreservesStateHash` — a
-  replay re-runs the same sampler, so live and replayed worlds diverge
-  *identically* and the comparison still matches. Any change that affects both
-  paths the same way is invisible to a test that compares them. Caught only by a
-  separate bare-world check.
 
 **Therefore:** when you touch `internal/sim`, do the deliberate break. Swap one
 roll to package-level `math/rand`, confirm the guard *fails*, restore it, and
@@ -169,6 +168,15 @@ measurement contradicted the plausible story:
   is on the faster chassis.
 - Fanning the base guard across all weapons was measured as an **overshoot**
   before it was rejected, not merely suspected.
+- The per-tick frame was believed to be over its 64 KB budget, on two separate
+  extrapolations (45 KB, then 75 KB). Measured on a real match it is **~11 KB** —
+  both were pessimistic by about 6×, because they assumed 160 robots and a
+  default board sustains ~25. The fix that shipped was one honest trim, not the
+  delta protocol the extrapolation seemed to demand.
+
+**Therefore:** an extrapolation is a hypothesis. `ROBOCOLONY_FRAMESIZE=1 go test
+./internal/server/ -run TestFrameSize -v` and the balance harness both exist so
+the number can be taken rather than guessed.
 
 **Therefore:** `ROBOCOLONY_BALANCE=1 go test ./internal/lobby/ -run TestBalance -v`
 is kept in the repo. Reuse it; do not build a second harness. Report before/after
