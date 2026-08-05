@@ -73,20 +73,27 @@
   }
   .field-bar > * { flex-shrink: 0; }
 
-  /* The canvas fills whatever the panels leave and keeps the board's aspect
-     ratio. height:100% with width:auto drives the fit off the short axis and
-     lets the ratio compute the other one; max-width clamps the case where the
-     pane is taller than it is wide, and a replaced element re-derives its
-     height from the ratio when that clamp bites. The element box therefore
-     always equals the drawing surface — which matters, because clicking the
-     arena maps pointer coordinates onto canvas.width. */
+  /* The canvas is sized by its own drawing surface and two clamps, and by
+     nothing else. width/height stay auto, so the box starts at the baked
+     pixels — that is "never upscale", for free — and max-width/max-height
+     shrink it to the pane. Both auto is the one case where the constraint
+     rules scale a replaced element's *other* axis to match, so the box keeps
+     the surface's ratio however it is clamped: fixing one axis at 100% does
+     not, it stretches. The ratio matters because clicking the arena maps
+     pointer coordinates through getBoundingClientRect onto canvas.width.
+
+     The explicit 1fr track is load-bearing. A percentage max-height needs a
+     definite parent height; an auto grid row takes its size *from* the item,
+     so max-height: 100% resolved against the overflowing canvas itself and
+     clamped nothing. minmax(0, 1fr) sizes the row from the pane instead. */
   .arena-wrap {
     flex: 1 1 0; min-height: 0; position: relative;
-    display: grid; place-items: center; padding: 12px;
+    display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center; padding: 12px;
     background: var(--bg-1);
   }
   canvas {
-    display: block; width: auto; height: 100%;
+    display: block; width: auto; height: auto;
     max-width: 100%; max-height: 100%;
     border: 1px solid var(--line-1); cursor: crosshair;
     background: var(--terrain-open);
@@ -309,7 +316,7 @@
     .pane, .field { display: block; border: 0; border-top: 1px solid var(--line-1); }
     .pane-body { overflow: visible; }
     .arena-wrap { padding: 0; }
-    canvas { width: 100%; height: auto; max-height: none; }
+    canvas { max-height: none; }
     .roster .row { padding-left: 1rem; padding-right: 1rem; }
   }
 </style>
