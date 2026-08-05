@@ -11,28 +11,53 @@
      artist's impression, and it re-themes with it. -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { --page: 46rem; }
-  /* The landing page is prose: its headings and lead run a size larger than
-     the instrument pages'. */
-  h1 { font-size: 2.2rem; }
-  h2 { margin: 2.2rem 0 .5rem; }
-  .tag { margin: 0 0 .75rem; font-size: 1.1rem; opacity: .8; }
-  .alpha {
-    border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .8rem;
-    margin: 0 0 2rem; font-size: .9rem; opacity: .85;
+  /* Not a tutorial overlay. One screen that tells the truth: you do not steer
+     anything, the starter kit is unarmed, it will probably die, and that is the
+     lesson. Words on the left, one real frame of the arena on the right — the
+     only colour on the page, which is the rule the whole design turns on. */
+  :root { --page: 84rem; }
+  .first {
+    display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: 0; align-items: stretch; margin: 0 0 2.5rem;
+    border: 1px solid var(--line-1); box-shadow: var(--shadow-2);
+    background: var(--bg-elev);
   }
-  .cta { margin: 1.5rem 0; }
-  .btn { margin-right: .5rem; }
+  .first > .say {
+    padding: 2rem 2.2rem; border-right: 1px solid var(--line-1);
+    display: flex; flex-direction: column; gap: 1.2rem;
+  }
+  @media (max-width: 62rem) {
+    .first { grid-template-columns: 1fr; }
+    .first > .say { border-right: 0; border-bottom: 1px solid var(--line-1); }
+  }
+  h1 { font-size: 2.4rem; margin: .5rem 0 0; }
+  h2 { margin: 2.2rem 0 .5rem; }
+  .tag { margin: 0; color: var(--fg-1); }
 
-  /* The frame and the inspector card sit side by side on a wide screen and
-     stack on a narrow one; two flex children do it without a media query. */
-  figure { margin: 0 0 .5rem; }
-  .frame { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-start; }
-  /* min-width: 0 on both children, or a phone-width viewport scrolls
-     sideways: a flex item refuses to shrink past its content by default. */
-  .frame svg { flex: 3 1 22rem; min-width: 0; width: 100%; height: auto; border-radius: .4rem; }
+  /* The three steps are a ledger, not bullets: one hard rule between each. */
+  ol.steps { list-style: none; padding: 0; margin: 0; }
+  ol.steps li {
+    display: flex; gap: 1rem; padding: .7rem 0;
+    border-top: 1px solid var(--line-2); margin: 0;
+  }
+  ol.steps li:first-child { border-top-color: var(--line-1); }
+  ol.steps li:last-child { border-bottom: 1px solid var(--line-1); }
+  ol.steps .n {
+    font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums;
+    color: var(--fg-2);
+  }
+  ol.steps b { display: block; font-size: 14px; }
+  ol.steps span { font-size: 12px; color: var(--fg-2); }
+
+  .alpha { border: 1px solid var(--line-2); padding: .5rem .8rem; font-size: 12px; color: var(--fg-1); }
+  .cta { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: auto; }
+
+  /* The frame fills its half and the two cards float on it, because that is
+     how the match view reads too: paper laid over the field. */
+  figure.frame { margin: 0; position: relative; background: var(--terrain-open); min-height: 22rem; }
+  .frame svg { display: block; width: 100%; height: 100%; }
   .frame svg text {
-    font: 700 9px system-ui, sans-serif; text-anchor: middle;
+    font: 700 9px monospace; text-anchor: middle;
     dominant-baseline: central; fill: #fff; stroke: #0008; stroke-width: .8;
     paint-order: stroke;
   }
@@ -41,21 +66,31 @@
      rather than shared because there is no build step and this frame is frozen
      at one tick: if the shapes are ever retuned, this is the second place. */
   .frame svg .hull { stroke: #000; stroke-width: .17; }
-  .card {
-    flex: 1 1 12rem; min-width: 0; border: 1px solid var(--line);
-    border-radius: .5rem; padding: .6rem .8rem; font-size: .85rem;
+  .over {
+    position: absolute; left: 1.25rem; right: 1.25rem;
+    background: var(--bg-elev); border: 1px solid var(--line-1);
+    box-shadow: var(--shadow-1); padding: .7rem .9rem; font-size: 12px;
   }
-  .card h3 {
-    font-size: .75rem; margin: 0 0 .4rem; text-transform: uppercase;
-    letter-spacing: .06em; opacity: .7;
+  .over.tr { top: 1.25rem; left: auto; max-width: 18rem; }
+  .over.b { bottom: 1.25rem; }
+  .over h3 {
+    font-size: 10px; margin: 0 0 .4rem; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--fg-2); font-weight: 500;
   }
-  .card dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .1rem .5rem; }
-  .card dt { opacity: .65; }
-  .card dd { margin: 0; }
-  .rule { border-left: 3px solid var(--colony-0); padding-left: .5rem; margin: 0 0 .8rem; }
+  .over dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .1rem .6rem; }
+  .over dt { color: var(--fg-2); }
+  .over dd { margin: 0; }
+  .over p { margin: 0; color: var(--fg-1); }
+  .rule { border-left: 3px solid var(--fg-0); padding-left: .5rem; margin: 0 0 .6rem; }
   .rule .idx { font-weight: 700; }
-  .rule .act { font-family: ui-monospace, monospace; font-size: .8rem; }
-  figcaption { margin-top: .6rem; font-size: .85rem; opacity: .75; }
+  .rule .act { font-size: 11px; }
+  @media (max-width: 48rem) {
+    /* At phone width the cards would cover the frame they annotate, so they
+       stop floating and stack under it. */
+    figure.frame { min-height: 0; }
+    .over { position: static; margin: 0; border-top: 0; }
+    .over.tr { max-width: none; }
+  }
 
   ul { padding-left: 1.2rem; }
   ol { padding-left: 1.3rem; }
@@ -73,20 +108,49 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>robocolony</h1>
-  <p class="tag">You design the robots and write the rules they follow. Then they
-  compete without you &mdash; including while you are logged out.</p>
+  <section class="first">
+    <div class="say">
+      <div>
+        <div class="label">Step 1 of 3 &mdash; what you do</div>
+        <h1>You are not the commander.</h1>
+      </div>
+      <p class="tag">You design the robots and write the rules they follow. Then
+      they compete without you &mdash; including while you are logged out.
+      Nothing on this screen steers anything.</p>
 
-  <p class="alpha"><strong>Pre-alpha.</strong> Playable end to end, but young:
-  balance still moves. A restart resumes the matches that were running; a deploy
-  that changes the simulation ends them instead.</p>
+      <ol class="steps">
+        <li><span class="n">01</span><div>
+          <b>Assemble a blueprint</b>
+          <span>Parts compete for one budget and add mass that slows the robot down.</span>
+        </div></li>
+        <li><span class="n">02</span><div>
+          <b>Write a priority list</b>
+          <span>Every robot re-decides every tick. The first rule that matches takes the tick.</span>
+        </div></li>
+        <li><span class="n">03</span><div>
+          <b>Watch, and find out what you forgot</b>
+          <span>Two robots walking past each other facing the wrong way is not a bug. It is the game.</span>
+        </div></li>
+      </ol>
 
-  <figure>
-    <div class="frame">
+      <p class="alpha"><strong>Pre-alpha.</strong> Playable end to end, but young:
+      balance still moves. A restart resumes the matches that were running; a
+      deploy that changes the simulation ends them instead.</p>
+
+      <div class="cta">
+        <a class="btn primary" href="/lobby">Start a match &rarr;</a>
+        <a class="btn" href="/editor">Open the editor first</a>
+      </div>
+    </div>
+
+    <figure class="frame">
       <!-- A real frame, not a mock-up: the crop below is the state of match
            seed 55 at tick 400, drawn by the rules match.js draws by (design
            §7.1 wedge, colony colours, blueprint-initial glyphs). -->
-      <svg viewBox="0 0 364 224" role="img"
+      <!-- meet, not slice: the caption below names things in this crop, and a
+           fill-the-box slice cuts half of them off at any aspect ratio but the
+           frame's own. It letterboxes against the terrain colour instead. -->
+      <svg viewBox="0 0 364 224" role="img" preserveAspectRatio="xMidYMid meet"
            aria-label="A crop of the arena: a scavenger with its vision wedge lit
                        up, a second scavenger cornered by an enemy gunner beside
                        the home base and its guard, and a loose radar component
@@ -105,8 +169,9 @@
       </svg>
 
       <!-- The inspector, as the match page renders it for the robot you have
-           selected: the rule that took the tick, then what the robot is. -->
-      <div class="card">
+           selected: the rule that took the tick, then what the robot is. It
+           floats on the frame here for the same reason it does there. -->
+      <div class="over tr">
         <h3>Active rule</h3>
         <div class="rule">
           <div class="idx">rule 3</div>
@@ -123,24 +188,26 @@
           <dt>Health</dt><dd>106 / 120</dd>
         </dl>
       </div>
-    </div>
-    <figcaption>One real frame &mdash; seed 55, tick 400, one colony against the
-    aggressive AI. The hulls are robots, drawn as what they are built from: the
-    shape is the chassis they run on, a barrel past the nose means a weapon, the
-    nose is the way they face, and the letter is their blueprint's initial. The
-    tinted wedge is everything the
-    selected robot can see, diamonds are components lying on the ground, and
-    <strong>B</strong> is a base. Blue has just picked up a laser it cannot fire
-    and is carrying it home for the base to build with; four cells from that
-    base, another of its scavengers is down to 50 health with an orange gunner
-    in the next cell &mdash; and nobody is going to tell either of them what to
-    do about it.</figcaption>
-  </figure>
 
-  <div class="cta">
-    <a class="btn" href="/lobby">Start a match</a>
-    <a class="btn" href="/editor">Open the editor</a>
-  </div>
+      <figcaption class="over b">
+        <h3>One real frame &mdash; seed 55, tick 400</h3>
+        <p>The hulls are robots, drawn as what they are built from: the shape is
+        the chassis they run on, a barrel past the nose means a weapon, the nose
+        is the way they face, and the letter is their blueprint's initial. The
+        tinted wedge is everything the selected robot can see, diamonds are
+        components lying on the ground, and <strong>B</strong> is a base. Blue
+        has just picked up a laser it cannot fire and is carrying it home for the
+        base to build with; four cells from that base, another of its scavengers
+        is down to 50 health with an orange gunner in the next cell &mdash; and
+        nobody is going to tell either of them what to do about it.</p>
+      </figcaption>
+    </figure>
+  </section>
+
+  <p class="alpha" style="margin-bottom:2rem">You do not have to write anything
+  yet. A colony that has approved nothing opens with the built-in starter kit. It
+  is unarmed, and against the aggressive AI it usually dies &mdash; which is the
+  moment to open the editor.</p>
 
   <h2>What you actually do</h2>
 

@@ -7,17 +7,37 @@
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  label { display: inline-block; margin: .25rem .75rem .25rem 0; }
+  /* A lobby is a contract: duration, seats, and who is sitting in them. The
+     contracts you can join are on the left; the one you are writing is on the
+     right, where it stays put while the lists above it refresh. */
+  :root { --page: 84rem; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) 26rem; gap: 0; align-items: start; }
+  .cols > .new {
+    border-left: 1px solid var(--line-2); padding-left: 1.5rem; margin-left: 1.5rem;
+    position: sticky; top: 1rem;
+  }
+  @media (max-width: 68rem) {
+    .cols { grid-template-columns: 1fr; }
+    .cols > .new { border-left: 0; padding-left: 0; margin-left: 0; position: static; }
+  }
+  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+       color: var(--fg-2); font-weight: 500; margin: 1.6rem 0 .5rem; }
+
+  label { display: inline-block; margin: .25rem .75rem .25rem 0; font-size: 12px; }
   input { width: 8rem; }
-  input[name=name] { width: 16rem; }
+  input[name=name] { width: 100%; }
   /* Lobby and match rows: a list of panels, so the border matches every other
      grouped box in the app. */
-  ul { list-style: none; padding: 0; }
-  li { border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem; margin: .5rem 0; }
-  li button, li select { margin: .3rem .3rem 0 0; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li {
+    border: 1px solid var(--line-2); background: var(--bg-elev);
+    padding: .6rem .8rem; margin: .4rem 0;
+  }
+  li button, li select { margin: .3rem .3rem 0 0; font-size: 12px; }
   /* A running match is the one thing on this page you cannot get back to any
-     other way, so it reads as a link and not as one more grey row. */
-  .watch { font-weight: 600; }
+     other way, so its row is the raised one and its link is the loud one. */
+  #running li:first-child { border-color: var(--line-1); box-shadow: var(--shadow-1); }
+  .watch { font-weight: 700; font-size: 15px; }
 </style>
 </head>
 <body>
@@ -37,27 +57,34 @@
 
   <p class="err" id="err"></p>
 
-  <h2>Matches in progress</h2>
-  <ul id="running"></ul>
+  <div class="cols">
+    <div>
+      <h2>Matches in progress &mdash; they run whether or not anyone is watching</h2>
+      <ul id="running"></ul>
 
-  <h2>Open lobbies</h2>
-  <ul id="lobbies"></ul>
+      <h2>Open lobbies &mdash; waiting for players</h2>
+      <ul id="lobbies"></ul>
+    </div>
 
-  <h2>New lobby</h2>
-  <form id="create">
-    <fieldset>
-      <legend>Settings</legend>
-      <label>Name <input name="name" required maxlength="64" value="my colony"></label><br>
-      <label>Duration (s) <input name="duration_sec" type="number" min="60" max="7200" value="600"></label>
-      <label>Richness <input name="richness" type="number" step="0.001" min="0.001" max="0.25" value="0.02"></label>
-      <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
-      <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
-      <label>Starting budget <input name="starting_budget" type="number" min="115" max="3450" value="345"></label>
-      <p class="meta">Budget is component value per colony. Whatever your opening robots do not spend arrives as parts in your base.</p>
-      <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
-      <button type="submit">Create</button>
-    </fieldset>
-  </form>
+    <div class="new">
+      <h2>New lobby</h2>
+      <p class="meta">The defaults make a fine first match.</p>
+      <form id="create">
+        <fieldset>
+          <legend>Settings</legend>
+          <label>Name <input name="name" required maxlength="64" value="my colony"></label><br>
+          <label>Duration (s) <input name="duration_sec" type="number" min="60" max="7200" value="600"></label>
+          <label>Richness <input name="richness" type="number" step="0.001" min="0.001" max="0.25" value="0.02"></label>
+          <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
+          <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
+          <label>Starting budget <input name="starting_budget" type="number" min="115" max="3450" value="345"></label>
+          <p class="meta">Budget is component value per colony. Whatever your opening robots do not spend arrives as parts in your base.</p>
+          <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
+          <button class="btn primary" type="submit">Create</button>
+        </fieldset>
+      </form>
+    </div>
+  </div>
 
 <script type="module">
 const $ = (id) => document.getElementById(id);

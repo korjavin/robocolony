@@ -11,69 +11,192 @@
      reference the same names through var(). -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { --page: 78rem; }
-  body { padding-bottom: 2rem; }
-  h1 { font-size: 1.6rem; }
-  /* A section kicker inside a panel, not a heading in prose. */
-  h3 { font-size: .9rem; margin: .8rem 0 .2rem; text-transform: uppercase;
-       letter-spacing: .06em; opacity: .7; }
-  .tag { margin: 0 0 1rem; }
-  table { width: 100%; }
+  /* The match view is the screen the game is understood on, so it is laid out
+     as an instrument and not as a page: roster left, field centre, the mind of
+     one robot right, and nothing scrolling but the panes themselves. Colour is
+     confined to the field — the three columns around it are paper and rules. */
+  :root { --page: none; }
+  body.shell { grid-template-rows: 48px auto 1fr; }
 
-  .bar {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 1rem;
-    margin: 0 0 .75rem;
+  /* The nav has to stay byte-identical across six files (web/nav_test.go), so
+     the match's own identity — name, clock, connection — gets the band under
+     it rather than a seventh nav variant. */
+  .matchbar {
+    display: flex; align-items: center; gap: 16px;
+    height: 42px; padding: 0 16px; border-bottom: 1px solid var(--line-1);
+    white-space: nowrap; overflow-x: auto;
   }
-  .clock { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
-  .conn { border: 1px solid; border-radius: .4rem; padding: .05rem .5rem;
-          font-size: .8rem; }
-  .conn.live { color: var(--ok); }
+  .matchbar > * { flex-shrink: 0; }
+  .matchbar h1 { font-size: 13px; font-weight: 400; color: var(--fg-2); letter-spacing: 0; }
+  .grow { flex: 1 1 auto; }
+  .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #tick { font-variant-numeric: tabular-nums; }
+  /* Connection state is a badge like every other fact in the chrome. It keeps a
+     colour because it is the one thing on screen that reports on the page
+     rather than on the match, and a lost stream must not read as calm. */
+  .conn {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 1px 7px; border: 1px solid currentColor;
+  }
+  .conn.live { background: var(--fg-0); color: var(--bg-0); border-color: var(--fg-0); }
   .conn.retry { color: var(--warn); }
-  .conn.over { color: var(--colony-7); }
+  .conn.over { color: var(--fg-2); }
 
-  /* The arena takes three parts of the spare width to the panels' one: the
-     canvas is capped at its baked size and was being drawn at two-thirds of it
-     on a full-width window, which is the whole point of this screen. */
-  .cols { display: flex; flex-wrap: wrap; gap: 1.25rem; align-items: flex-start; }
-  .arena { flex: 3 1 30rem; min-width: 18rem; }
-  .side { flex: 1 1 20rem; min-width: 17rem; }
-
-  /* Foldable panels. <details> is native: it needs no JavaScript to fold, and
-     its control lives in the <summary>, which is outside #inspector — that
-     element is replaceChildren()-ed ten times a second and would destroy any
-     control put inside it. match.js only remembers the open ones. */
-  details.fold { margin: .6rem 0; }
-  details.fold > summary { cursor: pointer; font-size: 1.05rem; font-weight: 600; }
-  details.fold[open] > summary {
-    margin-bottom: .45rem; padding-bottom: .35rem;
-    border-bottom: 1px solid var(--line);
+  /* Three columns, fixed on the outside and elastic in the middle: the field
+     takes every pixel the panels do not need. Below 68rem the panels stack
+     under it, which is the phone and the split window. */
+  main.mgrid {
+    display: grid; grid-template-columns: 264px 1fr 356px;
+    min-height: 0; overflow: hidden;
   }
 
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane.left { border-right: 1px solid var(--line-1); }
+  .pane.right { border-left: 1px solid var(--line-1); }
+  .pane-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 14px; border-bottom: 1px solid var(--line-2);
+  }
+  .pane-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+  .pane-foot {
+    border-top: 1px solid var(--line-1); padding: 10px 14px;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+
+  /* Field ---------------------------------------------------------------- */
+
+  .field { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .field-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; border-bottom: 1px solid var(--line-2);
+    white-space: nowrap; overflow-x: auto;
+  }
+  .field-bar > * { flex-shrink: 0; }
+
+  /* The canvas fills whatever the panels leave and keeps the board's aspect
+     ratio. height:100% with width:auto drives the fit off the short axis and
+     lets the ratio compute the other one; max-width clamps the case where the
+     pane is taller than it is wide, and a replaced element re-derives its
+     height from the ratio when that clamp bites. The element box therefore
+     always equals the drawing surface — which matters, because clicking the
+     arena maps pointer coordinates onto canvas.width. */
+  .arena-wrap {
+    flex: 1 1 0; min-height: 0; position: relative;
+    display: grid; place-items: center; padding: 12px;
+    background: var(--bg-1);
+  }
   canvas {
-    width: 100%; height: auto; display: block;
-    border: 1px solid var(--line); border-radius: .4rem; cursor: crosshair;
+    display: block; width: auto; height: 100%;
+    max-width: 100%; max-height: 100%;
+    border: 1px solid var(--line-1); cursor: crosshair;
     background: var(--terrain-open);
   }
 
-  .swatch { display: inline-block; width: .7rem; height: .7rem;
-            border-radius: .2rem; margin-right: .35rem; }
+  /* Anything floating over the map is a raised card: 1px rule, 2px offset, no
+     blur, so it reads as paper laid on the field rather than as glass. */
+  .overlay {
+    position: absolute; z-index: 1; max-width: 22rem;
+    background: var(--bg-elev); border: 1px solid var(--line-1);
+    box-shadow: var(--shadow-1); padding: 8px 10px;
+  }
+  .overlay.tl { top: 20px; left: 20px; }
+  .overlay.bl { bottom: 20px; left: 20px; }
+
+  /* Timeline. There is no scrubbing here: the server keeps no per-tick history
+     to seek into, so this says where in the match you are and nothing it cannot
+     back up. Replay is the follow-up, and it is a server change first. */
+  .timeline { border-top: 1px solid var(--line-1); padding: 10px 14px 12px; }
+  .timeline .head { display: flex; align-items: baseline; gap: 12px; }
+  .track {
+    position: relative; height: 26px; margin-top: 8px;
+    border: 1px solid var(--line-1); background: var(--bg-1);
+  }
+  .track > i { display: block; height: 100%; width: 0; background: var(--bg-2); }
+  /* The head is the right edge of the fill: one element, no second position to
+     keep in step with it. */
+  .track > i::after {
+    content: ""; position: absolute; top: -3px; bottom: -3px; right: -1px;
+    width: 3px; background: var(--fg-0);
+  }
+  .ticks {
+    display: flex; justify-content: space-between; margin-top: 6px;
+    font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums;
+  }
+
+  /* Roster --------------------------------------------------------------- */
+
+  /* Rows are <button>s so focus, Enter and Space come for free. One line per
+     robot, inverted when selected — the design's rule that the loudest thing
+     in a list is the thing you picked. */
+  .roster { display: grid; align-content: start; }
+  .roster .row {
+    display: grid; grid-template-columns: 9px 1fr auto; gap: 2px 8px;
+    align-items: baseline; width: 100%; text-align: left;
+    font: inherit; font-size: 12px;
+    padding: 7px 14px; border: 0; border-bottom: 1px solid var(--line-3);
+    background: none; color: inherit; box-shadow: none;
+  }
+  .roster .row:hover { background: var(--bg-2); color: var(--fg-0); }
+  .roster .row.sel { background: var(--fg-0); color: var(--bg-0); }
+  .roster .row.sel .sub, .roster .row.sel .num { color: inherit; opacity: .85; }
+  .roster .swatch { width: 9px; height: 9px; display: block; align-self: center; }
+  .roster .row .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .roster .row .num { font-variant-numeric: tabular-nums; color: var(--fg-2); }
+  .roster .row .num.hurt { color: var(--warn); }
+  .roster .row .num.crit { color: var(--bad); }
+  .roster .row.sel .num.hurt, .roster .row.sel .num.crit { color: inherit; font-weight: 700; }
+  .roster .row .sub {
+    grid-column: 2 / 4; display: flex; gap: .5rem; justify-content: space-between;
+    font-size: 11px; color: var(--fg-2); min-width: 0;
+  }
+  .roster .row .act { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .roster .row .cargo:not(:empty)::before { content: "◆ "; }
+  .roster .row .cargo { white-space: nowrap; }
+
+  /* Inspector ------------------------------------------------------------ */
+
+  /* Every panel folds, and match.js remembers which are open across a reload.
+     <details> is native: it needs no JavaScript to fold, and its control lives
+     in the <summary>, which is outside #inspector — that element is
+     replaceChildren()-ed ten times a second and would destroy any control put
+     inside it. */
+  details.fold { border-bottom: 1px solid var(--line-2); }
+  details.fold > summary {
+    cursor: pointer; padding: 11px 16px; list-style-position: inside;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--fg-2); font-weight: 500;
+  }
+  details.fold > summary:hover { background: var(--bg-2); color: var(--fg-0); }
+  details.fold[open] > summary { color: var(--fg-0); }
+  details.fold > :not(summary) { padding: 0 16px; }
+  details.fold > :last-child { padding-bottom: 12px; }
+  /* The legend is a card that supplies its own padding; the folds in the
+     inspector take theirs from the rule above. */
+  #legend > :not(summary) { padding: 0; }
+
+  h3 {
+    font-size: 11px; margin: 12px 0 4px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--fg-2); font-weight: 500;
+  }
+
+  .swatch { display: inline-block; width: .7rem; height: .7rem; margin-right: .35rem; }
 
   /* Map legend. Every swatch takes its colour from the same custom property
      the canvas reads — via var(), never a literal — so the legend cannot drift
      from what is drawn, and it follows the theme without a re-render. Marks
      that are a shape rather than a flat colour (the heading notch, the vision
      wedge) are drawn as SVG rather than described in prose. */
-  .legend { margin-top: .5rem; font-size: .85rem; }
-  .legend > summary { cursor: pointer; opacity: .7; }
-  .legend h4 { margin: .5rem 0 .1rem; font-size: .72rem; font-weight: 700;
-               text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+  #legend { border: 0; }
+  #legend > summary { padding: 0; color: var(--fg-0); }
+  .legend { font-size: 11px; }
+  .legend h4 { margin: .6rem 0 .1rem; font-size: 10px; font-weight: 500;
+               text-transform: uppercase; letter-spacing: .06em; color: var(--fg-2); }
   ul.lg { list-style: none; margin: 0; padding: 0;
           display: flex; flex-wrap: wrap; gap: .1rem .9rem; }
   ul.lg > li { display: flex; align-items: center; gap: .3rem; min-width: 0; }
   ul.lg .swatch { margin: 0; }
-  ul.lg svg { display: block; width: 1.15rem; height: 1.15rem; flex: none;
-              border-radius: .2rem; }
-  ul.lg .note { opacity: .65; }
+  ul.lg svg { display: block; width: 1.15rem; height: 1.15rem; flex: none; }
+  ul.lg .note { color: var(--fg-2); }
   /* A robot in the legend is the path match.js fills, inserted by it — see
      SHAPES. non-scaling-stroke keeps the outline one weight whatever scale the
      glyph's <g> carries, so the geometry lives in exactly one place. */
@@ -83,21 +206,24 @@
 
   /* A colony with no robots and nothing its base can build is out for good
      (design §5.3). It must not read as merely between builds. */
-  .out { font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  .out { font-size: 10px; font-weight: 700; text-transform: uppercase;
          letter-spacing: .06em; color: var(--bad); border: 1px solid currentColor;
-         border-radius: .3rem; padding: 0 .25rem; margin-left: .35rem; }
+         padding: 0 .25rem; margin-left: .35rem; }
   .out:first-child { margin-left: 0; }
-  #stats tr.outrow td { opacity: .6; }
-  /* Same red, said in a sentence, for the player it happened to. */
-  .spectating { margin: 0 0 1rem; padding: .4rem .7rem; font-size: .92rem;
-                border: 1px solid var(--bad); border-left-width: .35rem;
-                border-radius: .4rem; }
+  #stats tr.outrow td { color: var(--fg-2); }
+  /* Said in a sentence, for the player it happened to. */
+  .spectating { margin: 0; padding: 10px 16px; font-size: 12px;
+                border-bottom: 1px solid var(--line-1);
+                border-left: 3px solid var(--bad); }
 
   /* The standing carries nine columns now that the §4.4 telemetry is on the
      wire. .tablewrap (app.css) scrolls it sideways in a narrow panel rather
      than wrapping the numbers into an unreadable stack. */
-  .tablewrap table { min-width: 22rem; }
-  #stats td, #stats th { padding-right: .6rem; }
+  .tablewrap table { min-width: 22rem; width: 100%; }
+  #stats { font-size: 12px; font-variant-numeric: tabular-nums; }
+  #stats td, #stats th { padding: .2rem .6rem .2rem 0; }
+  #stats th { font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+              color: var(--fg-2); font-weight: 500; border-bottom: 1px solid var(--line-2); }
   #stats td.num { padding-right: .9rem; }
   /* One line per colony: a wrapped name makes every row two rows tall, which
      is a worse trade than scrolling the last column into view. */
@@ -105,97 +231,91 @@
 
   /* Score-over-time graph. Colours come from --colony-N, never a literal. */
   .graph-head { display: flex; align-items: baseline; gap: .5rem;
-                font-size: .85rem; margin: .2rem 0 .3rem; }
-  .graph-head select { padding: .1rem .4rem; font-size: .85rem; }
-  .graph { display: block; width: 100%; height: 9rem;
-           border: 1px solid var(--line); border-radius: .4rem; background: var(--wash); }
+                font-size: 11px; margin: .2rem 0 .3rem; }
+  .graph-head select { padding: .1rem .4rem; font-size: 11px; }
+  .graph { display: block; width: 100%; height: 8rem;
+           border: 1px solid var(--line-1); background: var(--bg-1); }
   .graph polyline { fill: none; stroke-width: 2; stroke-linejoin: round;
                     stroke-linecap: round; }
 
-  .hp { height: .45rem; border-radius: .25rem; background: #7f8a9944;
-        overflow: hidden; margin: .2rem 0 .4rem; }
-  .hp > i { display: block; height: 100%; background: var(--ok); }
+  .hp { height: 8px; border: 1px solid var(--line-1); background: var(--bg-1);
+        overflow: hidden; margin: .3rem 0 .5rem; }
+  .hp > i { display: block; height: 100%; background: var(--fg-0); }
   .hp.hurt > i { background: var(--warn); }
   .hp.crit > i { background: var(--bad); }
 
-  /* The active rule is the point of the inspector (design §13, criterion 9). */
-  .rule { border: 1px solid var(--line); border-left-width: .35rem;
-          border-radius: .4rem; padding: .45rem .7rem; margin: .3rem 0 .6rem; }
-  .rule.idle { opacity: .75; }
-  .rule .idx { font-size: 1.15rem; font-weight: 700; }
-  .rule .act { font-family: ui-monospace, monospace; font-size: .95rem; }
-  .rule .why { font-size: .9rem; opacity: .85; }
+  /* The active rule is the point of the inspector (design §13, criterion 9),
+     so it is the one card in the column that is raised off the paper. */
+  .rule {
+    border: 1px solid var(--line-1); box-shadow: var(--shadow-1);
+    background: var(--bg-elev); padding: 9px 12px; margin: .3rem 0 .8rem;
+  }
+  .rule.idle { box-shadow: none; border-color: var(--line-2); color: var(--fg-1); }
+  .rule .idx { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rule .act { font-weight: 700; }
+  .rule .why { font-size: 12px; color: var(--fg-1); }
   dl { margin: .2rem 0; display: grid; grid-template-columns: auto 1fr;
-       gap: 0 .8rem; font-size: .92rem; }
-  dt { opacity: .65; }
+       gap: 3px .8rem; font-size: 12px; }
+  dt { color: var(--fg-2); }
   dd { margin: 0; }
-  code { font-family: ui-monospace, monospace; font-size: .9em; }
-  ul.tight { list-style: none; padding: 0; margin: .2rem 0; font-size: .92rem; }
+  ul.tight { list-style: none; padding: 0; margin: .2rem 0; font-size: 12px; }
 
   /* Recall and reprogramming (design §4.2). The controls themselves come from
      app.css, so they are the lobby page's controls: one visual language. */
-  .cmd { display: grid; gap: .4rem; }
+  .cmd { display: grid; gap: .4rem; padding-top: .4rem; }
   .cmd .row { display: flex; gap: .4rem; }
-  .cmd .row select { flex: 1 1 auto; min-width: 0; }
-  .cmd .state { font-size: .92rem; }
-  .cmd .state.back { color: var(--warn); font-weight: 600; }
-  .cmd .state.home { color: var(--ok); font-weight: 600; }
-  .cmd .note { margin: 0; font-size: .9rem; min-height: 1.2em; }
-  .cmd .note.ok  { color: var(--ok); font-weight: 600; }
-  .cmd .note.bad { color: var(--bad); font-weight: 600; }
+  .cmd .row select, .cmd .row button { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+  .cmd .state { font-size: 12px; }
+  .cmd .state.back { color: var(--warn); font-weight: 700; }
+  .cmd .state.home { color: var(--ok); font-weight: 700; }
+  .cmd .note { margin: 0; font-size: 11px; min-height: 1.2em; }
+  .cmd .note.ok  { color: var(--ok); font-weight: 700; }
+  .cmd .note.bad { color: var(--bad); font-weight: 700; }
   /* Design §13, criterion 6 is verified by eye right here. */
-  ul.tight.cleared { border-left: .2rem solid var(--ok); padding-left: .5rem; }
-
-  /* Robot roster. Rows are <button>s so focus, Enter and Space come for free. */
-  .roster { max-height: 18rem; overflow-y: auto; overflow-x: hidden;
-            display: grid; align-content: start; gap: .1rem; }
-  .roster .row {
-    display: grid; grid-template-columns: auto 1fr auto; gap: 0 .35rem;
-    align-items: baseline; width: 100%; text-align: left; font: inherit;
-    padding: .15rem .35rem; border: 1px solid transparent; border-radius: .3rem;
-    background: none; color: inherit;
-  }
-  .roster .row:hover { background: #7f8a9922; }
-  .roster .row.sel { border-color: currentColor; background: #7f8a9933; }
-  .roster .row .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .roster .row .num { font-size: .85rem; font-variant-numeric: tabular-nums; opacity: .8; }
-  .roster .row .num.hurt { color: var(--warn); opacity: 1; }
-  .roster .row .num.crit { color: var(--bad); opacity: 1; }
-  .roster .row .sub {
-    grid-column: 2 / 4; display: flex; gap: .5rem; justify-content: space-between;
-    font-size: .8rem; line-height: 1.35; opacity: .75; min-width: 0;
-  }
-  .roster .row .act { font-family: ui-monospace, monospace;
-                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .roster .row .cargo:not(:empty)::before { content: "◆ "; }
-  .roster .row .cargo { white-space: nowrap; }
+  ul.tight.cleared { border-left: 2px solid var(--ok); padding-left: .5rem; }
 
   /* Trace history (design §10.10). Newest first, and runs of identical
      decisions collapse into one entry — a robot decides ten times a second,
      and an uncollapsed list is a debug dump, not something a player reads. */
   .hist-list { max-height: 20rem; overflow-y: auto; overflow-x: hidden;
-               display: grid; align-content: start; gap: .25rem; }
-  .hist { border-left: .2rem solid #7f8a9955; padding: .1rem 0 .1rem .5rem; }
-  .hist.idle { opacity: .7; }
-  .hist.acted { border-left-color: currentColor; }
-  .hist .when { font-size: .78rem; opacity: .6; font-variant-numeric: tabular-nums; }
+               display: grid; align-content: start; gap: .3rem; }
+  .hist { border-left: 2px solid var(--line-2); padding: .1rem 0 .1rem .55rem; }
+  .hist.idle { color: var(--fg-2); }
+  .hist.acted { border-left-color: var(--fg-0); }
+  .hist .when { font-size: 10px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
   .hist .head { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
-  .hist .idx { font-size: .85rem; font-weight: 700; }
-  .hist .act { font-family: ui-monospace, monospace; font-size: .85rem; }
-  .hist .at { font-size: .8rem; font-variant-numeric: tabular-nums; opacity: .75; }
-  .hist .why { font-size: .85rem; opacity: .8; }
-  .hist .also { font-size: .78rem; opacity: .65; }
-  .hist .chip { font-size: .8rem; }
-  .hist .chip.mem::before { content: "✎ "; color: var(--ok); }
+  .hist .idx { font-size: 12px; font-weight: 700; }
+  .hist .act { font-size: 11px; }
+  .hist .at { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
+  .hist .why { font-size: 11px; color: var(--fg-1); }
+  .hist .also { font-size: 10px; color: var(--fg-2); }
+  .hist .chip { font-size: 11px; }
+  .hist .chip.mem::before { content: "✎ "; }
   .hist .chip.sig::before { content: "📡 "; }
+
+  /* Below three columns there is no instrument left to fill: the shell stops
+     owning the viewport, every pane goes back to flowing in the document, and
+     the whole thing scrolls as one page. Anything sized against a pane height
+     — the flex bodies, the canvas — has to be released with it, or it collapses
+     to nothing inside an auto-height parent. */
+  @media (max-width: 68rem) {
+    body.shell { height: auto; overflow: visible; display: block; }
+    nav.site { height: auto; flex-wrap: wrap; padding: .5rem 1rem; }
+    main.mgrid { display: block; overflow: visible; }
+    .pane, .field { display: block; border: 0; border-top: 1px solid var(--line-1); }
+    .pane-body { overflow: visible; }
+    .arena-wrap { padding: 0; }
+    canvas { width: 100%; height: auto; max-height: none; }
+    .roster .row { padding-left: 1rem; padding-right: 1rem; }
+  }
 </style>
 </head>
-<body>
-  <!-- Outside .cols, and a long way outside #inspector: that panel is
-       replaceChildren()-ed ten times a second. aria-current="true" rather than
-       "page" on Lobbies — a match has no link of its own in a nav that cannot
-       know its id, and the lobbies page is where you came from and where the
-       running ones are listed. -->
+<body class="shell">
+  <!-- A long way outside #inspector: that panel is replaceChildren()-ed ten
+       times a second. aria-current="true" rather than "page" on Lobbies — a
+       match has no link of its own in a nav that cannot know its id, and the
+       lobbies page is where you came from and where the running ones are
+       listed. -->
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby" aria-current="true">Lobbies</a>
@@ -206,197 +326,226 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>Match</h1>
-  <p class="tag" id="subtitle">Connecting to the world stream&hellip;</p>
-  <p class="err" id="err"></p>
-
-  <div class="bar">
+  <div class="matchbar">
+    <span class="label">Match</span>
+    <h1 id="subtitle">Connecting to the world stream&hellip;</h1>
+    <span class="err" id="err"></span>
+    <span class="grow"></span>
     <span class="clock" id="clock">--:--</span>
     <span class="meta" id="tick"></span>
     <span class="conn" id="conn">connecting</span>
   </div>
 
-  <!-- Shown to a player whose own colony is out (design §5.3, §12 P2). They
-       keep the observer view and the trace history; only the commands are
-       gone, and they are gone because there is no robot left to command. -->
-  <p class="spectating" id="spectate" hidden></p>
-
-  <div class="cols">
-    <div class="arena">
-      <canvas id="arena" width="256" height="256"></canvas>
-      <p class="meta">Click near a robot &mdash; or pick one from the roster
-      &mdash; to inspect it.</p>
-
-      <!-- The legend lives here, under the canvas, in its own container: not
-           inside #inspector, which is cleared with replaceChildren() every
-           tick. The four lists below are filled once from the init frame, and
-           the marks are static except for the robot body in each, which comes
-           from the renderer's own shape table. -->
-      <details class="legend fold" id="legend" open>
-        <summary>Legend</summary>
-
-        <h4>Terrain</h4>
-        <ul class="lg" id="lg-terrain"></ul>
-
-        <!-- Chassis and the armed mark. Filled by match.js from the same SHAPES
-             table the canvas draws from, over the locomotion rows of the
-             catalogue on the init frame, so neither a renamed component nor a
-             new one can leave a stale shape here. -->
-        <h4>Chassis &mdash; the shape a robot is drawn as</h4>
-        <ul class="lg" id="lg-chassis"></ul>
-
-        <h4>Loose components, by kind</h4>
-        <ul class="lg" id="lg-kinds"></ul>
-
-        <h4>Colonies</h4>
-        <ul class="lg" id="lg-colonies"></ul>
-
-        <!-- Every .lg-body group below is filled by match.js with the same path
-             the renderer fills, so a mark cannot illustrate a robot the canvas
-             never draws. Only the overlay beside it is written here. -->
-        <h4>Marks</h4>
-        <ul class="lg">
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect x=".5" y=".5" width="15" height="15" stroke="#000"
-                    style="fill: var(--colony-0)"/>
-              <text x="8" y="8.6" text-anchor="middle" fill="#fff" stroke="#0008"
-                    stroke-width=".6" font-size="11" font-weight="700"
-                    font-family="system-ui, sans-serif">B</text>
-            </svg>
-            Base <span class="note">&mdash; one per colony, indestructible</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
-              <text x="8" y="8.4" text-anchor="middle" fill="#fff" stroke="#0008"
-                    stroke-width=".5" font-size="9" font-weight="700"
-                    font-family="system-ui, sans-serif">S</text>
-            </svg>
-            Robot <span class="note">&mdash; letter is its blueprint's initial</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <g class="lg-body" transform="translate(8 8) rotate(45) scale(5.6)"></g>
-            </svg>
-            Heading <span class="note">&mdash; the nose: where it faces, and all it can see</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect width="16" height="16" style="fill: var(--terrain-open)"/>
-              <path d="M8 13 L-4 1 H20 Z" fill-opacity=".18" style="fill: var(--colony-1)"/>
-              <g class="lg-body" transform="translate(8 13) scale(2.6)"></g>
-            </svg>
-            Vision wedge <span class="note">&mdash; drawn for the selected robot only</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <rect y="12" width="16" height="4" fill="#0006"/>
-              <rect y="12" width="6" height="4" fill="#c0392b"/>
-            </svg>
-            Health bar <span class="note">&mdash; only on a damaged robot</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
-              <circle cx="12.5" cy="3.5" r="2.9" style="fill: var(--kind-weapon)"/>
-            </svg>
-            Cargo <span class="note">&mdash; the component it is carrying, by kind</span>
-          </li>
-          <li>
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <g class="lg-body" transform="translate(8 8) scale(4.6)"></g>
-              <circle cx="8" cy="8" r="6.6" fill="none" stroke="#fff" stroke-width="1.6"/>
-              <circle cx="8" cy="8" r="7.4" fill="none" stroke="#000" stroke-width=".8"/>
-            </svg>
-            Selected <span class="note">&mdash; the robot the panels describe</span>
-          </li>
-        </ul>
-      </details>
-    </div>
-
-    <!-- Every panel here folds, and match.js remembers which are open across a
-         reload. The defaults are the ones below, and they are the answer to
-         "what does somebody watching a match want on screen": the field, the
-         robot they just clicked, and the standing. The roster is a second way
-         to reach a robot the canvas already offers; the trace history and the
-         base are answers to a specific question, and the trace panel also holds
-         one of the server's eight recording slots while it is open. -->
-    <div class="side">
-      <!-- The roster sits above the inspector on purpose: the inspector grows
-           by a whole Command section when the selection is the viewer's own
-           robot, and a list below it would jump under the pointer. -->
-      <details class="panel fold" id="p-roster">
-        <summary>Robots</summary>
+  <main class="mgrid">
+    <!-- The roster is the same selection as a canvas click, made by name
+         instead of by aim, and a colony-wide view of what everything is doing
+         this tick. -->
+    <section class="pane left">
+      <div class="pane-head">
+        <span class="label">Roster</span>
+        <span class="grow"></span>
+        <span class="meta">by colony</span>
+      </div>
+      <div class="pane-body">
         <div class="roster" id="roster"></div>
-        <p class="meta" id="roster-empty">No robots yet.</p>
-        <p class="meta">Every robot in the match, by colony, with what it is
-        doing this tick.</p>
-      </details>
+        <p class="meta" id="roster-empty" style="padding:10px 14px">No robots yet.</p>
+      </div>
+      <div class="pane-foot">
+        <span class="meta">Click a row &mdash; or the arena &mdash; to inspect a robot.</span>
+      </div>
+    </section>
 
-      <!-- Command lives outside #inspector on purpose: that panel is cleared
-           with replaceChildren() every tick, and detaching a <select> from the
-           document closes any dropdown the player has open. The fold control is
-           outside it for the same reason, which is what <summary> gives free. -->
-      <details class="panel fold" id="p-selected" open>
-        <summary>Selected robot</summary>
-        <div id="inspector"><p class="meta">No robot selected.</p></div>
-        <div id="command" hidden></div>
-      </details>
+    <section class="field">
+      <div class="field-bar">
+        <span class="badge solid">Field</span>
+        <span class="badge dashed">Sight &mdash; 90&deg; wedge</span>
+        <span class="badge dashed">Radar &mdash; omnidirectional</span>
+        <span class="grow"></span>
+        <span class="meta">Overlays are drawn for the selected robot only</span>
+      </div>
 
-      <!-- Design §10.10's trace history. Its own panel rather than a section of
-           the inspector: the inspector is rebuilt on every tick, and a scrolled
-           list inside it would lose its position ten times a second. -->
-      <details class="panel fold" id="p-history">
-        <summary>Recent decisions</summary>
-        <div class="hist-list" id="history-list"></div>
-        <p class="meta" id="history-note">Select a robot to start recording why it acts.</p>
-      </details>
+      <div class="arena-wrap">
+        <canvas id="arena" width="256" height="256"></canvas>
 
-      <details class="panel fold" id="p-colonies" open>
-        <summary>Colonies</summary>
-        <div class="tablewrap"><table id="stats"></table></div>
-        <p class="meta">Standing by design §9 score: fleet value plus a quarter
-        of the base inventory, so stockpiling counts but fielding counts four
-        times more. Parts, losses and kills are what the colony has done since
-        tick 0.</p>
+        <!-- The legend is an overlay card rather than a block under the map:
+             the field wants every pixel, and this is reference material you
+             open once. It is outside #inspector, which is cleared with
+             replaceChildren() every tick. The four lists below are filled once
+             from the init frame, and the marks are static except for the robot
+             body in each, which comes from the renderer's own shape table. -->
+        <details class="legend fold overlay tl" id="legend">
+          <summary>Legend</summary>
 
-        <!-- Score over time (design §4.4 "production history"). Its own panel
-             section, built once and updated in place: it is deliberately not in
-             #inspector, which is replaceChildren()-ed ten times a second.
+          <h4>Terrain</h4>
+          <ul class="lg" id="lg-terrain"></ul>
 
-             The series arrives on the init frame and grows from the tick
-             stream, so a reload and a late join both get the whole match. No
-             charting library: a <polyline> per colony is the whole chart, and
-             it takes its stroke from the same --colony-N custom property the
-             map and the legend read, so it re-themes for free. -->
-        <h3>Over time</h3>
-        <div class="graph-head">
-          <label for="graph-metric">Series</label>
-          <select id="graph-metric">
-            <option value="score">Score</option>
-            <option value="robots">Robots</option>
-            <option value="collected">Parts collected</option>
-          </select>
+          <!-- Chassis and the armed mark. Filled by match.js from the same
+               SHAPES table the canvas draws from, over the locomotion rows of
+               the catalogue on the init frame, so neither a renamed component
+               nor a new one can leave a stale shape here. -->
+          <h4>Chassis &mdash; the shape a robot is drawn as</h4>
+          <ul class="lg" id="lg-chassis"></ul>
+
+          <h4>Loose components, by kind</h4>
+          <ul class="lg" id="lg-kinds"></ul>
+
+          <h4>Colonies</h4>
+          <ul class="lg" id="lg-colonies"></ul>
+
+          <!-- Every .lg-body group below is filled by match.js with the same
+               path the renderer fills, so a mark cannot illustrate a robot the
+               canvas never draws. Only the overlay beside it is written here. -->
+          <h4>Marks</h4>
+          <ul class="lg">
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect x=".5" y=".5" width="15" height="15" stroke="#000"
+                      style="fill: var(--colony-0)"/>
+                <text x="8" y="8.6" text-anchor="middle" fill="#fff" stroke="#0008"
+                      stroke-width=".6" font-size="11" font-weight="700"
+                      font-family="monospace">B</text>
+              </svg>
+              Base <span class="note">&mdash; one per colony, indestructible</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
+                <text x="8" y="8.4" text-anchor="middle" fill="#fff" stroke="#0008"
+                      stroke-width=".5" font-size="9" font-weight="700"
+                      font-family="monospace">S</text>
+              </svg>
+              Robot <span class="note">&mdash; letter is its blueprint's initial</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <g class="lg-body" transform="translate(8 8) rotate(45) scale(5.6)"></g>
+              </svg>
+              Heading <span class="note">&mdash; the nose: where it faces, and all it can see</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect width="16" height="16" style="fill: var(--terrain-open)"/>
+                <path d="M8 13 L-4 1 H20 Z" fill-opacity=".18" style="fill: var(--colony-1)"/>
+                <g class="lg-body" transform="translate(8 13) scale(2.6)"></g>
+              </svg>
+              Vision wedge <span class="note">&mdash; drawn for the selected robot only</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <rect y="12" width="16" height="4" fill="#0006"/>
+                <rect y="12" width="6" height="4" fill="#c0392b"/>
+              </svg>
+              Health bar <span class="note">&mdash; only on a damaged robot</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
+                <circle cx="12.5" cy="3.5" r="2.9" style="fill: var(--kind-weapon)"/>
+              </svg>
+              Cargo <span class="note">&mdash; the component it is carrying, by kind</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <g class="lg-body" transform="translate(8 8) scale(4.6)"></g>
+                <circle cx="8" cy="8" r="6.6" fill="none" stroke="#fff" stroke-width="1.6"/>
+                <circle cx="8" cy="8" r="7.4" fill="none" stroke="#000" stroke-width=".8"/>
+              </svg>
+              Selected <span class="note">&mdash; the robot the panels describe</span>
+            </li>
+          </ul>
+        </details>
+      </div>
+
+      <!-- Where in the match you are. Not a scrubber: the server keeps no
+           per-tick history to seek into, so there is nothing behind the head to
+           drag back to. -->
+      <div class="timeline">
+        <div class="head">
+          <span class="label">Timeline</span>
+          <span class="meta">the match runs whether or not anyone is watching</span>
         </div>
-        <!-- preserveAspectRatio="none" stretches the box to the panel width;
-             the strokes keep their weight through vector-effect, and every
-             label is HTML below rather than <text> that the stretch would
-             distort. -->
-        <svg class="graph" id="graph" viewBox="0 0 600 180"
-             preserveAspectRatio="none" role="img"
-             aria-label="Colony series over the match so far">
-          <g id="graph-lines"></g>
-        </svg>
-        <p class="meta" id="graph-note">Waiting for the first samples&hellip;</p>
-      </details>
+        <div class="track"><i id="progress"></i></div>
+        <div class="ticks"><span>start</span><span id="tick-mid">&nbsp;</span><span>end</span></div>
+      </div>
+    </section>
 
-      <details class="panel fold" id="p-base">
-        <summary>Base</summary>
-        <div id="base"><p class="meta">No colony selected.</p></div>
-      </details>
-    </div>
-  </div>
+    <!-- The robot you picked, top to bottom: what it is, the rule that took
+         this tick, and what you can still tell it to do. The roster used to sit
+         above the inspector in one column and jump under the pointer whenever
+         the Command section appeared; in three columns it cannot. -->
+    <aside class="pane right">
+      <!-- Shown to a player whose own colony is out (design §5.3, §12 P2). They
+           keep the observer view and the trace history; only the commands are
+           gone, and they are gone because there is no robot left to command. -->
+      <p class="spectating" id="spectate" hidden></p>
+
+      <div class="pane-body">
+        <!-- Command lives outside #inspector on purpose: that panel is cleared
+             with replaceChildren() every tick, and detaching a <select> from
+             the document closes any dropdown the player has open. The fold
+             control is outside it for the same reason, which is what <summary>
+             gives free. -->
+        <details class="fold" id="p-selected" open>
+          <summary>Selected robot</summary>
+          <div id="inspector"><p class="meta">No robot selected.</p></div>
+          <div id="command" hidden></div>
+        </details>
+
+        <!-- Design §10.10's trace history. Its own panel rather than a section
+             of the inspector: the inspector is rebuilt on every tick, and a
+             scrolled list inside it would lose its position ten times a
+             second. The panel also holds one of the server's eight recording
+             slots while it is open. -->
+        <details class="fold" id="p-history">
+          <summary>Recent decisions</summary>
+          <div class="hist-list" id="history-list"></div>
+          <p class="meta" id="history-note">Select a robot to start recording why it acts.</p>
+        </details>
+
+        <details class="fold" id="p-colonies" open>
+          <summary>Colonies</summary>
+          <div class="tablewrap"><table id="stats"></table></div>
+          <p class="meta">Standing by design §9 score: fleet value plus a quarter
+          of the base inventory, so stockpiling counts but fielding counts four
+          times more.</p>
+
+          <!-- Score over time (design §4.4 "production history"). Built once
+               and updated in place: deliberately not in #inspector, which is
+               replaceChildren()-ed ten times a second.
+
+               The series arrives on the init frame and grows from the tick
+               stream, so a reload and a late join both get the whole match. No
+               charting library: a <polyline> per colony is the whole chart, and
+               it takes its stroke from the same --colony-N custom property the
+               map and the legend read, so it re-themes for free. -->
+          <h3>Over time</h3>
+          <div class="graph-head">
+            <label for="graph-metric">Series</label>
+            <select id="graph-metric">
+              <option value="score">Score</option>
+              <option value="robots">Robots</option>
+              <option value="collected">Parts collected</option>
+            </select>
+          </div>
+          <!-- preserveAspectRatio="none" stretches the box to the panel width;
+               the strokes keep their weight through vector-effect, and every
+               label is HTML below rather than <text> that the stretch would
+               distort. -->
+          <svg class="graph" id="graph" viewBox="0 0 600 180"
+               preserveAspectRatio="none" role="img"
+               aria-label="Colony series over the match so far">
+            <g id="graph-lines"></g>
+          </svg>
+          <p class="meta" id="graph-note">Waiting for the first samples&hellip;</p>
+        </details>
+
+        <details class="fold" id="p-base">
+          <summary>Base</summary>
+          <div id="base"><p class="meta">No colony selected.</p></div>
+        </details>
+      </div>
+    </aside>
+  </main>
 
 <script type="module" src="/js/match.js"></script>
 </body>

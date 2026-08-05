@@ -1146,10 +1146,19 @@ function renderBase() {
 
 function renderClock() {
   if (!snap || !init) return;
-  const left = Math.max(0, Number(snap.end_tick) - Number(snap.tick));
+  const end = Number(snap.end_tick);
+  const left = Math.max(0, end - Number(snap.tick));
   const secs = Math.ceil(left / (init.tick_rate || 10));
   $("clock").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   $("tick").textContent = `tick ${snap.tick} / ${snap.end_tick}`;
+
+  // The timeline is one filled bar whose right edge is now. It is not a
+  // scrubber: nothing behind the head is seekable, because the server keeps no
+  // per-tick history to seek into.
+  const done = end > 0 ? Math.min(1, Number(snap.tick) / end) : 0;
+  $("progress").style.width = `${(done * 100).toFixed(2)}%`;
+  const gone = Math.floor(Number(snap.tick) / (init.tick_rate || 10));
+  $("tick-mid").textContent = `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`;
 }
 
 // -------------------------------------------------------------- folding
