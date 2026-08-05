@@ -48,7 +48,9 @@ function bakeTerrain() {
   cell = Math.max(6, Math.min(24, Math.floor(900 / Math.max(init.width, init.height))));
   canvas.width = init.width * cell;
   canvas.height = init.height * cell;
-  canvas.style.maxWidth = `${canvas.width}px`; // never upscale past the baked size
+  // No inline size: the baked surface is the element's intrinsic size, and the
+  // stylesheet fits the box from that. An inline max-width here beats the
+  // cascade, and the pane clamp it replaced is what kept the arena in its pane.
 
   const colors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");

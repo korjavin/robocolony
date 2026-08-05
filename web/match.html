@@ -73,21 +73,27 @@
   }
   .field-bar > * { flex-shrink: 0; }
 
-  /* The canvas fills whatever the panels leave and keeps the board's aspect
-     ratio. height:100% with width:auto drives the fit off the short axis and
-     lets the ratio compute the other one; max-width clamps the case where the
-     pane is taller than it is wide, and a replaced element re-derives its
-     height from the ratio when that clamp bites. The element box therefore
-     always equals the drawing surface — which matters, because clicking the
-     arena maps pointer coordinates onto canvas.width. */
+  /* The canvas is a replaced element with an intrinsic size — the baked
+     surface, canvas.width × canvas.height — so auto width *and* auto height
+     plus a max on both axes is the whole fit: CSS shrinks it proportionally
+     until it clears both maxes, and never past its intrinsic size, which is
+     what stops a 64×64 board being blown up into a blurry wall. Do not set a
+     percentage width or height here. That pins one axis, so a max on the other
+     squashes the box out of ratio instead of scaling it — the element box has
+     to stay the drawing surface's shape, because the arena maps pointer
+     coordinates onto canvas.width (rc-w9s.38).
+
+     The wrap centres with flex rather than grid because the canvas's
+     max-height: 100% has to resolve: measured in Chromium, a percentage
+     max-height against a stretched auto grid row is treated as none, and the
+     arena then keeps its full baked height whatever the pane leaves. */
   .arena-wrap {
     flex: 1 1 0; min-height: 0; position: relative;
-    display: grid; place-items: center; padding: 12px;
+    display: flex; align-items: center; justify-content: center; padding: 12px;
     background: var(--bg-1);
   }
   canvas {
-    display: block; width: auto; height: 100%;
-    max-width: 100%; max-height: 100%;
+    display: block; max-width: 100%; max-height: 100%;
     border: 1px solid var(--line-1); cursor: crosshair;
     background: var(--terrain-open);
   }
@@ -300,8 +306,10 @@
   /* Below three columns there is no instrument left to fill: the shell stops
      owning the viewport, every pane goes back to flowing in the document, and
      the whole thing scrolls as one page. Anything sized against a pane height
-     — the flex bodies, the canvas — has to be released with it, or it collapses
-     to nothing inside an auto-height parent. */
+     — the flex bodies — has to be released with it, or it collapses to nothing
+     inside an auto-height parent. The canvas needs no release: it is sized off
+     its own intrinsic dimensions, and max-height:100% against an auto-height
+     parent is already none. */
   @media (max-width: 68rem) {
     body.shell { height: auto; overflow: visible; display: block; }
     nav.site { height: auto; flex-wrap: wrap; padding: .5rem 1rem; }
@@ -309,7 +317,6 @@
     .pane, .field { display: block; border: 0; border-top: 1px solid var(--line-1); }
     .pane-body { overflow: visible; }
     .arena-wrap { padding: 0; }
-    canvas { width: 100%; height: auto; max-height: none; }
     .roster .row { padding-left: 1rem; padding-right: 1rem; }
   }
 </style>
