@@ -62,6 +62,34 @@ func (d *DB) ListBlueprints(ctx context.Context, userID int64) ([]Blueprint, err
 	return out, nil
 }
 
+// UpdateBlueprint rewrites one of the user's own blueprints, or returns
+// sql.ErrNoRows if it does not exist or belongs to someone else.
+// default_program_id is left alone: it is not part of the design.
+func (d *DB) UpdateBlueprint(ctx context.Context, userID, id int64, name, blueprintJSON string) (Blueprint, error) {
+	return scanBlueprint(d.QueryRowContext(ctx, `
+		UPDATE blueprints SET name = ?, json = ?
+		WHERE user_id = ? AND id = ?
+		RETURNING `+blueprintColumns, name, blueprintJSON, userID, id))
+}
+
+// DeleteBlueprint removes one of the user's own blueprints, or returns
+// sql.ErrNoRows if there was nothing of theirs to delete. Nothing has a foreign
+// key to blueprints.id, so there is no cascade to think about.
+func (d *DB) DeleteBlueprint(ctx context.Context, userID, id int64) error {
+	res, err := d.ExecContext(ctx, `DELETE FROM blueprints WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return fmt.Errorf("db: delete blueprint: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db: delete blueprint: %w", err)
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // IsDuplicateName reports whether err is a unique-index violation, which for
 // programs and blueprints alike can only be the (user_id, name) index.
 //

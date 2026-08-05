@@ -166,6 +166,105 @@ func mustEncode(t *testing.T, p prog.Program) []byte {
 	return raw
 }
 
+// TestLoadoutIgnoresLibraryEdits is the other half of the same argument, for
+// blueprint edit: an approval keeps the parts the design had when it was
+// approved, so re-equipping the library row cannot re-equip a colony that
+// already chose it.
+func TestLoadoutIgnoresLibraryEdits(t *testing.T) {
+	svc, database := newService(t)
+	ctx := t.Context()
+	owner := newUser(t, database, "ada")
+
+	bp, p := saveDesign(t, database, owner.ID, "hunter", gunner, hunterProgram())
+	view, err := svc.Create(ctx, owner.ID, "loadout match", DefaultSettings())
+	if err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+	if _, err := svc.SetLoadout(ctx, view.ID, owner.ID, []Choice{{BlueprintID: bp.ID, ProgramID: p.ID}}); err != nil {
+		t.Fatalf("SetLoadout() = %v", err)
+	}
+
+	// The library row loses its weapon and its name after the approval.
+	disarmed, err := json.Marshal(storedBlueprint{Components: []int{int(sim.Tracks), int(sim.LightArmor)}})
+	if err != nil {
+		t.Fatalf("marshal = %v", err)
+	}
+	if _, err := database.UpdateBlueprint(ctx, owner.ID, bp.ID, "pacifist", string(disarmed)); err != nil {
+		t.Fatalf("UpdateBlueprint() = %v", err)
+	}
+
+	got, err := svc.Get(ctx, view.ID)
+	if err != nil {
+		t.Fatalf("Get() = %v", err)
+	}
+	for _, m := range got.Members {
+		if m.UserID != owner.ID {
+			continue
+		}
+		var stored Loadout
+		if err := json.Unmarshal(m.Loadout, &stored); err != nil {
+			t.Fatalf("stored loadout does not parse: %v", err)
+		}
+		if len(stored.Entries) != 1 {
+			t.Fatalf("the seat has %d approvals, want 1", len(stored.Entries))
+		}
+		e := stored.Entries[0]
+		if e.BlueprintName != "hunter" {
+			t.Errorf("approval is named %q, want the %q it was approved as", e.BlueprintName, "hunter")
+		}
+		if !e.blueprint().Has(sim.KindWeapon) {
+			t.Errorf("approval lost its weapon to a later library edit: %v", e.Components)
+		}
+	}
+}
+
+// TestLoadoutSurvivesLibraryDelete is the whole safety argument behind blueprint
+// delete: an approval is a frozen snapshot of the parts list, not a library id,
+// so deleting the row it was copied from cannot reach a lobby that already
+// approved it — nor the match that lobby starts.
+func TestLoadoutSurvivesLibraryDelete(t *testing.T) {
+	svc, database := newService(t)
+	ctx := t.Context()
+	owner := newUser(t, database, "ada")
+
+	bp, p := saveDesign(t, database, owner.ID, "hunter", gunner, hunterProgram())
+	view, err := svc.Create(ctx, owner.ID, "loadout match", DefaultSettings())
+	if err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+	if _, err := svc.SetLoadout(ctx, view.ID, owner.ID, []Choice{{BlueprintID: bp.ID, ProgramID: p.ID}}); err != nil {
+		t.Fatalf("SetLoadout() = %v", err)
+	}
+	if err := database.DeleteBlueprint(ctx, owner.ID, bp.ID); err != nil {
+		t.Fatalf("DeleteBlueprint() = %v", err)
+	}
+
+	info, err := svc.Start(ctx, view.ID, owner.ID)
+	if err != nil {
+		t.Fatalf("Start() after deleting the library row = %v", err)
+	}
+	m, ok := svc.Registry().Get(info.ID)
+	if !ok {
+		t.Fatal("the started match is not in the registry")
+	}
+	m.Read(func(w *sim.World, rt *prog.Runtime) {
+		if len(w.Bases[0].Blueprints) != 1 || w.Bases[0].Blueprints[0].Name != "hunter" {
+			t.Errorf("base approved %+v, want the hunter it approved before the delete", w.Bases[0].Blueprints)
+		}
+		for _, r := range w.Robots {
+			if r.Colony != w.Bases[0].Colony {
+				continue
+			}
+			if !r.Blueprint.Has(sim.KindWeapon) {
+				t.Errorf("robot %d lost its weapon, so it was not built to the approved design", r.ID)
+			}
+			if rt.Control(r) == nil {
+				t.Errorf("robot %d runs %q, which is not installed", r.ID, r.ProgramID)
+			}
+		}
+	})
+}
+
 // TestLoadoutOwnership: a member may only approve their own designs, and the
 // refusal is the same "not found" a wrong id gets.
 func TestLoadoutOwnership(t *testing.T) {
@@ -491,7 +590,8 @@ func TestStartingBudgetIsSpentInFull(t *testing.T) {
 	const seats = 2
 	cheapest := cheapestComponentValue(t)
 	aiWorth := map[int]int{}
-	for _, budget := range []int{minStartingBudget, defaultStartingBudget(), 500, maxStartingBudget} {
+	// 3450 is just a big budget, not a ceiling: the settings have none.
+	for _, budget := range []int{minStartingBudget, defaultStartingBudget(), 500, 3450} {
 		t.Run(fmt.Sprint(budget), func(t *testing.T) {
 			set := shortSettings(60)
 			set.StartingBudget = budget

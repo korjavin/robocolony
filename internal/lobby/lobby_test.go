@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -245,18 +246,23 @@ func TestSettingsValidation(t *testing.T) {
 		ok   bool
 	}{
 		{"defaults", DefaultSettings(), true},
-		{"duration too short", bad(func(s *Settings) { s.DurationSec = 30 }), false},
-		{"duration too long", bad(func(s *Settings) { s.DurationSec = 86400 }), false},
+		{"duration short", bad(func(s *Settings) { s.DurationSec = 30 }), true},
+		{"duration long", bad(func(s *Settings) { s.DurationSec = 86400 }), true},
 		{"duration zero", bad(func(s *Settings) { s.DurationSec = 0 }), false},
-		{"richness too low", bad(func(s *Settings) { s.Richness = 0 }), false},
-		{"richness too high", bad(func(s *Settings) { s.Richness = 0.9 }), false},
-		{"richness at the edge", bad(func(s *Settings) { s.Richness = maxRichness }), true},
+		{"duration negative", bad(func(s *Settings) { s.DurationSec = -1 }), false},
+		{"richness off", bad(func(s *Settings) { s.Richness = 0 }), true},
+		{"richness high", bad(func(s *Settings) { s.Richness = 0.9 }), true},
+		{"richness negative", bad(func(s *Settings) { s.Richness = -1 }), false},
+		{"richness NaN", bad(func(s *Settings) { s.Richness = math.NaN() }), false},
 		{"spawn rate negative", bad(func(s *Settings) { s.SpawnPerMin = -1 }), false},
 		{"spawn rate off", bad(func(s *Settings) { s.SpawnPerMin = 0 }), true},
 		{"too many players", bad(func(s *Settings) { s.MaxPlayers = 99 }), false},
 		{"no players", bad(func(s *Settings) { s.MaxPlayers = 0 }), false},
 		{"budget too small", bad(func(s *Settings) { s.StartingBudget = minStartingBudget - 1 }), false},
-		{"budget too large", bad(func(s *Settings) { s.StartingBudget = maxStartingBudget + 1 }), false},
+		{"budget large", bad(func(s *Settings) { s.StartingBudget = 100_000 }), true},
+		// Not a balance ceiling: the guard is on how long match start spends
+		// converting the leftover into inventory. See settings.go.
+		{"budget past the start-cost guard", bad(func(s *Settings) { s.StartingBudget = 1 << 40 }), false},
 		{"budget negative", bad(func(s *Settings) { s.StartingBudget = -1 }), false},
 		// Zero is the one exception: it is what a settings row written before
 		// the setting existed decodes to, and budget() reads it as the default.
@@ -274,7 +280,7 @@ func TestSettingsValidation(t *testing.T) {
 	// settings the client made up.
 	svc, database := newService(t)
 	owner := newUser(t, database, "ada")
-	_, err := svc.Create(t.Context(), owner.ID, "bad", bad(func(s *Settings) { s.DurationSec = 1 }))
+	_, err := svc.Create(t.Context(), owner.ID, "bad", bad(func(s *Settings) { s.DurationSec = 0 }))
 	wantStatus(t, err, http.StatusBadRequest)
 	_, err = svc.Create(t.Context(), owner.ID, "", DefaultSettings())
 	wantStatus(t, err, http.StatusBadRequest)
