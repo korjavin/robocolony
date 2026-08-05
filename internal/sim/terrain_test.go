@@ -1,6 +1,10 @@
 package sim
 
-import "testing"
+import (
+	"math/rand"
+	"strings"
+	"testing"
+)
 
 // TestTraversalMatrix is design §3.1, cell for cell: every terrain class
 // against every locomotion unit, plus the favoured column. It is table-driven
@@ -219,11 +223,14 @@ func TestTurnCostScalesWithChassis(t *testing.T) {
 	}
 }
 
-// TestGenerationSolvablePerLocomotion is the E1.2 connectivity measurement,
-// redone per locomotion because E7.3 made "impassable" a per-locomotion answer.
-// The failure it guards against is a robot sealed into a pocket by terrain its
-// chassis cannot cross.
-func TestGenerationSolvablePerLocomotion(t *testing.T) {
+// TestGenerationSolvable is the connectivity contract, in the owner's terms:
+// **no unreachable place**, where unreachable means *no* locomotion can get
+// there. A region one chassis cannot cross is not a bug — since E8 it is the
+// whole point of terrain, so the old "every locomotion reaches >=50% of the
+// arena" assertion is gone. What replaces it is stricter where it matters:
+// every non-barrier cell of every arena must be reachable by *something*, and
+// every base must reach every other base by *everything*.
+func TestGenerationSolvable(t *testing.T) {
 	const seeds = 100
 	opts := DefaultGenOpts()
 	cells := opts.Width * opts.Height
@@ -232,8 +239,35 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 	for _, loco := range locomotionVariants() {
 		worstFrac[loco] = 1
 	}
+	worstUnion := 0.0
 	for seed := int64(1); seed <= seeds; seed++ {
 		w := Generate(seed, opts)
+
+		// 1. No sealed pockets. Anti-gravity enters every terrain except a hard
+		// barrier, so its flood from base 0 is the union of everywhere anything
+		// can go; every cell that is not a Barrier must be inside it.
+		union := w.reachable(w.Bases[0].Coord, AntiGrav)
+		open, sealed := 0, 0
+		for i, c := range w.Cells {
+			if c.Terrain == Barrier {
+				continue
+			}
+			open++
+			if !union[i] {
+				sealed++
+				if sealed == 1 {
+					t.Errorf("seed %d: sealed pocket at %v (%s), unreachable by every locomotion",
+						seed, Coord{X: i % w.Width, Y: i / w.Width}, c.Terrain)
+				}
+			}
+		}
+		if sealed > 1 {
+			t.Errorf("seed %d: %d sealed cells in total", seed, sealed)
+		}
+		if frac := float64(open) / float64(cells); frac > worstUnion {
+			worstUnion = frac
+		}
+
 		for _, loco := range locomotionVariants() {
 			for _, b := range w.Bases {
 				reach := w.reachable(b.Coord, loco)
@@ -243,23 +277,21 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 						n++
 					}
 				}
-				// 1. No base is sealed in: every locomotion reaches a
-				// substantial share of the arena from every base.
-				if frac := float64(n) / float64(cells); frac < 0.5 {
-					t.Errorf("seed %d: %s reaches only %.1f%% of the arena from base %d",
-						seed, loco, frac*100, b.Colony)
-				} else if frac < worstFrac[loco] {
+				if frac := float64(n) / float64(cells); frac < worstFrac[loco] {
 					worstFrac[loco] = frac
 				}
-				// 2. Every base reaches every other base.
+				// 2. Every base reaches every other base, by every locomotion.
+				// The starter chassis is fixed, so a colony that cannot walk to
+				// the fight with the chassis it starts on has no game.
 				for _, other := range w.Bases {
 					if !reach[w.index(other.Coord)] {
 						t.Errorf("seed %d: %s cannot reach base %d from base %d",
 							seed, loco, other.Colony, b.Colony)
 					}
 				}
-				// 3. Every loose component is collectable by every chassis
-				// from every base — nothing generates into a pocket.
+				// 3. Every loose component is collectable by every chassis from
+				// every base — nothing generates into a pocket. (rc-rhd.2 will
+				// relax this; until then it must hold.)
 				for _, l := range w.Loose {
 					if !reach[w.index(l.Coord)] {
 						t.Errorf("seed %d: %s cannot reach loose component %d at %v from base %d",
@@ -269,8 +301,10 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 			}
 		}
 	}
+	t.Logf("%d seeds: largest non-barrier share of an arena = %.1f%%, all of it reachable by anti-gravity",
+		seeds, worstUnion*100)
 	for _, loco := range locomotionVariants() {
-		t.Logf("%d seeds: worst arena share reachable by %s from any base = %.1f%%",
+		t.Logf("%d seeds: worst arena share reachable by %s from any base = %.1f%% (informational: regions may exclude a chassis)",
 			seeds, loco, worstFrac[loco]*100)
 	}
 }
@@ -278,17 +312,26 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 // Generation must actually produce the terrain classes it claims to, or the
 // connectivity measurement above is measuring an empty map.
 func TestGenerationScattersEveryTerrainClass(t *testing.T) {
-	w := Generate(42, DefaultGenOpts())
-	counts := map[Terrain]int{}
-	for _, c := range w.Cells {
-		counts[c.Terrain]++
-	}
-	for _, s := range terrainSpecs {
-		if counts[s.Terrain] == 0 {
-			t.Errorf("generation produced no %s cells", s.Name)
+	const seeds = 100
+	opts := DefaultGenOpts()
+	totals := map[Terrain]int{}
+	for seed := int64(1); seed <= seeds; seed++ {
+		w := Generate(seed, opts)
+		counts := map[Terrain]int{}
+		for _, c := range w.Cells {
+			counts[c.Terrain]++
+			totals[c.Terrain]++
 		}
-		t.Logf("%-8s %5d cells (%.1f%%)", s.Name, counts[s.Terrain],
-			100*float64(counts[s.Terrain])/float64(len(w.Cells)))
+		for _, s := range terrainSpecs {
+			if counts[s.Terrain] == 0 {
+				t.Errorf("seed %d produced no %s cells", seed, s.Name)
+			}
+		}
+	}
+	all := float64(seeds * opts.Width * opts.Height)
+	for _, s := range terrainSpecs {
+		t.Logf("%-8s %.1f%% of the arena, mean over %d seeds at BarrierDensity %.2f",
+			s.Name, 100*float64(totals[s.Terrain])/all, seeds, opts.BarrierDensity)
 	}
 	// A zero barrier density must still mean a completely clean arena: existing
 	// callers outside this package generate test worlds that way.
@@ -297,6 +340,116 @@ func TestGenerationScattersEveryTerrainClass(t *testing.T) {
 		if c.Terrain != Open {
 			t.Fatalf("BarrierDensity 0 produced %s terrain", c.Terrain)
 		}
+	}
+}
+
+// clustered is the spatial statistic that separates regions from noise: the
+// share of cells of one class with at least minLike 8-neighbours of the same
+// class. Uniform scatter at these densities lands around 5-15%; a shape lands
+// far above, because almost every cell of a shape has company.
+//
+// minLike is per shape, not a magic number: an area (a sand field, a rubble
+// massif) has 3+ like neighbours nearly everywhere, but a ridge is a *line* —
+// one cell thick by design, so its interior has exactly two.
+func clustered(w *World, t Terrain, minLike int) float64 {
+	total, grouped := 0, 0
+	for i, cell := range w.Cells {
+		if cell.Terrain != t {
+			continue
+		}
+		total++
+		c := Coord{X: i % w.Width, Y: i / w.Width}
+		n := 0
+		for h := North; h < headingCount; h++ {
+			if w.At(add(c, h.Delta())).Terrain == t {
+				n++
+			}
+		}
+		if n >= minLike {
+			grouped++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(grouped) / float64(total)
+}
+
+// TestGenerationIsClusteredNotScattered is the E8 acceptance test: terrain must
+// come in regions. It is written so that it FAILS on the pre-E8 generator —
+// checked here against a uniform-scatter fixture built at the same densities,
+// so the threshold is known to discriminate rather than merely to pass.
+func TestGenerationIsClusteredNotScattered(t *testing.T) {
+	// Well above what uniform scatter yields (measured 7-16% below) and well
+	// below what the shapes yield (measured 61-88%).
+	const wantClustered = 0.5
+
+	shapes := []struct {
+		terrain Terrain
+		minLike int // 3 for an area, 2 for a one-cell-thick ridge
+	}{
+		{Sand, 3}, {Rubble, 3}, {Barrier, 2},
+	}
+
+	opts := DefaultGenOpts()
+	for seed := int64(1); seed <= 20; seed++ {
+		w := Generate(seed, opts)
+		for _, s := range shapes {
+			if got := clustered(w, s.terrain, s.minLike); got < wantClustered {
+				t.Errorf("seed %d: only %.0f%% of %s cells have %d+ like neighbours, want >=%.0f%% — that is scatter, not a region",
+					seed, got*100, s.terrain, s.minLike, wantClustered*100)
+			}
+		}
+	}
+
+	// The discrimination check: the old generator, verbatim — one draw per cell
+	// thresholded into bands — at the same class shares this one produces. If
+	// the statistic did not separate these two it would be measuring nothing.
+	scatter := Generate(1, GenOpts{Width: opts.Width, Height: opts.Height, Colonies: 1})
+	rng := rand.New(rand.NewSource(1))
+	for i := range scatter.Cells {
+		switch v := rng.Float64(); {
+		case v < 0.08:
+			scatter.Cells[i].Terrain = Barrier
+		case v < 0.08+0.12:
+			scatter.Cells[i].Terrain = Rubble
+		case v < 0.08+0.24:
+			scatter.Cells[i].Terrain = Sand
+		}
+	}
+	regions := Generate(1, opts)
+	for _, s := range shapes {
+		got := clustered(scatter, s.terrain, s.minLike)
+		t.Logf("%s with %d+ like neighbours: uniform scatter %.0f%%, generated regions %.0f%%",
+			s.terrain, s.minLike, got*100, clustered(regions, s.terrain, s.minLike)*100)
+		if got >= wantClustered {
+			t.Errorf("the clustering statistic does not discriminate: uniform scatter already scores %.0f%% for %s",
+				got*100, s.terrain)
+		}
+	}
+}
+
+// TestGenerationASCIIDump prints the arena so a human can decide whether it
+// reads as deserts, mountains and walls. No assertions: the eye is the test.
+func TestGenerationASCIIDump(t *testing.T) {
+	glyph := map[Terrain]byte{Open: '.', Barrier: '#', Rubble: '^', Sand: '~'}
+	for _, seed := range []int64{1, 7} {
+		w := Generate(seed, DefaultGenOpts())
+		rows := make([]string, 0, w.Height)
+		for y := 0; y < w.Height; y++ {
+			row := make([]byte, w.Width)
+			for x := 0; x < w.Width; x++ {
+				row[x] = glyph[w.At(Coord{x, y}).Terrain]
+			}
+			for _, b := range w.Bases {
+				if b.Coord.Y == y {
+					row[b.Coord.X] = 'B'
+				}
+			}
+			rows = append(rows, string(row))
+		}
+		t.Logf("seed %d (. open  ^ rubble  ~ sand  # barrier  B base)\n%s",
+			seed, strings.Join(rows, "\n"))
 	}
 }
 
