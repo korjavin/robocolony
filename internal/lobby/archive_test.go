@@ -17,7 +17,7 @@ import (
 // standing and the series.
 func TestHistoryServesAFinishedMatch(t *testing.T) {
 	svc, database := newService(t)
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 	_, m := finishedMatch(t, svc, database, lobby, set, members)
@@ -84,7 +84,7 @@ func TestHistoryServesAFinishedMatch(t *testing.T) {
 // That is the whole reason the summary is stored alongside the log.
 func TestStaleRecordKeepsItsSummary(t *testing.T) {
 	svc, database := newService(t)
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 	rec, _ := finishedMatch(t, svc, database, lobby, set, members)
@@ -129,7 +129,7 @@ func TestStaleRecordKeepsItsSummary(t *testing.T) {
 // keeps stepping from there, and clamps a scrub past the end onto the end.
 func TestReplayStandsAtTheRequestedTick(t *testing.T) {
 	svc, database := newService(t)
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 	_, live := finishedMatch(t, svc, database, lobby, set, members)

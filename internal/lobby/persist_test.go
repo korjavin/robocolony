@@ -160,7 +160,7 @@ func testReplayPreservesStateHash(t *testing.T, set Settings) {
 // guard rejected outright — and lands on the same world.
 func TestReplayFinishedMatchToItsEnd(t *testing.T) {
 	svc, database := newService(t)
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 
@@ -195,7 +195,7 @@ func TestReplayFinishedMatchToItsEnd(t *testing.T) {
 // in internal/server cannot hold on its own — the finished flag is set under the
 // match lock — so the refusal has to be in Apply.
 func TestFinishedMatchRefusesCommands(t *testing.T) {
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	m := testMatch(t, set, 1)
 	for m.step() { //nolint:revive // run it to its end
 	}
@@ -224,9 +224,14 @@ func TestFinishedMatchRefusesCommands(t *testing.T) {
 // here would only flake on CI.
 //
 // Default settings, the default four colonies, replayed from tick 0 to the end
-// of a 600-second match: 0.42s on the development machine. That is what settled
-// the design at "rebuild per connection" and left the warm-session cache
-// unbuilt (see Service.Replay).
+// of a 600-second match: 0.23-0.32s when a core is free, 0.59s median over
+// seven runs on a four-core box carrying other builds, and several seconds when
+// that box is oversubscribed — which is scheduling, not simulation. That is
+// what settled the design at "rebuild per connection" and left the
+// warm-session cache unbuilt (see Service.Replay).
+//
+// It scales with the target tick, and rc-8hu left match duration with no
+// ceiling, so a much longer match costs proportionally more.
 func TestRebuildCost(t *testing.T) {
 	if testing.Short() {
 		t.Skip("6000 ticks of simulation")

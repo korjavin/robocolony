@@ -28,9 +28,10 @@ const (
 // no protocol of its own.
 //
 // The rebuild happens here, on the request's goroutine, before the first byte:
-// Service.Replay re-simulates the match from tick 0 up to `from` (about half a
-// second for a full default match — see the ponytail note there). Every client
-// control is a reconnect, so that is the cost of a scrub or a speed change.
+// Service.Replay re-simulates the match from tick 0 up to `from` — about 0.3s
+// for a full default match, and proportional to the target tick with no ceiling
+// on match duration (see the ponytail note there). Every client control is a
+// reconnect, so that is the cost of a scrub or a speed change.
 //
 // Like Stream, this handler owns no goroutines and selects on stopping, so a
 // client that disappears leaves nothing behind and a shutdown can drain.

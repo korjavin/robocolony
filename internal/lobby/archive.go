@@ -126,12 +126,16 @@ func (s *Service) HistoryOf(ctx context.Context, id int64) (HistoryDetail, error
 // touch the live world. ReplayTo advances it a tick at a time.
 //
 // ponytail: a rebuild per connection, and the client's every control (pause,
-// scrub, speed) is a reconnect. Measured at 0.42s for a full default match
-// (6000 ticks, 4 colonies — TestRebuildCost logs it), which is the cost of one
-// control action. The upgrade path when that stops being acceptable is a warm
-// session cached per (user, match) with a TTL, so a pause/resume or a forward
-// seek reuses the world instead of rebuilding it; it is not worth the eviction
-// rules until the measurement says so.
+// scrub, speed) is a reconnect, so this is the cost of a control action.
+// Measured at 0.23-0.32s for a full default match on a free core (6000 ticks, 4
+// colonies — TestRebuildCost logs it), which is what settled the design.
+//
+// It is O(target tick), and since rc-8hu dropped maxDurationSec there is no
+// ceiling on match duration and therefore none on this: a match ten times the
+// default length costs ten times as much to scrub in. The upgrade path when
+// that shows up is a warm session cached per (user, match) with a TTL, so a
+// pause/resume or a forward seek reuses the world instead of rebuilding it. Not
+// worth the eviction rules until a long match actually exists.
 func (s *Service) Replay(ctx context.Context, id int64, from uint64) (*Match, error) {
 	rec, err := s.finishedRecord(ctx, id)
 	if err != nil {
