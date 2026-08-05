@@ -207,6 +207,33 @@ function loadoutPicker(l, seat) {
     : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.";
   wrap.append(line);
 
+  // An approval is stored as a frozen snapshot, but it is re-sent as ids: PUT
+  // /loadout replaces the whole list and the server re-resolves every id, so one
+  // design deleted from the library since it was approved would 404 the entire
+  // request and leave the picker unusable except for "Use the starter kit",
+  // which throws away every other approval. Drop those entries here instead —
+  // and name them, because the snapshot still knows what they were called.
+  //
+  // ponytail: presence by id, not "the row still holds what was approved".
+  // Re-sending an id is already how a kept approval works, so editing a design
+  // re-approves it with its new parts — which is the point of editing. The
+  // ceiling is SQLite handing a deleted rowid to the next insert: delete the
+  // highest-id blueprint, make another, and this treats the replacement as the
+  // original. Compare the snapshot's name and parts here if that ever bites,
+  // and accept that an edited design then drops out instead of following.
+  const inLibrary = (e) =>
+    library.blueprints.some((b) => b.id === e.blueprint_id)
+    && library.programs.some((p) => p.id === e.program_id);
+  const dropped = entries.filter((e) => !inLibrary(e));
+  if (dropped.length) {
+    const gone = document.createElement("div");
+    gone.className = "meta";
+    gone.textContent = `${dropped.length} approval(s) point at designs you have since deleted `
+      + `(${dropped.map((e) => `${e.blueprint_name} running ${e.program_name}`).join(", ")})`
+      + " — approving anything now drops them.";
+    wrap.append(gone);
+  }
+
   if (!library.blueprints.length || !library.programs.length) {
     const hint = document.createElement("div");
     hint.className = "meta";
@@ -226,7 +253,8 @@ function loadoutPicker(l, seat) {
     try { await api("PUT", `/api/lobbies/${l.id}/loadout`, { entries: list }); await refresh(); }
     catch (e) { err(e.message); }
   };
-  const kept = entries.map((e) => ({ blueprint_id: e.blueprint_id, program_id: e.program_id }));
+  const kept = entries.filter(inLibrary)
+    .map((e) => ({ blueprint_id: e.blueprint_id, program_id: e.program_id }));
   wrap.append(bp, pr, button("Approve", () =>
     put(kept.concat({ blueprint_id: Number(bp.value), program_id: Number(pr.value) }))));
   if (entries.length) wrap.append(button("Use the starter kit", () => put([])));
