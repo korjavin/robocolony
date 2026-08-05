@@ -466,7 +466,7 @@ func TestStreamDisconnect(t *testing.T) {
 // TestStreamUnknownMatch: a match id nobody is running is a 404, not a stream
 // that never says anything.
 func TestStreamUnknownMatch(t *testing.T) {
-	reg := lobby.NewRegistry(nil, nil)
+	reg := lobby.NewRegistry(nil)
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/matches/{id}/stream", Stream(reg, nil))
 	srv := httptest.NewServer(mux)
