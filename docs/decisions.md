@@ -53,6 +53,17 @@ the whole persistence design rests on.
 as library ids. Ids would let a mid-match library edit make a restart rebuild the
 colony from rules the match never ran.
 
+**A player's opening roster is drawn, not repeated** (2026-08-05, rc-w9s.36).
+Each of the up-to-`startingRobots` robots is picked uniformly from the approvals
+that still fit the *remaining* budget, so approving a mixed set buys a mixed
+opening; it used to be the first approval repeated, which made every approval
+after the first worth nothing until §5.2 production started. The cap and the
+budget ceiling are untouched — that pair is §2.1's equal-strength guarantee. The
+draw is on the world's rng inside `equipColony`, because a replay rebuilds a
+match from seed + command log alone. **Player loadouts only**: the built-in human
+kit and every AI profile keep their fixed openings, which is what the AI ladder
+measured below was tuned against.
+
 ## Measurements behind the balance decisions
 
 **Scoring** — 112 matches (16 seeds × 7 matchups × 6000 ticks), sweeping the
