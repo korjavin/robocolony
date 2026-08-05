@@ -44,6 +44,7 @@
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby" aria-current="page">Lobbies</a>
+    <a href="/history">History</a>
     <a href="/editor">Editor</a>
     <a href="/help">Guide</a>
     <span class="grow"></span>
@@ -61,6 +62,11 @@
     <div>
       <h2>Matches in progress &mdash; they run whether or not anyone is watching</h2>
       <ul id="running"></ul>
+      <!-- Where a match goes when it ends. Without this line the only door to
+           the record is the nav, and the player who just watched one finish is
+           standing right here. -->
+      <p class="meta">A match that has ended keeps its standing, its graph and a
+      full replay on the <a href="/history">history page</a>.</p>
 
       <h2>Open lobbies &mdash; waiting for players</h2>
       <ul id="lobbies"></ul>

@@ -347,6 +347,22 @@ table.t th {
 table.t td { padding: 10px 12px; border-bottom: 1px solid var(--line-2); }
 table.t tr:hover td { background: var(--bg-1); }
 
+/* A colony's colour, as a chip beside its name. The colour itself is always
+   var(--colony-N), written by the script that knows which colony it is. */
+.swatch { display: inline-block; width: .7rem; height: .7rem; margin-right: .35rem; }
+
+/* Score-over-time graph (web/js/graph.js). Both the match view and the history
+   page draw the same markup — #graph-metric, #graph-lines, #graph-note — so the
+   rules live here rather than twice in two <style> blocks. Colours come from
+   --colony-N through var(), never a literal. */
+.graph-head { display: flex; align-items: baseline; gap: .5rem;
+              font-size: 11px; margin: .2rem 0 .3rem; }
+.graph-head select { padding: .1rem .4rem; font-size: 11px; }
+.graph { display: block; width: 100%; height: 8rem;
+         border: 1px solid var(--line-1); background: var(--bg-1); }
+.graph polyline { fill: none; stroke-width: 2; stroke-linejoin: round;
+                  stroke-linecap: round; }
+
 /* Four numbers across the top of a screen that is about numbers. Scoped to the
    grid on purpose: the editor calls its inline blueprint figures .stat too, and
    a bare selector here would put a card border around each of them. */
