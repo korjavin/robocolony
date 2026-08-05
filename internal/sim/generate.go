@@ -207,8 +207,12 @@ func (w *World) paintRegions(t Terrain, budget int, coreFrac float64) (cores int
 		grown := w.blob(t, min(left, regionCells))
 		left -= len(grown)
 		for _, c := range grown[:int(float64(len(grown))*coreFrac)] {
+			// Same accounting rule as ridge: only a cell that was not already
+			// Barrier spends the hard-barrier budget.
+			if w.At(c).Terrain != Barrier {
+				cores++
+			}
 			w.SetTerrain(c, Barrier)
-			cores++
 		}
 	}
 	for i := 0; i < scatter; i++ {
@@ -254,7 +258,11 @@ func (w *World) ridge(length int) (painted int) {
 	c := w.randCoord()
 	h := Heading(w.rng.Intn(int(headingCount)))
 	for i := 0; i < length && w.In(c); i++ {
-		if i%ridgeGap != ridgeGap-1 { // every ridgeGap'th cell is the doorway
+		// Every ridgeGap'th cell is the doorway. Only cells that were not
+		// already Barrier count: a ridge crossing a massif core or an earlier
+		// ridge adds no hard barrier, and charging the budget for it would make
+		// BarrierDensity undershoot.
+		if i%ridgeGap != ridgeGap-1 && w.At(c).Terrain != Barrier {
 			w.SetTerrain(c, Barrier)
 			painted++
 		}
