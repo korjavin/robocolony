@@ -207,20 +207,17 @@ function loadoutPicker(l, seat) {
     : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.";
   wrap.append(line);
 
-  // An approval is stored as a frozen snapshot, but it is re-sent as ids: PUT
-  // /loadout replaces the whole list and the server re-resolves every id, so one
-  // design deleted from the library since it was approved would 404 the entire
-  // request and leave the picker unusable except for "Use the starter kit",
-  // which throws away every other approval. Drop those entries here instead —
-  // and name them, because the snapshot still knows what they were called.
+  // An approval is stored as a frozen snapshot and re-sent as ids: PUT /loadout
+  // replaces the whole list and the server re-resolves every id, so one design
+  // deleted from the library since it was approved would 404 the entire request
+  // and leave the picker unusable except for "Use the starter kit", which throws
+  // away every other approval. Drop those entries here instead — and name them,
+  // because the snapshot still knows what they were called.
   //
-  // ponytail: presence by id, not "the row still holds what was approved".
-  // Re-sending an id is already how a kept approval works, so editing a design
-  // re-approves it with its new parts — which is the point of editing. The
-  // ceiling is SQLite handing a deleted rowid to the next insert: delete the
-  // highest-id blueprint, make another, and this treats the replacement as the
-  // original. Compare the snapshot's name and parts here if that ever bites,
-  // and accept that an edited design then drops out instead of following.
+  // Presence by id is the whole check. Library ids are AUTOINCREMENT
+  // (sql/migrations/005_stable_library_ids.sql), so a present id is still the
+  // design that was approved, and editing that design re-approves it with its
+  // new parts — which is the point of editing.
   const inLibrary = (e) =>
     library.blueprints.some((b) => b.id === e.blueprint_id)
     && library.programs.some((p) => p.id === e.program_id);

@@ -7,6 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/pressly/goose/v3"
+
+	"github.com/korjavin/robocolony/sql/migrations"
 )
 
 func openTest(t *testing.T) *DB {
@@ -223,6 +227,117 @@ func TestProgramRoundTrip(t *testing.T) {
 	}
 	if _, err := d.ProgramByID(ctx, owner.ID, p.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("ProgramByID(deleted) = %v, want sql.ErrNoRows", err)
+	}
+}
+
+// Library ids are re-sent by the lobby picker to keep an approval alive, so an
+// id SQLite hands to a second row would swap a player's approved design for its
+// replacement. 005 rebuilt both tables with AUTOINCREMENT to make that
+// impossible.
+func TestLibraryIDsAreNeverReused(t *testing.T) {
+	d := openTest(t)
+	ctx := t.Context()
+
+	owner, err := d.UpsertUser(ctx, "sub-1", "a@example.com", "Ada")
+	if err != nil {
+		t.Fatalf("UpsertUser() = %v", err)
+	}
+
+	p, err := d.CreateProgram(ctx, owner.ID, "gone", "{}")
+	if err != nil {
+		t.Fatalf("CreateProgram() = %v", err)
+	}
+	b, err := d.CreateBlueprint(ctx, owner.ID, "gone", "{}")
+	if err != nil {
+		t.Fatalf("CreateBlueprint() = %v", err)
+	}
+
+	// Both are the highest id in their table, which is exactly the rowid a
+	// non-AUTOINCREMENT table would recycle.
+	if err := d.DeleteProgram(ctx, owner.ID, p.ID); err != nil {
+		t.Fatalf("DeleteProgram() = %v", err)
+	}
+	if err := d.DeleteBlueprint(ctx, owner.ID, b.ID); err != nil {
+		t.Fatalf("DeleteBlueprint() = %v", err)
+	}
+
+	next, err := d.CreateProgram(ctx, owner.ID, "replacement", "{}")
+	if err != nil {
+		t.Fatalf("CreateProgram(replacement) = %v", err)
+	}
+	if next.ID <= p.ID {
+		t.Errorf("replacement program id = %d, want above the deleted %d", next.ID, p.ID)
+	}
+	nextBP, err := d.CreateBlueprint(ctx, owner.ID, "replacement", "{}")
+	if err != nil {
+		t.Fatalf("CreateBlueprint(replacement) = %v", err)
+	}
+	if nextBP.ID <= b.ID {
+		t.Errorf("replacement blueprint id = %d, want above the deleted %d", nextBP.ID, b.ID)
+	}
+}
+
+// The 005 rebuild drops and recreates both library tables, so it has to carry
+// every id and the blueprints -> programs reference across unchanged.
+func TestMigration005PreservesLibraryRows(t *testing.T) {
+	ctx := t.Context()
+	sqlDB, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "test.db")+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("sql.Open() = %v", err)
+	}
+	defer sqlDB.Close()
+
+	p, err := goose.NewProvider(goose.DialectSQLite3, sqlDB, migrations.FS)
+	if err != nil {
+		t.Fatalf("NewProvider() = %v", err)
+	}
+	if _, err := p.UpTo(ctx, 4); err != nil {
+		t.Fatalf("UpTo(4) = %v", err)
+	}
+
+	// Ids well above 1 so a rebuild that renumbered would show.
+	for _, stmt := range []string{
+		`INSERT INTO users (id, google_sub, email, display_name) VALUES (3, 'sub-1', 'a@example.com', 'Ada')`,
+		`INSERT INTO programs (id, user_id, name, json) VALUES (7, 3, 'scavenger', '{}')`,
+		`INSERT INTO blueprints (id, user_id, name, json, default_program_id) VALUES (9, 3, 'hauler', '{}', 7)`,
+	} {
+		if _, err := sqlDB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("Up() = %v", err)
+	}
+
+	var progID, bpID, defaultProgID int64
+	if err := sqlDB.QueryRowContext(ctx, `SELECT id FROM programs`).Scan(&progID); err != nil {
+		t.Fatalf("read program: %v", err)
+	}
+	if err := sqlDB.QueryRowContext(ctx, `SELECT id, default_program_id FROM blueprints`).Scan(&bpID, &defaultProgID); err != nil {
+		t.Fatalf("read blueprint: %v", err)
+	}
+	if progID != 7 || bpID != 9 || defaultProgID != 7 {
+		t.Errorf("after 005: program %d, blueprint %d, default_program_id %d; want 7, 9, 7", progID, bpID, defaultProgID)
+	}
+
+	// The unique index has to come across too, or duplicate names get in.
+	if _, err := sqlDB.ExecContext(ctx,
+		`INSERT INTO blueprints (user_id, name, json) VALUES (3, 'hauler', '{}')`); err == nil {
+		t.Error("duplicate blueprint name accepted after 005, want the unique index to reject it")
+	}
+
+	// And the migrated table must not recycle the id it just carried over.
+	if _, err := sqlDB.ExecContext(ctx, `DELETE FROM blueprints WHERE id = 9`); err != nil {
+		t.Fatalf("delete blueprint: %v", err)
+	}
+	var reborn int64
+	if err := sqlDB.QueryRowContext(ctx,
+		`INSERT INTO blueprints (user_id, name, json) VALUES (3, 'replacement', '{}') RETURNING id`).Scan(&reborn); err != nil {
+		t.Fatalf("insert replacement: %v", err)
+	}
+	if reborn <= 9 {
+		t.Errorf("replacement blueprint id = %d, want above the deleted 9", reborn)
 	}
 }
 
