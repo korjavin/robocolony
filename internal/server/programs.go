@@ -440,7 +440,7 @@ func (l *Library) ListBlueprints(ctx context.Context, userID int64) ([]Blueprint
 	}
 	if len(rows) == 0 {
 		for _, s := range starterBlueprints() {
-			if _, err := l.CreateBlueprint(ctx, userID, s.name, variants(s.components)); err != nil {
+			if _, err := l.SaveBlueprint(ctx, userID, 0, s.name, variants(s.components)); err != nil {
 				var se statusError
 				if errors.As(err, &se) && se.code == http.StatusConflict {
 					continue // somebody else seeded it first
@@ -463,9 +463,16 @@ func (l *Library) ListBlueprints(ctx context.Context, userID int64) ([]Blueprint
 	return out, nil
 }
 
-// CreateBlueprint saves a physical configuration, enforcing the design §6.3
-// constraints server-side.
-func (l *Library) CreateBlueprint(ctx context.Context, userID int64, name string, components []int) (BlueprintView, error) {
+// SaveBlueprint stores a physical configuration, enforcing the design §6.3
+// constraints server-side. id == 0 creates, anything else rewrites the caller's
+// own row of that id — the same shape SaveProgram has.
+//
+// Editing in place is safe for the same reason deleting is: an approval keeps a
+// frozen snapshot, so nothing that already fielded this design reads the row
+// again. It can leave one of the player's programs no longer installable on it
+// (drop the radar a scavenger needs), which surfaces at the next save or
+// install through the message prog.Validate already writes.
+func (l *Library) SaveBlueprint(ctx context.Context, userID, id int64, name string, components []int) (BlueprintView, error) {
 	name = strings.TrimSpace(name)
 	switch {
 	case name == "":
@@ -483,14 +490,36 @@ func (l *Library) CreateBlueprint(ctx context.Context, userID int64, name string
 	if err != nil {
 		return BlueprintView{}, err
 	}
-	row, err := l.db.CreateBlueprint(ctx, userID, name, string(encoded))
+	var row db.Blueprint
+	if id == 0 {
+		row, err = l.db.CreateBlueprint(ctx, userID, name, string(encoded))
+	} else {
+		row, err = l.db.UpdateBlueprint(ctx, userID, id, name, string(encoded))
+	}
 	switch {
 	case db.IsDuplicateName(err):
 		return BlueprintView{}, libErrf(http.StatusConflict, "you already have a blueprint called %q", name)
+	case errors.Is(err, sql.ErrNoRows):
+		return BlueprintView{}, libErrf(http.StatusNotFound, "blueprint not found")
 	case err != nil:
 		return BlueprintView{}, err
 	}
 	return blueprintView(row, bp), nil
+}
+
+// DeleteBlueprint removes one of the caller's own blueprints.
+//
+// Nothing points at the row. A lobby loadout stores a frozen snapshot of the
+// parts list rather than a library id (internal/lobby/loadout.go), so a design
+// already approved in an open lobby, or fielded in a running match, keeps
+// working after its library row is gone; and no table has a foreign key to
+// blueprints.id. Deleting every blueprint is fine too — ListBlueprints re-seeds
+// the starter kit whenever the list comes back empty.
+func (l *Library) DeleteBlueprint(ctx context.Context, userID, id int64) error {
+	if err := l.db.DeleteBlueprint(ctx, userID, id); err != nil {
+		return notFound(err, "blueprint")
+	}
+	return nil
 }
 
 // PreviewBlueprint answers "what would this robot be?" for a parts list that
@@ -612,6 +641,8 @@ func (l *Library) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("GET /api/blueprints", l.handleListBlueprints)
 	handle("POST /api/blueprints", l.handleCreateBlueprint)
 	handle("POST /api/blueprints/preview", l.handlePreviewBlueprint)
+	handle("PUT /api/blueprints/{id}", l.handleUpdateBlueprint)
+	handle("DELETE /api/blueprints/{id}", l.handleDeleteBlueprint)
 }
 
 // programBody is the shape every write endpoint takes.
@@ -722,6 +753,19 @@ func (l *Library) handleListBlueprints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (l *Library) handleCreateBlueprint(w http.ResponseWriter, r *http.Request) {
+	l.saveBlueprint(w, r, 0)
+}
+
+func (l *Library) handleUpdateBlueprint(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	l.saveBlueprint(w, r, id)
+}
+
+func (l *Library) saveBlueprint(w http.ResponseWriter, r *http.Request, id int64) {
 	var body struct {
 		Name       string `json:"name"`
 		Components []int  `json:"components"`
@@ -731,12 +775,30 @@ func (l *Library) handleCreateBlueprint(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	user, _ := auth.UserFrom(r.Context())
-	view, err := l.CreateBlueprint(r.Context(), user.ID, body.Name, body.Components)
+	view, err := l.SaveBlueprint(r.Context(), user.ID, id, body.Name, body.Components)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, view)
+	code := http.StatusOK
+	if id == 0 {
+		code = http.StatusCreated
+	}
+	writeJSON(w, code, view)
+}
+
+func (l *Library) handleDeleteBlueprint(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	if err := l.DeleteBlueprint(r.Context(), user.ID, id); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (l *Library) handlePreviewBlueprint(w http.ResponseWriter, r *http.Request) {

@@ -571,6 +571,7 @@ function statLine(s) {
 const componentName = (v) => (lang.components.find((c) => c.variant === v) || { name: `#${v}` }).name;
 
 let picked = [];
+let editing = 0;        // library id the draft is editing in place, 0 = a new design
 let bpStats = null;     // last /api/blueprints/preview verdict
 let bpStatsFor = "";    // the parts list that verdict describes
 let bpTimer = null;
@@ -623,6 +624,7 @@ function renderBlueprintDraft() {
   // and only while it still describes the parts list on screen. A verdict for
   // some earlier design must never open the button for this one.
   $("bpcreate").disabled = !(bpStats && bpStats.ok && bpStatsFor === pickedKey());
+  $("bpcreate").textContent = editing ? "Save changes" : "Save blueprint";
 }
 
 // previewBlueprint asks the server what the current parts list would build.
@@ -811,24 +813,67 @@ $("templates").addEventListener("change", (ev) => {
   changed();
 });
 
-// bpcopy starts a new design from the selected one. There is no PUT: an
-// approved blueprint is immutable (design §5.1), and a robot already built to
-// one must not have its hardware change underneath it.
+// bpedit loads the selected design into the same draft panel a new one is built
+// in, and the save below sends it as a PUT.
+//
+// Editing the library row cannot reach a lobby that already approved this
+// design, or a match running on it: approving one stores a frozen snapshot of
+// the parts list rather than this id (sql/migrations/004_lobby_loadout.sql).
+// What it can do is leave one of your programs no longer installable on the
+// robot — drop the radar a scavenger reads — and the editor says so in the
+// usual red the next time that program is checked against it.
+$("bpedit").addEventListener("click", () => {
+  const b = blueprints.find((x) => x.id === blueprintID());
+  if (!b) return;
+  editing = b.id;
+  picked = [...b.components];
+  $("bpname").value = b.name;
+  $("bpnew").open = true;
+  previewBlueprint();
+});
+
+// bpcopy starts a *new* design from the selected one, leaving the original
+// alone — which is what to reach for when other robots are already built to it.
 $("bpcopy").addEventListener("click", () => {
   const b = blueprints.find((x) => x.id === blueprintID());
   if (!b) return;
+  editing = 0;
   picked = [...b.components];
   $("bpname").value = `${b.name} mk2`;
   $("bpnew").open = true;
   previewBlueprint();
 });
 
+// Deleting a design cannot reach a lobby that already approved it: the approval
+// stored a frozen snapshot of the parts list, not this id.
+$("bpdel").addEventListener("click", async () => {
+  err("");
+  const b = blueprints.find((x) => x.id === blueprintID());
+  if (!b || !confirm(`Delete the blueprint "${b.name}"?`)) return;
+  try {
+    await api("DELETE", `/api/blueprints/${b.id}`);
+    blueprints = blueprints.filter((x) => x.id !== b.id);
+    if (editing === b.id) editing = 0; // the draft is a new design now, not an edit
+    // Emptying the library re-seeds the starter kit on the next read, so the
+    // picker is never left with nothing in it.
+    if (blueprints.length === 0) blueprints = (await api("GET", "/api/blueprints")).blueprints;
+    renderBlueprints();     // the select falls back to whatever is first now
+    renderBlueprintDraft();
+    changed();              // revalidate the open program against it
+  } catch (e) { err(e.message); }
+});
+
 $("bpcreate").addEventListener("click", async () => {
   err("");
+  const body = { name: $("bpname").value, components: picked };
   try {
-    const bp = await api("POST", "/api/blueprints", { name: $("bpname").value, components: picked });
+    const bp = editing
+      ? await api("PUT", `/api/blueprints/${editing}`, body)
+      : await api("POST", "/api/blueprints", body);
     if (!bp) return;
-    blueprints.push(bp);
+    const at = blueprints.findIndex((x) => x.id === bp.id);
+    if (at < 0) blueprints.push(bp); else blueprints[at] = bp;
+    editing = 0;
     picked = [];
     bpStats = null;
     bpStatsFor = "";
