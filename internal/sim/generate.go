@@ -70,6 +70,15 @@ const (
 // that rng consumption does not depend on how lucky the draws are.
 const basePlacementDraws = 64
 
+// looseCommonShare is the share of the loose-component target placed under the
+// strict rule — open ground every locomotion can reach — with the rest placed
+// inside the sand fields and rubble massifs. The bulk stays strict because the
+// starter blueprint runs on tracks (internal/lobby/starter.go): a tracks-only
+// colony must never be starved. The remainder is the reward for fielding legs
+// or an anti-gravity platform, and the reason the regions of E8 are worth
+// crossing rather than scenery with a speed modifier attached.
+const looseCommonShare = 0.7
+
 func (o GenOpts) normalize() GenOpts {
 	o.Width = max(o.Width, minArenaSide)
 	o.Height = max(o.Height, minArenaSide)
@@ -163,35 +172,81 @@ func Generate(seed int64, opts GenOpts) *World {
 		}
 	}
 	w.repairPockets()
-	reach := w.commonReach(w.Bases[0].Coord)
 
-	// 4. Loose components. A draw that lands on non-open terrain, a base
-	// footprint, an already-taken cell or a pocket is dropped rather than
-	// retried, so the number of rng draws stays fixed; Richness is a target,
-	// not a guarantee.
+	// 4. Loose components, from two pools drawn in a fixed order. A draw that
+	// lands outside its pool, on a base footprint or on an already-taken cell is
+	// dropped rather than retried, so the number of rng draws never depends on
+	// how lucky the draws are; Richness is a target, not a guarantee.
 	//
-	// "A pocket" is now a per-locomotion question, and the answer taken here is
-	// the strict one: a component is only placed where *every* locomotion can
-	// reach it. A leg-only pocket full of loot would be a nice idea and a bad
-	// bug — the starter blueprint runs on tracks, so a colony that has not yet
-	// scavenged a pair of legs could watch a third of the map's resources sit
-	// unreachable forever. Terrain still shapes play through the §6.4 speed
-	// modifier and through shorter routes, which cost nothing to be wrong about.
+	// The first pool is the strict one, and it is the bulk: open ground inside
+	// commonReach, where every chassis can collect. The starter blueprint runs
+	// on tracks, so a colony that has not yet scavenged a pair of legs must
+	// still find most of the map's loot. The second pool is the regions — the
+	// sand and rubble cells inside the union reach, everywhere some locomotion
+	// can go. Anti-gravity is the only locomotion entering both classes
+	// (terrainSpecs, world.go), so its flood from base 0 is exactly that union,
+	// and nothing is ever placed outside it: loot no chassis can collect is loot
+	// that never enters the game.
 	//
 	// occupied is only ever *looked up*, never ranged: map lookups are
 	// deterministic, map iteration is not.
-	target := int(float64(len(w.Cells)) * o.Richness)
-	for i := 0; i < target; i++ {
-		c := w.randCoord()
-		v := catalogue[w.rng.Intn(len(catalogue))].Variant
-		if w.At(c).Terrain != Open || occupied[c] || !reach[w.index(c)] {
-			continue
+	strict := w.commonReach(w.Bases[0].Coord)
+	for i, c := range w.Cells {
+		strict[i] = strict[i] && c.Terrain == Open
+	}
+	union := w.reachable(w.Bases[0].Coord, AntiGrav)
+	regions, n := make([]bool, len(union)), 0
+	for i, c := range w.Cells {
+		if regions[i] = union[i] && c.Terrain != Open; regions[i] {
+			n++
 		}
-		occupied[c] = true
-		w.Loose = append(w.Loose, &LooseComponent{ID: w.NextID(), Coord: c, Variant: v})
+	}
+	if n == 0 {
+		// BarrierDensity 0 paints no regions at all, and then there is no
+		// chassis choice to reward: spend the remainder anywhere reachable
+		// rather than dropping it and undershooting Richness by a third.
+		regions = union
+	}
+
+	target := int(float64(len(w.Cells)) * o.Richness)
+	common := int(float64(target) * looseCommonShare)
+	for _, pool := range []struct {
+		in   []bool
+		want int
+	}{{strict, common}, {regions, target - common}} {
+		for i := 0; i < drawsFor(pool.in, pool.want); i++ {
+			c := w.randCoord()
+			v := catalogue[w.rng.Intn(len(catalogue))].Variant
+			if occupied[c] || !pool.in[w.index(c)] {
+				continue
+			}
+			occupied[c] = true
+			w.Loose = append(w.Loose, &LooseComponent{ID: w.NextID(), Coord: c, Variant: v})
+		}
 	}
 
 	return w
+}
+
+// drawsFor is how many uniform draws over the whole arena it takes for want of
+// them to land inside in. Dropping a bad draw instead of retrying keeps rng
+// consumption luck-independent but costs every draw that misses: E8 took the
+// non-open share from 16% to 31%, and the same Richness quietly placed 19%
+// fewer components (67.1 -> 54.3 per default arena, measured over 100 seeds).
+// Paying for the misses up front restores that, the way regionOverpaint does
+// for terrain — measured rather than guessed, and rng-free, so it cannot make
+// consumption depend on luck.
+func drawsFor(in []bool, want int) int {
+	n := 0
+	for _, ok := range in {
+		if ok {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return want * len(in) / n
 }
 
 // paintRegions paints budget cells of t as blobs of about regionCells each,
