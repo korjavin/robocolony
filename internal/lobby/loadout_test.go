@@ -166,6 +166,58 @@ func mustEncode(t *testing.T, p prog.Program) []byte {
 	return raw
 }
 
+// TestLoadoutIgnoresLibraryEdits is the other half of the same argument, for
+// blueprint edit: an approval keeps the parts the design had when it was
+// approved, so re-equipping the library row cannot re-equip a colony that
+// already chose it.
+func TestLoadoutIgnoresLibraryEdits(t *testing.T) {
+	svc, database := newService(t)
+	ctx := t.Context()
+	owner := newUser(t, database, "ada")
+
+	bp, p := saveDesign(t, database, owner.ID, "hunter", gunner, hunterProgram())
+	view, err := svc.Create(ctx, owner.ID, "loadout match", DefaultSettings())
+	if err != nil {
+		t.Fatalf("Create() = %v", err)
+	}
+	if _, err := svc.SetLoadout(ctx, view.ID, owner.ID, []Choice{{BlueprintID: bp.ID, ProgramID: p.ID}}); err != nil {
+		t.Fatalf("SetLoadout() = %v", err)
+	}
+
+	// The library row loses its weapon and its name after the approval.
+	disarmed, err := json.Marshal(storedBlueprint{Components: []int{int(sim.Tracks), int(sim.LightArmor)}})
+	if err != nil {
+		t.Fatalf("marshal = %v", err)
+	}
+	if _, err := database.UpdateBlueprint(ctx, owner.ID, bp.ID, "pacifist", string(disarmed)); err != nil {
+		t.Fatalf("UpdateBlueprint() = %v", err)
+	}
+
+	got, err := svc.Get(ctx, view.ID)
+	if err != nil {
+		t.Fatalf("Get() = %v", err)
+	}
+	for _, m := range got.Members {
+		if m.UserID != owner.ID {
+			continue
+		}
+		var stored Loadout
+		if err := json.Unmarshal(m.Loadout, &stored); err != nil {
+			t.Fatalf("stored loadout does not parse: %v", err)
+		}
+		if len(stored.Entries) != 1 {
+			t.Fatalf("the seat has %d approvals, want 1", len(stored.Entries))
+		}
+		e := stored.Entries[0]
+		if e.BlueprintName != "hunter" {
+			t.Errorf("approval is named %q, want the %q it was approved as", e.BlueprintName, "hunter")
+		}
+		if !e.blueprint().Has(sim.KindWeapon) {
+			t.Errorf("approval lost its weapon to a later library edit: %v", e.Components)
+		}
+	}
+}
+
 // TestLoadoutSurvivesLibraryDelete is the whole safety argument behind blueprint
 // delete: an approval is a frozen snapshot of the parts list, not a library id,
 // so deleting the row it was copied from cannot reach a lobby that already

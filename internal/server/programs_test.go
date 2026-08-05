@@ -121,10 +121,10 @@ func TestBlueprintOwnership(t *testing.T) {
 	alice := newUser(t, database, "alice")
 	bob := newUser(t, database, "bob")
 
-	bp, err := lib.CreateBlueprint(t.Context(), alice.ID, "gunner",
+	bp, err := lib.SaveBlueprint(t.Context(), alice.ID, 0, "gunner",
 		[]int{int(sim.Tracks), int(sim.MediumArmor), int(sim.Laser)})
 	if err != nil {
-		t.Fatalf("CreateBlueprint() = %v", err)
+		t.Fatalf("SaveBlueprint() = %v", err)
 	}
 	if _, err := lib.ValidateProgram(t.Context(), bob.ID, encode(t, lobby.DefaultProgram()), bp.ID); err == nil {
 		t.Error("bob validated against alice's blueprint")
@@ -150,10 +150,10 @@ func TestValidateEndpoint(t *testing.T) {
 
 	// A blueprint with no radar, so the design §10.7 program's radar rule is an
 	// error rather than a matter of opinion.
-	blind, err := lib.CreateBlueprint(t.Context(), user.ID, "blind",
+	blind, err := lib.SaveBlueprint(t.Context(), user.ID, 0, "blind",
 		[]int{int(sim.Tracks), int(sim.MediumArmor), int(sim.Manipulator)})
 	if err != nil {
-		t.Fatalf("CreateBlueprint() = %v", err)
+		t.Fatalf("SaveBlueprint() = %v", err)
 	}
 
 	raw := encode(t, lobby.DefaultProgram())
@@ -341,6 +341,77 @@ func TestSeedingIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestUpdateBlueprint: a design can be fixed in place instead of forked. The
+// four refusals are the ones a player can actually hit — somebody else's id, a
+// name they already use, and an illegal parts list, which must leave the stored
+// row exactly as it was.
+func TestUpdateBlueprint(t *testing.T) {
+	lib, database := newLibrary(t)
+	alice := newUser(t, database, "alice")
+	bob := newUser(t, database, "bob")
+
+	scout := []int{int(sim.Tracks), int(sim.LightArmor), int(sim.Manipulator)}
+	mine, err := lib.SaveBlueprint(t.Context(), alice.ID, 0, "hauler", scout)
+	if err != nil {
+		t.Fatalf("SaveBlueprint() = %v", err)
+	}
+	taken, err := lib.SaveBlueprint(t.Context(), alice.ID, 0, "keeper", scout)
+	if err != nil {
+		t.Fatalf("SaveBlueprint() = %v", err)
+	}
+
+	// Renamed and re-equipped in place: same id, new name, new parts.
+	withRadar := append(slices.Clone(scout), int(sim.PartsRadar))
+	got, err := lib.SaveBlueprint(t.Context(), alice.ID, mine.ID, "hauler mk2", withRadar)
+	if err != nil {
+		t.Fatalf("SaveBlueprint(update) = %v", err)
+	}
+	if got.ID != mine.ID || got.Name != "hauler mk2" || !slices.Equal(got.Components, withRadar) {
+		t.Errorf("update returned %+v, want id %d named \"hauler mk2\" with %v", got, mine.ID, withRadar)
+	}
+	// It replaced the row rather than adding one.
+	list, err := lib.ListBlueprints(t.Context(), alice.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	if len(list) != 2 {
+		t.Errorf("the library has %d blueprints after an edit, want 2", len(list))
+	}
+
+	// Somebody else's id is a 404, not a 403: the endpoint never says a row exists.
+	if _, err := lib.SaveBlueprint(t.Context(), bob.ID, mine.ID, "bob's now", scout); err == nil {
+		t.Error("bob edited alice's blueprint")
+	} else {
+		wantLibStatus(t, err, http.StatusNotFound)
+	}
+	// A name another of her own designs already has.
+	if _, err := lib.SaveBlueprint(t.Context(), alice.ID, mine.ID, taken.Name, scout); err == nil {
+		t.Error("a duplicate name was accepted")
+	} else {
+		wantLibStatus(t, err, http.StatusConflict)
+	}
+	// A parts list §6.3 rejects — two locomotion units.
+	if _, err := lib.SaveBlueprint(t.Context(), alice.ID, mine.ID, "hauler mk3",
+		[]int{int(sim.Tracks), int(sim.Legs), int(sim.LightArmor)}); err == nil {
+		t.Error("an illegal parts list was accepted")
+	} else {
+		wantLibStatus(t, err, http.StatusBadRequest)
+	}
+
+	// After all three refusals the row is still what the one legal edit made it.
+	after, err := lib.ListBlueprints(t.Context(), alice.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	i := slices.IndexFunc(after, func(b BlueprintView) bool { return b.ID == mine.ID })
+	if i < 0 {
+		t.Fatalf("blueprint %d is gone", mine.ID)
+	}
+	if after[i].Name != "hauler mk2" || !slices.Equal(after[i].Components, withRadar) {
+		t.Errorf("a refused edit changed the row: %+v", after[i])
+	}
+}
+
 // TestDeleteBlueprint: a player can drop a design from their own library, and
 // only from their own. A missing id and somebody else's id are the same 404, so
 // the endpoint never reports that a row exists.
@@ -351,14 +422,14 @@ func TestDeleteBlueprint(t *testing.T) {
 
 	// Two designs, so deleting one leaves a library that is not empty: an
 	// emptied one re-seeds the starters, which is its own test below.
-	mine, err := lib.CreateBlueprint(t.Context(), alice.ID, "hauler",
+	mine, err := lib.SaveBlueprint(t.Context(), alice.ID, 0, "hauler",
 		[]int{int(sim.Tracks), int(sim.LightArmor), int(sim.Manipulator)})
 	if err != nil {
-		t.Fatalf("CreateBlueprint() = %v", err)
+		t.Fatalf("SaveBlueprint() = %v", err)
 	}
-	if _, err := lib.CreateBlueprint(t.Context(), alice.ID, "keeper",
+	if _, err := lib.SaveBlueprint(t.Context(), alice.ID, 0, "keeper",
 		[]int{int(sim.Tracks), int(sim.LightArmor), int(sim.Manipulator)}); err != nil {
-		t.Fatalf("CreateBlueprint() = %v", err)
+		t.Fatalf("SaveBlueprint() = %v", err)
 	}
 
 	if err := lib.DeleteBlueprint(t.Context(), bob.ID, mine.ID); err == nil {
@@ -435,7 +506,7 @@ func TestBlueprintConstraints(t *testing.T) {
 		{"unknown component", []int{int(sim.Tracks), int(sim.MediumArmor), 200}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := lib.CreateBlueprint(t.Context(), user.ID, tt.name, tt.components); err == nil {
+			if _, err := lib.SaveBlueprint(t.Context(), user.ID, 0, tt.name, tt.components); err == nil {
 				t.Fatalf("%s was accepted", tt.name)
 			} else {
 				wantLibStatus(t, err, http.StatusBadRequest)
@@ -445,7 +516,7 @@ func TestBlueprintConstraints(t *testing.T) {
 }
 
 // TestBlueprintPreviewAgreesWithSave: the editor draws its live §6.3 verdict
-// from the preview endpoint and its save gate from CreateBlueprint. If those
+// from the preview endpoint and its save gate from SaveBlueprint. If those
 // two ever disagree the editor either refuses a legal design or offers one the
 // save will bounce, so pin them to the same answer over the same cases.
 func TestBlueprintPreviewAgreesWithSave(t *testing.T) {
@@ -467,7 +538,7 @@ func TestBlueprintPreviewAgreesWithSave(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PreviewBlueprint() = %v", err)
 			}
-			_, saveErr := lib.CreateBlueprint(t.Context(), user.ID, tt.name, tt.components)
+			_, saveErr := lib.SaveBlueprint(t.Context(), user.ID, 0, tt.name, tt.components)
 			if stats.OK != (saveErr == nil) {
 				t.Fatalf("preview ok = %v (%q) but save error = %v", stats.OK, stats.Error, saveErr)
 			}

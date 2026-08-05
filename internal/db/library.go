@@ -62,6 +62,16 @@ func (d *DB) ListBlueprints(ctx context.Context, userID int64) ([]Blueprint, err
 	return out, nil
 }
 
+// UpdateBlueprint rewrites one of the user's own blueprints, or returns
+// sql.ErrNoRows if it does not exist or belongs to someone else.
+// default_program_id is left alone: it is not part of the design.
+func (d *DB) UpdateBlueprint(ctx context.Context, userID, id int64, name, blueprintJSON string) (Blueprint, error) {
+	return scanBlueprint(d.QueryRowContext(ctx, `
+		UPDATE blueprints SET name = ?, json = ?
+		WHERE user_id = ? AND id = ?
+		RETURNING `+blueprintColumns, name, blueprintJSON, userID, id))
+}
+
 // DeleteBlueprint removes one of the user's own blueprints, or returns
 // sql.ErrNoRows if there was nothing of theirs to delete. Nothing has a foreign
 // key to blueprints.id, so there is no cascade to think about.
