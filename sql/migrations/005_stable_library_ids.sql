@@ -50,6 +50,37 @@ ALTER TABLE blueprints_new RENAME TO blueprints;
 CREATE UNIQUE INDEX programs_user_name ON programs (user_id, name);
 CREATE UNIQUE INDEX blueprints_user_name ON blueprints (user_id, name);
 
+-- Rows deleted *before* this migration left no trace in the copied tables, so
+-- the sequence starts at the surviving maximum and the next few inserts would
+-- walk straight back over an id an open lobby's approval still holds — the same
+-- swap, once. The loadouts remember those ids, so raise each sequence past them
+-- as well. sqlite_sequence is an ordinary table and has no unique index on
+-- name, hence delete-then-insert rather than an upsert; a NULL maximum (both
+-- tables empty, no loadouts) inserts nothing and leaves the sequence at zero.
+DELETE FROM sqlite_sequence WHERE name IN ('programs', 'blueprints');
+
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'programs', high FROM (
+    SELECT max(id) AS high FROM (
+        SELECT id FROM programs
+        UNION ALL
+        SELECT json_extract(e.value, '$.program_id')
+        FROM lobby_members m, json_each(m.loadout_json, '$.entries') e
+        WHERE m.loadout_json <> ''
+    )
+) WHERE high IS NOT NULL;
+
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'blueprints', high FROM (
+    SELECT max(id) AS high FROM (
+        SELECT id FROM blueprints
+        UNION ALL
+        SELECT json_extract(e.value, '$.blueprint_id')
+        FROM lobby_members m, json_each(m.loadout_json, '$.entries') e
+        WHERE m.loadout_json <> ''
+    )
+) WHERE high IS NOT NULL;
+
 -- +goose Down
 
 CREATE TABLE programs_old (

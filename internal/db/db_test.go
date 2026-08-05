@@ -300,6 +300,11 @@ func TestMigration005PreservesLibraryRows(t *testing.T) {
 		`INSERT INTO users (id, google_sub, email, display_name) VALUES (3, 'sub-1', 'a@example.com', 'Ada')`,
 		`INSERT INTO programs (id, user_id, name, json) VALUES (7, 3, 'scavenger', '{}')`,
 		`INSERT INTO blueprints (id, user_id, name, json, default_program_id) VALUES (9, 3, 'hauler', '{}', 7)`,
+		`INSERT INTO lobbies (id, owner_id, name, settings_json, state) VALUES (1, 3, 'l', '{}', 'open')`,
+		// An approval whose library rows were deleted before the migration:
+		// nothing left in the tables carries ids 50 and 51.
+		`INSERT INTO lobby_members (lobby_id, user_id, loadout_json) VALUES (1, 3,
+		   '{"entries":[{"blueprint_id":50,"blueprint_name":"gone","program_id":51,"program_name":"gone"}]}')`,
 	} {
 		if _, err := sqlDB.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("seed %q: %v", stmt, err)
@@ -327,17 +332,39 @@ func TestMigration005PreservesLibraryRows(t *testing.T) {
 		t.Error("duplicate blueprint name accepted after 005, want the unique index to reject it")
 	}
 
-	// And the migrated table must not recycle the id it just carried over.
+	// And the migrated table must not recycle the id it just carried over, nor
+	// the higher ids a surviving approval still points at (50 and 51), whose
+	// rows were deleted before the rebuild could see them.
 	if _, err := sqlDB.ExecContext(ctx, `DELETE FROM blueprints WHERE id = 9`); err != nil {
 		t.Fatalf("delete blueprint: %v", err)
 	}
-	var reborn int64
+	var rebornBP, rebornProg int64
 	if err := sqlDB.QueryRowContext(ctx,
-		`INSERT INTO blueprints (user_id, name, json) VALUES (3, 'replacement', '{}') RETURNING id`).Scan(&reborn); err != nil {
-		t.Fatalf("insert replacement: %v", err)
+		`INSERT INTO blueprints (user_id, name, json) VALUES (3, 'replacement', '{}') RETURNING id`).Scan(&rebornBP); err != nil {
+		t.Fatalf("insert replacement blueprint: %v", err)
 	}
-	if reborn <= 9 {
-		t.Errorf("replacement blueprint id = %d, want above the deleted 9", reborn)
+	if err := sqlDB.QueryRowContext(ctx,
+		`INSERT INTO programs (user_id, name, json) VALUES (3, 'replacement', '{}') RETURNING id`).Scan(&rebornProg); err != nil {
+		t.Fatalf("insert replacement program: %v", err)
+	}
+	if rebornBP <= 50 {
+		t.Errorf("replacement blueprint id = %d, want above the approved-but-deleted 50", rebornBP)
+	}
+	if rebornProg <= 51 {
+		t.Errorf("replacement program id = %d, want above the approved-but-deleted 51", rebornProg)
+	}
+
+	// The rollback rebuilds the same two tables, so it has to run and keep the
+	// rows as well.
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("Down() = %v", err)
+	}
+	var rolledBack int64
+	if err := sqlDB.QueryRowContext(ctx, `SELECT id FROM blueprints WHERE name = 'replacement'`).Scan(&rolledBack); err != nil {
+		t.Fatalf("read blueprint after Down: %v", err)
+	}
+	if rolledBack != rebornBP {
+		t.Errorf("after Down blueprint id = %d, want %d", rolledBack, rebornBP)
 	}
 }
 
