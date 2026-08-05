@@ -52,9 +52,16 @@ const (
 	// The floor is the price of one built-in scavenger, so the default kit
 	// always fields at least one robot and no host can create a lobby that
 	// cannot be started: below it startingRoster fields zero robots and
-	// memberKit refuses the match at start. There is no ceiling — a bigger
-	// budget only spends longer in spendRemainder, it does not grow the world.
+	// memberKit refuses the match at start. A bigger budget does not grow the
+	// world, so there is no balance ceiling.
 	minStartingBudget = 115
+
+	// This is not a balance ceiling, it is a start-cost guard. spendRemainder
+	// converts leftover budget into inventory one component at a time, so match
+	// start costs O(budget) per colony: measured ~60ms at this limit, ~3.9s at a
+	// billion, and an int64 straight off the wire never comes back. Far past any
+	// budget a host would play, so it bounds nothing but the abuse.
+	startingBudgetLimit = 10_000_000
 
 	// The arena is fixed for the POC: design §2.3 has no size setting, and
 	// generation needs room for maxPlayers bases (Generate caps colonies at
@@ -99,10 +106,11 @@ func (s Settings) Validate() error {
 		return fmt.Errorf("richness must be >= 0, got %g", s.Richness)
 	case !(s.SpawnPerMin >= 0) || s.SpawnPerMin > maxSpawnPerMin:
 		return fmt.Errorf("spawn_per_min must be 0..%d, got %g", maxSpawnPerMin, s.SpawnPerMin)
-	case s.StartingBudget != 0 && s.StartingBudget < minStartingBudget:
+	case s.StartingBudget != 0 && (s.StartingBudget < minStartingBudget || s.StartingBudget > startingBudgetLimit):
 		// Zero alone is exempt: it means "unset", and budget() reads it as the
-		// default. Anything else the client sends has to buy at least a robot.
-		return fmt.Errorf("starting_budget must be 0 or >= %d, got %d", minStartingBudget, s.StartingBudget)
+		// default. Anything else the client sends has to buy at least a robot,
+		// and must stay under the start-cost guard.
+		return fmt.Errorf("starting_budget must be 0 or %d..%d, got %d", minStartingBudget, startingBudgetLimit, s.StartingBudget)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:

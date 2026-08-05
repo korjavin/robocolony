@@ -260,6 +260,9 @@ func TestSettingsValidation(t *testing.T) {
 		{"no players", bad(func(s *Settings) { s.MaxPlayers = 0 }), false},
 		{"budget too small", bad(func(s *Settings) { s.StartingBudget = minStartingBudget - 1 }), false},
 		{"budget large", bad(func(s *Settings) { s.StartingBudget = 100_000 }), true},
+		// Not a balance ceiling: the guard is on how long match start spends
+		// converting the leftover into inventory. See settings.go.
+		{"budget past the start-cost guard", bad(func(s *Settings) { s.StartingBudget = 1 << 40 }), false},
 		{"budget negative", bad(func(s *Settings) { s.StartingBudget = -1 }), false},
 		// Zero is the one exception: it is what a settings row written before
 		// the setting existed decodes to, and budget() reads it as the default.
