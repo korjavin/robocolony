@@ -30,6 +30,13 @@ type Settings struct {
 	// replay (persist.go).
 	StartingBudget int `json:"starting_budget,omitempty"`
 
+	// BarrierDensity is the fraction of cells generation turns into hard
+	// barriers; the sand and rubble it paints around them scale with it, so the
+	// non-open share of the arena lands around 3.9x this (measured over 100
+	// seeds, epic rc-rhd). Zero means "unset" and barriers() supplies the
+	// default, for the same replay reason as StartingBudget.
+	BarrierDensity float64 `json:"barrier_density,omitempty"`
+
 	// AI is the computer colonies seated alongside the players (design §12 P2),
 	// one entry per colony, in the order they take their bases after the human
 	// seats. It lives in the settings rather than in lobby_members because a
@@ -62,7 +69,12 @@ const (
 	// generation needs room for maxPlayers bases (Generate caps colonies at
 	// width*height/16).
 	arenaWidth, arenaHeight = 64, 64
-	barrierDensity          = 0.08
+
+	// The floor is 0.01 rather than 0 so that zero keeps meaning "unset"
+	// (barriers reads it as the default). The ceiling is a maze that is still
+	// playable: about 58% of the arena non-open.
+	minBarrierDensity, maxBarrierDensity = 0.01, 0.15
+	defaultBarrierDensity                = 0.08
 )
 
 // DefaultSettings is what the lobby form starts from.
@@ -74,6 +86,7 @@ func DefaultSettings() Settings {
 		MaxPlayers:  4,
 
 		StartingBudget: defaultStartingBudget(),
+		BarrierDensity: defaultBarrierDensity,
 	}
 }
 
@@ -85,6 +98,18 @@ func (s Settings) budget() int {
 		return defaultStartingBudget()
 	}
 	return s.StartingBudget
+}
+
+// barriers is the barrier density this match generates its arena from. Zero is
+// the default for the same reason budget's is: a settings row from before the
+// setting existed, and the fixed fingerprint settings, must keep replaying the
+// arena they always generated. The negation also sends NaN to the default,
+// which Validate rejects but a hand-edited row could still carry.
+func (s Settings) barriers() float64 {
+	if !(s.BarrierDensity > 0) {
+		return defaultBarrierDensity
+	}
+	return s.BarrierDensity
 }
 
 // Validate reports the first out-of-range setting. Zero is not treated as
@@ -101,6 +126,10 @@ func (s Settings) Validate() error {
 		// Zero alone is exempt: it means "unset", and budget() reads it as the
 		// default. Anything else the client sends is held to the range.
 		return fmt.Errorf("starting_budget must be %d..%d, got %d", minStartingBudget, maxStartingBudget, s.StartingBudget)
+	case s.BarrierDensity != 0 && (!(s.BarrierDensity >= minBarrierDensity) || s.BarrierDensity > maxBarrierDensity):
+		// Zero alone is exempt: it means "unset", and barriers() reads it as
+		// the default. The negation also rejects NaN, which is never zero.
+		return fmt.Errorf("barrier_density must be %g..%g, got %g", minBarrierDensity, maxBarrierDensity, s.BarrierDensity)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:
@@ -123,7 +152,7 @@ func (s Settings) GenOpts(colonies int) sim.GenOpts {
 		Width:          arenaWidth,
 		Height:         arenaHeight,
 		Colonies:       colonies,
-		BarrierDensity: barrierDensity,
+		BarrierDensity: s.barriers(),
 		Richness:       s.Richness,
 	}
 }
