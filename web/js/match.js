@@ -19,6 +19,19 @@ const DELTA = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, 
 // drawing none.
 const VISION_RANGE = 6;
 
+// Radar reach, design §7.2 / sim.radar: omnidirectional, Chebyshev-ranged, and
+// the range depends on which radar the robot carries (sim.radarRange,
+// sim.baseRadarRange). Duplicated here for the same reason as VISION_RANGE —
+// the wire carries state, not rules. Keyed by the slugged catalogue name, like
+// SHAPES below, so a rename cannot leave a stale entry pointing at nothing; a
+// radar this file has never heard of draws no mark at all, because a guessed
+// reach is worse than none. web/radar_test.go fails when either drifts.
+const RADAR_RANGE = {
+  "parts-radar": 16,
+  "enemy-robot-radar": 16,
+  "enemy-base-radar": 28,
+};
+
 const css = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
@@ -132,7 +145,7 @@ const BARREL = new Path2D(MUZZLE);
 // it. A blueprint id means one design for the whole match, so the entry never
 // goes stale; the map is cleared with the rest of the match state on init.
 const styles = new Map();
-const UNKNOWN_STYLE = { shape: "unknown", armed: false };
+const UNKNOWN_STYLE = { shape: "unknown", armed: false, radar: 0 };
 
 function robotStyle(r) {
   const key = `${r.colony}|${r.blueprint}`;
@@ -145,9 +158,14 @@ function robotStyle(r) {
   const parts = bp.components.map(catalogue);
   const loco = parts.find((c) => c && c.kind === "locomotion");
   const name = loco ? slug(loco.name) : "unknown";
+  // Radar is a component (design §6.3: at most one), so presence and reach both
+  // come out of the blueprint and a robot without one gets no mark. 0 means
+  // "draws nothing", which is also what an unknown radar name gets.
+  const radar = parts.find((c) => c && c.kind === "radar");
   const style = {
     shape: SHAPES[name] ? name : "unknown",
     armed: parts.some((c) => c && c.kind === "weapon"),
+    radar: (radar && RADAR_RANGE[slug(radar.name)]) || 0,
   };
   styles.set(key, style);
   return style;
@@ -267,7 +285,13 @@ function draw() {
   weaponColor = css("--kind-weapon", "#c23b3b");
 
   const sel = snap.robots.find((r) => r.id === selected);
-  if (sel) drawVision(sel);
+  if (sel) {
+    drawVision(sel);
+    // Both senses or neither: the wedge alone was the map claiming a robot
+    // perceives only what is in front of its nose.
+    const { radar } = robotStyle(sel);
+    if (radar) drawRadar(sel, radar);
+  }
 
   for (const b of snap.bases) drawBase(b);
   for (const l of snap.loose) drawLoose(l);
@@ -291,6 +315,21 @@ function drawVision(r) {
     }
   }
   ctx.globalAlpha = 1;
+}
+
+// drawRadar outlines the box sim.radar actually sweeps. It is a square and not
+// a circle for the same reason drawVision paints cells and not an arc: the
+// range is Chebyshev, so the corner cell at (±range, ±range) is in reach and a
+// circle would lie about it. Dashed and unfilled, so at a glance it reads as a
+// second sense rather than more of the wedge.
+function drawRadar(r, range) {
+  const side = (2 * range + 1) * cell;
+  ctx.save();
+  ctx.strokeStyle = colonyColor(r.colony);
+  ctx.lineWidth = 2;
+  ctx.setLineDash([cell / 2, cell / 2]);
+  ctx.strokeRect((r.x - range) * cell, (r.y - range) * cell, side, side);
+  ctx.restore();
 }
 
 function drawBase(b) {
