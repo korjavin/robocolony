@@ -341,6 +341,83 @@ func TestSeedingIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestDeleteBlueprint: a player can drop a design from their own library, and
+// only from their own. A missing id and somebody else's id are the same 404, so
+// the endpoint never reports that a row exists.
+func TestDeleteBlueprint(t *testing.T) {
+	lib, database := newLibrary(t)
+	alice := newUser(t, database, "alice")
+	bob := newUser(t, database, "bob")
+
+	// Two designs, so deleting one leaves a library that is not empty: an
+	// emptied one re-seeds the starters, which is its own test below.
+	mine, err := lib.CreateBlueprint(t.Context(), alice.ID, "hauler",
+		[]int{int(sim.Tracks), int(sim.LightArmor), int(sim.Manipulator)})
+	if err != nil {
+		t.Fatalf("CreateBlueprint() = %v", err)
+	}
+	if _, err := lib.CreateBlueprint(t.Context(), alice.ID, "keeper",
+		[]int{int(sim.Tracks), int(sim.LightArmor), int(sim.Manipulator)}); err != nil {
+		t.Fatalf("CreateBlueprint() = %v", err)
+	}
+
+	if err := lib.DeleteBlueprint(t.Context(), bob.ID, mine.ID); err == nil {
+		t.Error("bob deleted alice's blueprint")
+	} else {
+		wantLibStatus(t, err, http.StatusNotFound)
+	}
+	if err := lib.DeleteBlueprint(t.Context(), alice.ID, mine.ID); err != nil {
+		t.Fatalf("DeleteBlueprint() = %v", err)
+	}
+	// Deleting it again is the same 404 as an id that never existed.
+	wantLibStatus(t, lib.DeleteBlueprint(t.Context(), alice.ID, mine.ID), http.StatusNotFound)
+	wantLibStatus(t, lib.DeleteBlueprint(t.Context(), alice.ID, mine.ID+1000), http.StatusNotFound)
+
+	list, err := lib.ListBlueprints(t.Context(), alice.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	// By name, not by id: blueprints.id is a bare rowid, so SQLite hands the
+	// deleted number back to the next insert.
+	for _, b := range list {
+		if b.Name == mine.Name {
+			t.Errorf("deleted blueprint %q is still in the library", mine.Name)
+		}
+	}
+}
+
+// TestDeletingEveryBlueprintReseeds: the picker is never empty. Deleting all of
+// them brings the starter kit back on the next read, exactly as it does for
+// programs — the starters are the design's hardware, not the player's data, and
+// the templates need something that fits.
+func TestDeletingEveryBlueprintReseeds(t *testing.T) {
+	lib, database := newLibrary(t)
+	user := newUser(t, database, "player")
+
+	first, err := lib.ListBlueprints(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	for _, b := range first {
+		if err := lib.DeleteBlueprint(t.Context(), user.ID, b.ID); err != nil {
+			t.Fatalf("DeleteBlueprint() = %v", err)
+		}
+	}
+	again, err := lib.ListBlueprints(t.Context(), user.ID)
+	if err != nil {
+		t.Fatalf("ListBlueprints() = %v", err)
+	}
+	if len(again) != len(starterBlueprints()) {
+		t.Fatalf("an emptied library has %d blueprints, want the %d starters back",
+			len(again), len(starterBlueprints()))
+	}
+	for _, s := range starterBlueprints() {
+		if !slices.ContainsFunc(again, func(b BlueprintView) bool { return b.Name == s.name }) {
+			t.Errorf("starter blueprint %q did not come back", s.name)
+		}
+	}
+}
+
 // TestBlueprintConstraints: design §6.3 is enforced on the server, whatever the
 // editor sent.
 func TestBlueprintConstraints(t *testing.T) {

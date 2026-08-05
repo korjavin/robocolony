@@ -823,6 +823,23 @@ $("bpcopy").addEventListener("click", () => {
   previewBlueprint();
 });
 
+// Deleting a design cannot reach a lobby that already approved it: the approval
+// stored a frozen snapshot of the parts list, not this id.
+$("bpdel").addEventListener("click", async () => {
+  err("");
+  const b = blueprints.find((x) => x.id === blueprintID());
+  if (!b || !confirm(`Delete the blueprint "${b.name}"?`)) return;
+  try {
+    await api("DELETE", `/api/blueprints/${b.id}`);
+    blueprints = blueprints.filter((x) => x.id !== b.id);
+    // Emptying the library re-seeds the starter kit on the next read, so the
+    // picker is never left with nothing in it.
+    if (blueprints.length === 0) blueprints = (await api("GET", "/api/blueprints")).blueprints;
+    renderBlueprints(); // the select falls back to whatever is first now
+    changed();          // revalidate the open program against it
+  } catch (e) { err(e.message); }
+});
+
 $("bpcreate").addEventListener("click", async () => {
   err("");
   try {

@@ -493,6 +493,21 @@ func (l *Library) CreateBlueprint(ctx context.Context, userID int64, name string
 	return blueprintView(row, bp), nil
 }
 
+// DeleteBlueprint removes one of the caller's own blueprints.
+//
+// Nothing points at the row. A lobby loadout stores a frozen snapshot of the
+// parts list rather than a library id (internal/lobby/loadout.go), so a design
+// already approved in an open lobby, or fielded in a running match, keeps
+// working after its library row is gone; and no table has a foreign key to
+// blueprints.id. Deleting every blueprint is fine too — ListBlueprints re-seeds
+// the starter kit whenever the list comes back empty.
+func (l *Library) DeleteBlueprint(ctx context.Context, userID, id int64) error {
+	if err := l.db.DeleteBlueprint(ctx, userID, id); err != nil {
+		return notFound(err, "blueprint")
+	}
+	return nil
+}
+
 // PreviewBlueprint answers "what would this robot be?" for a parts list that
 // has not been saved. It exists so the blueprint editor can show the §6.3
 // verdict and the derived numbers live as components are added and removed,
@@ -612,6 +627,7 @@ func (l *Library) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("GET /api/blueprints", l.handleListBlueprints)
 	handle("POST /api/blueprints", l.handleCreateBlueprint)
 	handle("POST /api/blueprints/preview", l.handlePreviewBlueprint)
+	handle("DELETE /api/blueprints/{id}", l.handleDeleteBlueprint)
 }
 
 // programBody is the shape every write endpoint takes.
@@ -737,6 +753,20 @@ func (l *Library) handleCreateBlueprint(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, view)
+}
+
+func (l *Library) handleDeleteBlueprint(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	if err := l.DeleteBlueprint(r.Context(), user.ID, id); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func (l *Library) handlePreviewBlueprint(w http.ResponseWriter, r *http.Request) {
