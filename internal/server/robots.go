@@ -91,7 +91,7 @@ func (h *Robots) Recall(ctx context.Context, userID, matchID int64, robotID int)
 		out = robotState(w, r)
 		return nil
 	})
-	return out, err
+	return out, applyErr(err)
 }
 
 // InstallProgram is design §4.2 steps 3-5: a program from the caller's own
@@ -148,7 +148,7 @@ func (h *Robots) InstallProgram(ctx context.Context, userID, matchID int64, robo
 		out = robotState(w, r)
 		return nil
 	})
-	return out, err
+	return out, applyErr(err)
 }
 
 // installID is the runtime id a library program gets when it is installed on
@@ -191,6 +191,17 @@ func (h *Robots) own(matchID, userID int64) (*lobby.Match, sim.ColonyID, error) 
 		}
 	}
 	return nil, 0, errf(http.StatusForbidden, "you have no colony in this match")
+}
+
+// applyErr maps the one refusal Match.Apply makes on its own: the match ended
+// while the command was in flight, which own() answers with the same 409 when
+// it gets there first. Anything else is the callback's own error, already
+// carrying its status.
+func applyErr(err error) error {
+	if errors.Is(err, lobby.ErrMatchOver) {
+		return errf(http.StatusConflict, "the match is over")
+	}
+	return err
 }
 
 // robotOf finds a robot the caller is allowed to command. Caller holds the

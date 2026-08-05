@@ -143,6 +143,10 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 	return m, nil
 }
 
+// ErrMatchOver is Apply's refusal: the match ended before the command reached
+// the lock. internal/server maps it to the same 409 its own pre-check gives.
+var ErrMatchOver = errors.New("lobby: the match is over")
+
 // Read runs f with exclusive access to the live world and its program runtime.
 //
 // f must be short and must never write to the network or the database: it runs
@@ -163,9 +167,18 @@ func (m *Match) Read(f func(*sim.World, *prog.Runtime)) {
 //
 // cmd.Tick is filled in from the world, not by the caller: the tick a command
 // applied at is only knowable under the lock.
+//
+// A finished match refuses. Callers check Finished() first for a clean answer,
+// but that check cannot hold — the flag is set under this same lock — and this
+// is where it has to be enforced: the finishing save (E9) is the last write of
+// the record, so a command accepted after it is lost from the log for good, and
+// the stored match would replay into a world the players did not see.
 func (m *Match) Apply(cmd Command, f func(*sim.World, *prog.Runtime) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.finished {
+		return ErrMatchOver
+	}
 	if err := f(m.world, m.runtime); err != nil {
 		return err
 	}

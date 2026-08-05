@@ -3,6 +3,7 @@ package lobby
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -185,6 +186,35 @@ func TestReplayFinishedMatchToItsEnd(t *testing.T) {
 	rec.FinishedAt = time.Time{}
 	if _, err := replay(lobby, set, members, rec); err == nil {
 		t.Error("replay() accepted a running match recorded at its end tick")
+	}
+}
+
+// TestFinishedMatchRefusesCommands: the finishing save is the last write of the
+// record, so a command that lands after it would be lost from the log for good
+// and leave the stored match replaying into a world nobody saw. The pre-check
+// in internal/server cannot hold on its own — the finished flag is set under the
+// match lock — so the refusal has to be in Apply.
+func TestFinishedMatchRefusesCommands(t *testing.T) {
+	set := shortSettings(minDurationSec)
+	m := testMatch(t, set, 1)
+	for m.step() { //nolint:revive // run it to its end
+	}
+	var robot int
+	m.Read(func(w *sim.World, _ *prog.Runtime) { robot = w.Robots[0].ID })
+
+	before := len(m.log)
+	err := m.Apply(Command{Kind: CmdRecall, Robot: robot}, func(w *sim.World, _ *prog.Runtime) error {
+		w.RobotByID(robot).Recalled = true
+		return nil
+	})
+	if !errors.Is(err, ErrMatchOver) {
+		t.Fatalf("Apply() on a finished match = %v, want ErrMatchOver", err)
+	}
+	if len(m.log) != before {
+		t.Errorf("the refused command was recorded anyway: log has %d entries, want %d", len(m.log), before)
+	}
+	if m.world.RobotByID(robot).Recalled {
+		t.Error("the refused command was applied to the final world")
 	}
 }
 
