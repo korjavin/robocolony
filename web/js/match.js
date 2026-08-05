@@ -44,11 +44,15 @@ const ctx = canvas.getContext("2d");
 
 // Terrain is painted once into an offscreen canvas and blitted every frame.
 // Repainting 4096 cells ten times a second is the obvious performance cliff.
+//
+// Nothing here touches canvas.style: the baked surface *is* the intrinsic size
+// of the element, and match.html sizes the box off that. An inline max-width
+// here used to say "never upscale", and it silently beat the stylesheet's
+// max-width: 100% — which is the clamp that kept the arena inside its pane.
 function bakeTerrain() {
   cell = Math.max(6, Math.min(24, Math.floor(900 / Math.max(init.width, init.height))));
   canvas.width = init.width * cell;
   canvas.height = init.height * cell;
-  canvas.style.maxWidth = `${canvas.width}px`; // never upscale past the baked size
 
   const colors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");
