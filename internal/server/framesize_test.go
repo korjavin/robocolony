@@ -93,6 +93,8 @@ func replayLargeMatch(t *testing.T, tick int64, maxSettings bool) *lobby.Match {
 	set.MaxPlayers = 1
 	set.DurationSec = 3600 // 36000 ticks: every measured tick is mid-match
 	if maxSettings {
+		// A chosen worst case, not the legal ceiling: only spawn_per_min
+		// still has one. Richness and budget are unbounded settings.
 		set.Richness, set.SpawnPerMin, set.StartingBudget = 0.25, 120, 3450
 	}
 	view, err := svc.Create(ctx, owner.ID, "frame size", set)

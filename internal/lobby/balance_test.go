@@ -183,7 +183,9 @@ func TestBalanceCustomVsDefault(t *testing.T) {
 }
 
 // customLoadout is that design, in the shape PUT /api/lobbies/{id}/loadout
-// stores. The first entry is the opening body (see startingRoster).
+// stores. Both entries can open the match: the roster is drawn from whatever
+// still fits the budget (see startingRoster), so the numbers below are measured
+// over a mixed opening rather than three of the first entry.
 func customLoadout(t *testing.T) []byte {
 	t.Helper()
 	encode := func(p prog.Program) json.RawMessage {

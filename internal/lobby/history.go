@@ -54,8 +54,8 @@ const (
 
 	// historyCap is the most samples kept, ever. At historyEvery it covers a
 	// 30000-tick (50 minute) match outright; past that the series decimates, so
-	// even maxDurationSec — 72000 ticks — costs at most two decimations and
-	// lands at 40 seconds per sample.
+	// a 7200s match — 72000 ticks — costs at most two decimations and lands at
+	// 40 seconds per sample. Duration has no ceiling; longer just decimates more.
 	//
 	// The bound: (historyCap+1) samples x maxPlayers colonies x 3 int series is
 	// about 58 KB per match, plus 2.4 KB of ticks, and it does not grow with

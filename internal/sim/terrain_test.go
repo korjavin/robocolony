@@ -1,6 +1,10 @@
 package sim
 
-import "testing"
+import (
+	"math/rand"
+	"strings"
+	"testing"
+)
 
 // TestTraversalMatrix is design §3.1, cell for cell: every terrain class
 // against every locomotion unit, plus the favoured column. It is table-driven
@@ -219,12 +223,35 @@ func TestTurnCostScalesWithChassis(t *testing.T) {
 	}
 }
 
-// TestGenerationSolvablePerLocomotion is the E1.2 connectivity measurement,
-// redone per locomotion because E7.3 made "impassable" a per-locomotion answer.
-// The failure it guards against is a robot sealed into a pocket by terrain its
-// chassis cannot cross.
-func TestGenerationSolvablePerLocomotion(t *testing.T) {
+// preE8LoosePerArena is how many loose components the pre-E8 generator placed
+// on a mean default arena, measured over the same 100 seeds at rev 96994a2 (the
+// commit before the regions landed). Regions took the non-open share of the map
+// from 16% to 31%, and since a bad draw is dropped rather than retried that
+// alone cost 19% of the loot (54.3 per arena) at an unchanged Richness. The
+// number is a floor here, not a target: generation may place more, never fewer.
+const preE8LoosePerArena = 67.10
+
+// TestGenerationSolvable is the connectivity contract, in the owner's terms:
+// **no unreachable place**, where unreachable means *no* locomotion can get
+// there. A region one chassis cannot cross is not a bug — since E8 it is the
+// whole point of terrain, so the old "every locomotion reaches >=50% of the
+// arena" assertion is gone. What replaces it is stricter where it matters:
+// every non-barrier cell of every arena must be reachable by *something*, and
+// every base must reach every other base by *everything*.
+//
+// Loot follows the same shape since rc-rhd.2. It is no longer confined to
+// ground every chassis can walk — that made the regions barren scenery — so the
+// universal assertion becomes a floor plus a fraction: nothing may be placed
+// where no locomotion can collect it, and the bulk must stay collectable by
+// tracks, the starter locomotion (internal/lobby/starter.go), so a colony that
+// has not scavenged legs yet is never starved.
+func TestGenerationSolvable(t *testing.T) {
 	const seeds = 100
+	// The share of loot a tracks-only colony must be able to collect from every
+	// one of its bases. looseCommonShare of the *target* is placed under the
+	// strict rule, so this is that share as a floor on the realised placement.
+	const wantTracksShare = 0.70
+
 	opts := DefaultGenOpts()
 	cells := opts.Width * opts.Height
 
@@ -232,10 +259,51 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 	for _, loco := range locomotionVariants() {
 		worstFrac[loco] = 1
 	}
+	worstUnion := 0.0
+	placed, tracksCollectable := 0, 0
+	onTerrain := map[Terrain]int{}
 	for seed := int64(1); seed <= seeds; seed++ {
 		w := Generate(seed, opts)
-		for _, loco := range locomotionVariants() {
-			for _, b := range w.Bases {
+		placed += len(w.Loose)
+		for _, l := range w.Loose {
+			onTerrain[w.At(l.Coord).Terrain]++
+		}
+		// Both are per component and AND-ed over every base: a component only
+		// counts as collectable if it is collectable from all of them.
+		anyLoco := make([]bool, len(w.Loose))
+		byTracks := make([]bool, len(w.Loose))
+		for i := range w.Loose {
+			anyLoco[i], byTracks[i] = true, true
+		}
+
+		// 1. No sealed pockets. Anti-gravity enters every terrain except a hard
+		// barrier, so its flood from base 0 is the union of everywhere anything
+		// can go; every cell that is not a Barrier must be inside it.
+		union := w.reachable(w.Bases[0].Coord, AntiGrav)
+		open, sealed := 0, 0
+		for i, c := range w.Cells {
+			if c.Terrain == Barrier {
+				continue
+			}
+			open++
+			if !union[i] {
+				sealed++
+				if sealed == 1 {
+					t.Errorf("seed %d: sealed pocket at %v (%s), unreachable by every locomotion",
+						seed, Coord{X: i % w.Width, Y: i / w.Width}, c.Terrain)
+				}
+			}
+		}
+		if sealed > 1 {
+			t.Errorf("seed %d: %d sealed cells in total", seed, sealed)
+		}
+		if frac := float64(open) / float64(cells); frac > worstUnion {
+			worstUnion = frac
+		}
+
+		for _, b := range w.Bases {
+			reachedSomehow := make([]bool, len(w.Loose))
+			for _, loco := range locomotionVariants() {
 				reach := w.reachable(b.Coord, loco)
 				n := 0
 				for _, ok := range reach {
@@ -243,34 +311,90 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 						n++
 					}
 				}
-				// 1. No base is sealed in: every locomotion reaches a
-				// substantial share of the arena from every base.
-				if frac := float64(n) / float64(cells); frac < 0.5 {
-					t.Errorf("seed %d: %s reaches only %.1f%% of the arena from base %d",
-						seed, loco, frac*100, b.Colony)
-				} else if frac < worstFrac[loco] {
+				if frac := float64(n) / float64(cells); frac < worstFrac[loco] {
 					worstFrac[loco] = frac
 				}
-				// 2. Every base reaches every other base.
+				// 2. Every base reaches every other base, by every locomotion.
+				// The starter chassis is fixed, so a colony that cannot walk to
+				// the fight with the chassis it starts on has no game.
 				for _, other := range w.Bases {
 					if !reach[w.index(other.Coord)] {
 						t.Errorf("seed %d: %s cannot reach base %d from base %d",
 							seed, loco, other.Colony, b.Colony)
 					}
 				}
-				// 3. Every loose component is collectable by every chassis
-				// from every base — nothing generates into a pocket.
-				for _, l := range w.Loose {
-					if !reach[w.index(l.Coord)] {
-						t.Errorf("seed %d: %s cannot reach loose component %d at %v from base %d",
-							seed, loco, l.ID, l.Coord, b.Colony)
+				for i, l := range w.Loose {
+					ok := reach[w.index(l.Coord)]
+					reachedSomehow[i] = reachedSomehow[i] || ok
+					if loco == Tracks {
+						byTracks[i] = byTracks[i] && ok
 					}
 				}
 			}
+			// 3. Nothing generates into a pocket: every loose component is
+			// collectable by *some* chassis from this base. Which chassis is
+			// the player's problem — that is the point of the regions — but
+			// loot no locomotion can reach is loot that never enters the game.
+			for i, l := range w.Loose {
+				anyLoco[i] = anyLoco[i] && reachedSomehow[i]
+				if !reachedSomehow[i] {
+					t.Errorf("seed %d: no locomotion reaches loose component %d at %v (%s) from base %d",
+						seed, l.ID, l.Coord, w.At(l.Coord).Terrain, b.Colony)
+				}
+			}
+		}
+		for i := range w.Loose {
+			if anyLoco[i] && byTracks[i] {
+				tracksCollectable++
+			}
 		}
 	}
+
+	// 4. The tracks floor. Placement puts looseCommonShare of the target on
+	// ground every chassis can walk; this is the assertion that the realised
+	// arenas honour it, so a colony still on its starter chassis is never
+	// locked out of the board.
+	if frac := float64(tracksCollectable) / float64(placed); frac < wantTracksShare {
+		t.Errorf("%d seeds: only %.1f%% of loose components are collectable by tracks from every base, want >=%.0f%%",
+			seeds, frac*100, wantTracksShare*100)
+	} else {
+		t.Logf("%d seeds: %.1f%% of loose components are collectable by tracks from every base (floor %.0f%%)",
+			seeds, frac*100, wantTracksShare*100)
+	}
+
+	// 5. The regions are stocked. Sand and rubble carrying loot is the whole
+	// reason to field tracks or legs rather than to treat terrain as scenery.
+	for _, terr := range []Terrain{Open, Sand, Rubble} {
+		t.Logf("%d seeds: %d loose components on %s (%.1f%% of all placed, %.2f per arena)",
+			seeds, onTerrain[terr], terr, 100*float64(onTerrain[terr])/float64(placed),
+			float64(onTerrain[terr])/seeds)
+	}
+	for _, terr := range []Terrain{Sand, Rubble} {
+		if onTerrain[terr] == 0 {
+			t.Errorf("%d seeds at Richness %.3f placed no loose component on %s: the regions are barren",
+				seeds, opts.Richness, terr)
+		}
+	}
+	if onTerrain[Barrier] != 0 {
+		t.Errorf("%d loose components generated inside a hard barrier", onTerrain[Barrier])
+	}
+
+	// 6. The count. Regions cost 19% of the loot at an unchanged Richness
+	// because a draw outside the pool is dropped; drawsFor pays for the misses,
+	// and this is the assertion that it kept paying.
+	perArena := float64(placed) / seeds
+	if perArena < preE8LoosePerArena {
+		t.Errorf("%d seeds: %.2f loose components per arena at Richness %.3f, want >=%.2f (the pre-E8 count)",
+			seeds, perArena, opts.Richness, preE8LoosePerArena)
+	} else {
+		t.Logf("%d seeds: %.2f loose components per arena at Richness %.3f, against %.2f pre-E8 and a %d target",
+			seeds, perArena, opts.Richness, preE8LoosePerArena, int(float64(cells)*opts.Richness))
+	}
+
+	t.Logf("%d seeds: largest non-barrier share of an arena = %.1f%%, all of it reachable by anti-gravity",
+		seeds, worstUnion*100)
 	for _, loco := range locomotionVariants() {
-		t.Logf("%d seeds: worst arena share reachable by %s from any base = %.1f%%",
+		t.Logf("%d seeds: worst arena share reachable by %s from any base = %.1f%% (informational: regions may exclude a chassis)",
 			seeds, loco, worstFrac[loco]*100)
 	}
 }
@@ -278,17 +402,26 @@ func TestGenerationSolvablePerLocomotion(t *testing.T) {
 // Generation must actually produce the terrain classes it claims to, or the
 // connectivity measurement above is measuring an empty map.
 func TestGenerationScattersEveryTerrainClass(t *testing.T) {
-	w := Generate(42, DefaultGenOpts())
-	counts := map[Terrain]int{}
-	for _, c := range w.Cells {
-		counts[c.Terrain]++
-	}
-	for _, s := range terrainSpecs {
-		if counts[s.Terrain] == 0 {
-			t.Errorf("generation produced no %s cells", s.Name)
+	const seeds = 100
+	opts := DefaultGenOpts()
+	totals := map[Terrain]int{}
+	for seed := int64(1); seed <= seeds; seed++ {
+		w := Generate(seed, opts)
+		counts := map[Terrain]int{}
+		for _, c := range w.Cells {
+			counts[c.Terrain]++
+			totals[c.Terrain]++
 		}
-		t.Logf("%-8s %5d cells (%.1f%%)", s.Name, counts[s.Terrain],
-			100*float64(counts[s.Terrain])/float64(len(w.Cells)))
+		for _, s := range terrainSpecs {
+			if counts[s.Terrain] == 0 {
+				t.Errorf("seed %d produced no %s cells", seed, s.Name)
+			}
+		}
+	}
+	all := float64(seeds * opts.Width * opts.Height)
+	for _, s := range terrainSpecs {
+		t.Logf("%-8s %.1f%% of the arena, mean over %d seeds at BarrierDensity %.2f",
+			s.Name, 100*float64(totals[s.Terrain])/all, seeds, opts.BarrierDensity)
 	}
 	// A zero barrier density must still mean a completely clean arena: existing
 	// callers outside this package generate test worlds that way.
@@ -297,6 +430,116 @@ func TestGenerationScattersEveryTerrainClass(t *testing.T) {
 		if c.Terrain != Open {
 			t.Fatalf("BarrierDensity 0 produced %s terrain", c.Terrain)
 		}
+	}
+}
+
+// clustered is the spatial statistic that separates regions from noise: the
+// share of cells of one class with at least minLike 8-neighbours of the same
+// class. Uniform scatter at these densities lands around 5-15%; a shape lands
+// far above, because almost every cell of a shape has company.
+//
+// minLike is per shape, not a magic number: an area (a sand field, a rubble
+// massif) has 3+ like neighbours nearly everywhere, but a ridge is a *line* —
+// one cell thick by design, so its interior has exactly two.
+func clustered(w *World, t Terrain, minLike int) float64 {
+	total, grouped := 0, 0
+	for i, cell := range w.Cells {
+		if cell.Terrain != t {
+			continue
+		}
+		total++
+		c := Coord{X: i % w.Width, Y: i / w.Width}
+		n := 0
+		for h := North; h < headingCount; h++ {
+			if w.At(add(c, h.Delta())).Terrain == t {
+				n++
+			}
+		}
+		if n >= minLike {
+			grouped++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(grouped) / float64(total)
+}
+
+// TestGenerationIsClusteredNotScattered is the E8 acceptance test: terrain must
+// come in regions. It is written so that it FAILS on the pre-E8 generator —
+// checked here against a uniform-scatter fixture built at the same densities,
+// so the threshold is known to discriminate rather than merely to pass.
+func TestGenerationIsClusteredNotScattered(t *testing.T) {
+	// Well above what uniform scatter yields (measured 7-16% below) and well
+	// below what the shapes yield (measured 61-88%).
+	const wantClustered = 0.5
+
+	shapes := []struct {
+		terrain Terrain
+		minLike int // 3 for an area, 2 for a one-cell-thick ridge
+	}{
+		{Sand, 3}, {Rubble, 3}, {Barrier, 2},
+	}
+
+	opts := DefaultGenOpts()
+	for seed := int64(1); seed <= 20; seed++ {
+		w := Generate(seed, opts)
+		for _, s := range shapes {
+			if got := clustered(w, s.terrain, s.minLike); got < wantClustered {
+				t.Errorf("seed %d: only %.0f%% of %s cells have %d+ like neighbours, want >=%.0f%% — that is scatter, not a region",
+					seed, got*100, s.terrain, s.minLike, wantClustered*100)
+			}
+		}
+	}
+
+	// The discrimination check: the old generator, verbatim — one draw per cell
+	// thresholded into bands — at the same class shares this one produces. If
+	// the statistic did not separate these two it would be measuring nothing.
+	scatter := Generate(1, GenOpts{Width: opts.Width, Height: opts.Height, Colonies: 1})
+	rng := rand.New(rand.NewSource(1))
+	for i := range scatter.Cells {
+		switch v := rng.Float64(); {
+		case v < 0.08:
+			scatter.Cells[i].Terrain = Barrier
+		case v < 0.08+0.12:
+			scatter.Cells[i].Terrain = Rubble
+		case v < 0.08+0.24:
+			scatter.Cells[i].Terrain = Sand
+		}
+	}
+	regions := Generate(1, opts)
+	for _, s := range shapes {
+		got := clustered(scatter, s.terrain, s.minLike)
+		t.Logf("%s with %d+ like neighbours: uniform scatter %.0f%%, generated regions %.0f%%",
+			s.terrain, s.minLike, got*100, clustered(regions, s.terrain, s.minLike)*100)
+		if got >= wantClustered {
+			t.Errorf("the clustering statistic does not discriminate: uniform scatter already scores %.0f%% for %s",
+				got*100, s.terrain)
+		}
+	}
+}
+
+// TestGenerationASCIIDump prints the arena so a human can decide whether it
+// reads as deserts, mountains and walls. No assertions: the eye is the test.
+func TestGenerationASCIIDump(t *testing.T) {
+	glyph := map[Terrain]byte{Open: '.', Barrier: '#', Rubble: '^', Sand: '~'}
+	for _, seed := range []int64{1, 7} {
+		w := Generate(seed, DefaultGenOpts())
+		rows := make([]string, 0, w.Height)
+		for y := 0; y < w.Height; y++ {
+			row := make([]byte, w.Width)
+			for x := 0; x < w.Width; x++ {
+				row[x] = glyph[w.At(Coord{x, y}).Terrain]
+			}
+			for _, b := range w.Bases {
+				if b.Coord.Y == y {
+					row[b.Coord.X] = 'B'
+				}
+			}
+			rows = append(rows, string(row))
+		}
+		t.Logf("seed %d (. open  ^ rubble  ~ sand  # barrier  B base)\n%s",
+			seed, strings.Join(rows, "\n"))
 	}
 }
 

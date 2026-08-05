@@ -7,18 +7,62 @@
  * (panel, button, .meta, table, form control) the pages build everything from.
  * Genuinely page-specific rules stay in that page's <style> block.
  *
- * Two things to know before editing:
+ * The chrome is the "monospace paper" system from the UX pass: warm off-white
+ * surfaces, one typeface, 1px hard rules, 2px offset shadows, square corners,
+ * hover inverts, nothing glows. The rule behind it is worth stating because it
+ * is what the whole design turns on: **colour lives inside the arena viewport
+ * and nowhere else**. Terrain, component kinds and the eight colony hues are
+ * the only saturated things on screen, so the eye goes to the map without
+ * being told to. Chrome that wants to say "warning" says it with a glyph.
+ *
+ * Three things to know before editing:
  *
  *  - The canvas renderer reads --terrain-*, --kind-* and --colony-N at runtime
  *    with getComputedStyle (web/js/match.js), and the match legend, the score
  *    graph and the still frame on the landing page all reference the same
  *    properties through var(). Rename one and four things change at once —
  *    which is the point, but do it deliberately.
- *  - There is no build step. Plain CSS, no imports, no external assets.
+ *  - --line and --wash are kept as aliases of the system's rules. Six pages
+ *    were written against them; pointing them at --line-2 re-skinned every
+ *    border in the app in one line rather than in two hundred.
+ *  - There is no build step. Plain CSS, no imports, no external assets — which
+ *    is also why the typeface is a stack and not a shipped woff2: JetBrains
+ *    Mono if the reader has it, the platform's own mono otherwise. The design
+ *    survives the substitution because it asks for *a* monospace grid, not for
+ *    one particular set of outlines.
  */
 
 :root {
   color-scheme: light dark;
+
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Surfaces — paper-like off-white, never pure white. */
+  --bg-0: #f4f1ea;        /* page */
+  --bg-1: #ece8de;        /* sunken / code blocks */
+  --bg-2: #e2dccd;        /* hover */
+  --bg-elev: #fbf9f3;     /* raised cards / popovers */
+
+  /* Foreground — warm near-black, never pure black. */
+  --fg-0: #16140f;        /* primary text */
+  --fg-1: #3a362d;        /* secondary text */
+  --fg-2: #6b6657;        /* tertiary / labels */
+  --fg-3: #9a9482;        /* placeholder / disabled */
+
+  /* Lines — keep it boring; the grid is the brand. */
+  --line-1: #16140f;      /* hard rules (1px) */
+  --line-2: #c8c1ad;      /* soft rules / dividers */
+  --line-3: #d9d3c0;      /* subtlest */
+
+  --select-bg: #16140f;
+  --select-fg: #f4f1ea;
+
+  /* Elevation is a border and an offset, never a blur. */
+  --shadow-1: 2px 2px 0 0 var(--line-1);
+  --shadow-2: 4px 4px 0 0 var(--line-1);
+
+  --dur-1: 80ms;
+  --ease: cubic-bezier(.2, 0, 0, 1);
 
   /* Colony colours. The renderer reads these, so a reskin never touches JS. */
   --colony-0: #2f7fd8;
@@ -49,23 +93,56 @@
   --kind-unknown: #999999;
 
   /* Status. Three colours, said once: green is fine, amber is a warning, red
-     is a failure or a loss. Every page used to spell these out itself. */
+     is a failure or a loss. Kept saturated only where they carry information
+     the glyph cannot — a health bar, a failed request — and never as decoration
+     on a panel that is merely important. */
   --ok: #2f8f4e;
   --warn: #c98a00;
   --bad: #c0392b;
 
-  /* Hairline. It resolves against the element's own colour, so it is one
-     value in light and dark alike. */
-  --line: color-mix(in srgb, currentColor 25%, transparent);
-  --wash: color-mix(in srgb, currentColor 5%, transparent);
+  /* Hairline aliases. Every page written before the design pass reaches for
+     these; they now resolve to the system's soft and sunken values. */
+  --line: var(--line-2);
+  --wash: var(--bg-1);
 
   /* Page width. Each page sets it: the editor and the match view are
-     instruments and want the room, the landing page is prose and does not. */
+     instruments and want the room, the landing page is prose and does not.
+     An instrument page sets --page: none and takes the whole viewport. */
   --page: 52rem;
 }
 
+:root[data-theme="dark"] {
+  --bg-0: #0e0e0c;
+  --bg-1: #161614;
+  --bg-2: #1f1f1c;
+  --bg-elev: #1a1a17;
+  --fg-0: #e8e4d6;
+  --fg-1: #b8b3a3;
+  --fg-2: #807c6f;
+  --fg-3: #56534a;
+  --line-1: #e8e4d6;
+  --line-2: #2e2d29;
+  --line-3: #232220;
+  --select-bg: #e8e4d6;
+  --select-fg: #0e0e0c;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    --bg-0: #0e0e0c;
+    --bg-1: #161614;
+    --bg-2: #1f1f1c;
+    --bg-elev: #1a1a17;
+    --fg-0: #e8e4d6;
+    --fg-1: #b8b3a3;
+    --fg-2: #807c6f;
+    --fg-3: #56534a;
+    --line-1: #e8e4d6;
+    --line-2: #2e2d29;
+    --line-3: #232220;
+    --select-bg: #e8e4d6;
+    --select-fg: #0e0e0c;
+
     --terrain-open: #333a42;
     --terrain-barrier: #14171b;
     --terrain-rubble: #4c443a;
@@ -80,25 +157,60 @@
 
 /* Page frame ------------------------------------------------------------- */
 
+* { box-sizing: border-box; }
+
 body {
   margin: 0 auto;
   padding: 0 1.25rem 3rem;
   max-width: var(--page);
-  font: 16px/1.6 system-ui, sans-serif;
+  font: 14px/1.55 var(--mono);
+  color: var(--fg-0);
+  background: var(--bg-0);
+  font-feature-settings: "calt" 1, "liga" 0; /* show glyphs honestly */
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: 1.8rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
-h2 { font-size: 1.15rem; margin: 1.8rem 0 .5rem; }
-h3 { font-size: 1rem; margin: 1.4rem 0 .3rem; }
+::selection { background: var(--select-bg); color: var(--select-fg); }
 
-.tag { margin: 0 0 1.5rem; opacity: .65; }
-.meta { font-size: .85rem; opacity: .7; }
-.err { color: var(--bad); font-weight: 600; min-height: 1.6em; }
-code { font-family: ui-monospace, monospace; font-size: .92em; }
+h1 { font-size: 2rem; margin: 0 0 .25rem; letter-spacing: -.02em; line-height: 1.15; }
+h2 { font-size: 1.25rem; margin: 1.8rem 0 .5rem; letter-spacing: -.02em; }
+h3 { font-size: 1rem; margin: 1.4rem 0 .3rem; }
+p { margin: 0 0 .8rem; }
+
+.tag { margin: 0 0 1.5rem; color: var(--fg-1); }
+.meta { font-size: .8rem; color: var(--fg-2); }
+.err { color: var(--bad); font-weight: 700; min-height: 1.6em; }
+
+/* Labels are the brand voice: uppercase, tracked out, tertiary. Anywhere a
+   panel needs a name rather than a heading, it gets one of these. */
+.label {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--fg-2); font-weight: 500;
+}
+
+code {
+  font-family: var(--mono); font-size: .92em;
+  background: var(--bg-1); border: 1px solid var(--line-2); padding: .05em .4em;
+}
+pre { background: var(--bg-1); border: 1px solid var(--line-2); padding: 1rem; overflow-x: auto; }
+kbd, .kbd {
+  display: inline-block; font-family: var(--mono); font-size: 11px;
+  padding: 1px 5px; border: 1px solid var(--line-2); border-bottom-width: 2px;
+  background: var(--bg-elev); color: var(--fg-1);
+}
+
+/* Rules. The most-used decoration in the system — a dashed one separates
+   things that belong together, a double one separates things that do not. */
+hr, .rule-hard { border: 0; border-top: 1px solid var(--line-1); margin: 1rem 0; }
+.rule-dashed { border: 0; border-top: 1px dashed var(--line-2); }
+.rule-double { border: 0; border-top: 3px double var(--line-1); }
+
+a { color: var(--fg-0); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { background: var(--fg-0); color: var(--bg-0); text-decoration: none; }
 
 footer {
-  margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
-  font-size: .85rem; opacity: .7;
+  margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line-1);
+  font-size: .8rem; color: var(--fg-2);
 }
 
 /* Site navigation --------------------------------------------------------- */
@@ -107,62 +219,141 @@ footer {
    them drifts — so any page reaches any other. The only per-page difference is
    which link carries aria-current.
    /match is not a link here because a match needs an id; it is reached from
-   the lobbies page, which lists the ones that are running. */
+   the lobbies page, which lists the ones that are running.
+
+   The design pass turned this into the app's topbar: a 48px band, one hard
+   rule under it, links uppercased and tracked out by CSS so the six copies of
+   the markup stayed byte-identical and the test kept its teeth. */
 nav.site {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem 1.1rem;
-  margin: 0 0 1.75rem; padding: .9rem 0;
-  border-bottom: 1px solid var(--line); font-size: .92rem;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 16px;
+  height: 48px; margin: 0 0 1.75rem; padding: 0;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 13px; white-space: nowrap; overflow-x: auto;
 }
+nav.site > * { flex-shrink: 0; }
 nav.site a, nav.site button {
-  color: inherit; text-decoration: none; opacity: .65;
+  color: var(--fg-2); text-decoration: none;
+  text-transform: uppercase; letter-spacing: .06em;
 }
-nav.site a:hover, nav.site button:hover { opacity: 1; text-decoration: underline; }
+nav.site a:hover, nav.site button:hover { background: var(--fg-0); color: var(--bg-0); }
 nav.site .brand {
-  font-weight: 700; font-size: 1.05rem; letter-spacing: -.02em;
-  opacity: 1; margin-right: .3rem;
+  font-weight: 700; letter-spacing: 0; text-transform: none;
+  color: var(--fg-0); margin-right: .3rem;
 }
+/* The brackets are chrome, not content: the nav markup has to stay identical
+   across six files for nav_test.go, and a ::before costs nothing. */
+nav.site .brand::before { content: "["; }
+nav.site .brand::after  { content: "]"; }
 /* The marker is a rule under the word rather than a filled pill: it says where
    you are without becoming the loudest thing on a dense page. */
 nav.site [aria-current] {
-  opacity: 1; font-weight: 600;
+  color: var(--fg-0); font-weight: 700;
   box-shadow: inset 0 -2px 0 0 currentColor;
 }
 nav.site .grow { flex: 1 1 auto; }
 nav.site form { display: inline; margin: 0; }
 nav.site button {
-  font: inherit; font-size: .92rem; padding: 0; border: 0;
+  font: inherit; font-size: 13px; padding: 0; border: 0;
   background: none; cursor: pointer;
 }
 
+/* An instrument page — match, editor, lobby — takes the whole viewport and
+   scrolls its panes, not the document. Set --page: none and wear .shell. */
+body.shell {
+  max-width: none; padding: 0; height: 100vh; overflow: hidden;
+  display: grid; grid-template-rows: 48px 1fr;
+}
+body.shell nav.site { margin: 0; padding: 0 16px; }
+body.shell > main { min-height: 0; overflow: hidden; }
+
 /* Components -------------------------------------------------------------- */
 
-/* The bordered box that groups anything: a match panel, a lobby row, a form. */
-.panel, fieldset {
-  border: 1px solid var(--line); border-radius: .5rem; padding: .6rem .8rem;
+/* The bordered box that groups anything: a match panel, a lobby row, a form.
+   Square corners and a 2px offset instead of a radius and a blur. */
+.panel, fieldset, .card {
+  border: 1px solid var(--line-1); border-radius: 0;
+  background: var(--bg-elev); box-shadow: var(--shadow-1);
+  padding: .7rem .9rem;
 }
+.panel.flat, .card.flat { box-shadow: none; border-color: var(--line-2); }
 fieldset { margin: 0 0 1rem; }
-legend { font-size: .85rem; opacity: .75; }
+legend { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-2); }
 
-button, select, input, textarea { font: inherit; }
+button, select, input, textarea { font: inherit; font-family: var(--mono); }
 button, select {
-  padding: .3rem .75rem; border-radius: .4rem; cursor: pointer;
+  padding: .3rem .75rem; border: 1px solid var(--line-1); border-radius: 0;
+  background: var(--bg-0); color: var(--fg-0); cursor: pointer;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-button[disabled], select[disabled] { cursor: not-allowed; opacity: .5; }
-input[type=text], input[type=number], input:not([type]) {
-  padding: .15rem .3rem; border-radius: .3rem;
+button:hover, select:hover { background: var(--fg-0); color: var(--bg-0); }
+button[disabled], select[disabled] {
+  cursor: not-allowed; color: var(--fg-3); border-color: var(--line-2);
 }
+button[disabled]:hover, select[disabled]:hover { background: var(--bg-0); color: var(--fg-3); }
+input[type=text], input[type=number], input[type=file], input:not([type]), textarea, select {
+  background: var(--bg-elev);
+}
+input[type=text], input[type=number], input:not([type]), textarea {
+  padding: .2rem .4rem; border: 1px solid var(--line-1); border-radius: 0;
+  color: var(--fg-0);
+}
+input::placeholder { color: var(--fg-3); font-style: italic; }
+:focus-visible { outline: 2px solid var(--fg-0); outline-offset: 2px; }
 
-/* A link that acts as a button. */
+/* A link that acts as a button, and the DS button primitives beside it. One
+   class so a <button> and an <a> that do the same thing look the same. */
 .btn {
-  display: inline-block; padding: .6rem 1.2rem; border-radius: .5rem;
-  border: 1px solid currentColor; text-decoration: none; font-weight: 600;
-  color: inherit;
+  display: inline-block; font-size: 13px; padding: 6px 14px;
+  border: 1px solid var(--line-1); border-radius: 0;
+  background: var(--bg-0); color: var(--fg-0);
+  box-shadow: var(--shadow-1); text-decoration: none; cursor: pointer;
+  user-select: none;
+  transition: transform var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease),
+              background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
-.btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.btn:hover { background: var(--fg-0); color: var(--bg-0); }
+.btn:active { transform: translate(2px, 2px); box-shadow: none; }
+.btn.primary { background: var(--fg-0); color: var(--bg-0); }
+.btn.primary:hover { background: var(--bg-0); color: var(--fg-0); }
+.btn.ghost { box-shadow: none; border-color: var(--line-2); }
+.btn.ghost:hover { border-color: var(--line-1); }
+.btn.sm { font-size: 12px; padding: 3px 10px; box-shadow: none; }
 
+/* A badge states a fact about the thing beside it. Solid when that fact is the
+   loudest thing in the row (LIVE), dashed when it is an aside (SEED 55). */
+.badge {
+  display: inline-block; white-space: nowrap;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 7px; border: 1px solid var(--line-1);
+}
+.badge.solid { background: var(--fg-0); color: var(--bg-0); }
+.badge.dashed { border-style: dashed; border-color: var(--line-2); color: var(--fg-2); }
+
+/* Data tables. table.t is the design's table; the bare selectors below are what
+   the pages written before it still use. */
 table { border-collapse: collapse; }
 th, td { padding: .15rem .8rem .15rem 0; text-align: left; vertical-align: top; }
 /* A wide table scrolls inside its panel rather than wrapping its numbers into
    an unreadable stack. */
 .tablewrap { overflow-x: auto; }
 td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+
+table.t { width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+table.t th {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--fg-2); font-weight: 500;
+  padding: 8px 12px; border-bottom: 1px solid var(--line-1);
+}
+table.t td { padding: 10px 12px; border-bottom: 1px solid var(--line-2); }
+table.t tr:hover td { background: var(--bg-1); }
+
+/* Four numbers across the top of a screen that is about numbers. Scoped to the
+   grid on purpose: the editor calls its inline blueprint figures .stat too, and
+   a bare selector here would put a card border around each of them. */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 12px; }
+.stat-grid > .stat { border: 1px solid var(--line-1); background: var(--bg-elev); padding: 14px 16px; }
+.stat-grid > .stat .v {
+  font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stat-grid > .stat .delta { font-size: 11px; color: var(--fg-2); margin-top: 4px; }

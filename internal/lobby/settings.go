@@ -30,6 +30,13 @@ type Settings struct {
 	// replay (persist.go).
 	StartingBudget int `json:"starting_budget,omitempty"`
 
+	// BarrierDensity is the fraction of cells generation turns into hard
+	// barriers; the sand and rubble it paints around them scale with it, so the
+	// non-open share of the arena lands around 3.9x this (measured over 100
+	// seeds, epic rc-rhd). Zero means "unset" and barriers() supplies the
+	// default, for the same replay reason as StartingBudget.
+	BarrierDensity float64 `json:"barrier_density,omitempty"`
+
 	// AI is the computer colonies seated alongside the players (design §12 P2),
 	// one entry per colony, in the order they take their bases after the human
 	// seats. It lives in the settings rather than in lobby_members because a
@@ -43,26 +50,36 @@ type Settings struct {
 // profile.
 func (s Settings) Colonies(members int) int { return members + len(s.AI) }
 
-// Legal ranges. Wide enough to be worth tuning, narrow enough that no setting
-// can turn one match into a denial of service for the whole server.
+// Legal ranges. Only the load-bearing ones: duration, richness and budget are
+// the host's taste, so they carry a floor and no ceiling.
 const (
-	minDurationSec, maxDurationSec = 60, 7200
-	minRichness, maxRichness       = 0.001, 0.25
-	maxSpawnPerMin                 = 120
-	minPlayers, maxPlayers         = 1, 8
+	maxSpawnPerMin         = 120
+	minPlayers, maxPlayers = 1, 8
 
 	// The floor is the price of one built-in scavenger, so the default kit
 	// always fields at least one robot and no host can create a lobby that
-	// cannot be started (see startingRoster). The ceiling is ten times the
-	// default: enough for a rich skirmish, and it bounds the leftover
-	// conversion at a few hundred components per base (see spendRemainder).
-	minStartingBudget, maxStartingBudget = 115, 3450
+	// cannot be started: below it startingRoster fields zero robots and
+	// memberKit refuses the match at start. A bigger budget does not grow the
+	// world, so there is no balance ceiling.
+	minStartingBudget = 115
+
+	// This is not a balance ceiling, it is a start-cost guard. spendRemainder
+	// converts leftover budget into inventory one component at a time, so match
+	// start costs O(budget) per colony: measured ~60ms at this limit, ~3.9s at a
+	// billion, and an int64 straight off the wire never comes back. Far past any
+	// budget a host would play, so it bounds nothing but the abuse.
+	startingBudgetLimit = 10_000_000
 
 	// The arena is fixed for the POC: design §2.3 has no size setting, and
 	// generation needs room for maxPlayers bases (Generate caps colonies at
 	// width*height/16).
 	arenaWidth, arenaHeight = 64, 64
-	barrierDensity          = 0.08
+
+	// The floor is 0.01 rather than 0 so that zero keeps meaning "unset"
+	// (barriers reads it as the default). The ceiling is a maze that is still
+	// playable: about 58% of the arena non-open.
+	minBarrierDensity, maxBarrierDensity = 0.01, 0.15
+	defaultBarrierDensity                = 0.08
 )
 
 // DefaultSettings is what the lobby form starts from.
@@ -74,6 +91,7 @@ func DefaultSettings() Settings {
 		MaxPlayers:  4,
 
 		StartingBudget: defaultStartingBudget(),
+		BarrierDensity: defaultBarrierDensity,
 	}
 }
 
@@ -87,20 +105,46 @@ func (s Settings) budget() int {
 	return s.StartingBudget
 }
 
+// barriers is the barrier density this match generates its arena from. Zero is
+// the default for the same reason budget's is: a settings row from before the
+// setting existed, and the fixed fingerprint settings, must keep replaying the
+// arena they always generated. The negation also sends NaN to the default,
+// which Validate rejects but a hand-edited row could still carry.
+func (s Settings) barriers() float64 {
+	if !(s.BarrierDensity > 0) {
+		return defaultBarrierDensity
+	}
+	return s.BarrierDensity
+}
+
 // Validate reports the first out-of-range setting. Zero is not treated as
 // "unset" here: a caller that wants defaults asks for DefaultSettings.
 func (s Settings) Validate() error {
 	switch {
-	case s.DurationSec < minDurationSec || s.DurationSec > maxDurationSec:
-		return fmt.Errorf("duration_sec must be %d..%d, got %d", minDurationSec, maxDurationSec, s.DurationSec)
-	case !(s.Richness >= minRichness) || s.Richness > maxRichness: // the negation also rejects NaN
-		return fmt.Errorf("richness must be %g..%g, got %g", minRichness, maxRichness, s.Richness)
+	case s.DurationSec <= 0:
+		// A zero-duration match would end on tick zero. Any positive length is
+		// the host's business: it is wall-clock, and history decimates.
+		return fmt.Errorf("duration_sec must be positive, got %d", s.DurationSec)
+	case !(s.Richness >= 0): // the negation also rejects NaN
+		// No ceiling: Generate clamps richness to 0..1 and spends it as a
+		// target count of loose components.
+		return fmt.Errorf("richness must be >= 0, got %g", s.Richness)
 	case !(s.SpawnPerMin >= 0) || s.SpawnPerMin > maxSpawnPerMin:
 		return fmt.Errorf("spawn_per_min must be 0..%d, got %g", maxSpawnPerMin, s.SpawnPerMin)
-	case s.StartingBudget != 0 && (s.StartingBudget < minStartingBudget || s.StartingBudget > maxStartingBudget):
+	case s.StartingBudget != 0 && (s.StartingBudget < minStartingBudget || s.StartingBudget > startingBudgetLimit):
 		// Zero alone is exempt: it means "unset", and budget() reads it as the
-		// default. Anything else the client sends is held to the range.
-		return fmt.Errorf("starting_budget must be %d..%d, got %d", minStartingBudget, maxStartingBudget, s.StartingBudget)
+		// default. Anything else the client sends has to buy at least a robot,
+		// and must stay under the start-cost guard.
+		return fmt.Errorf("starting_budget must be 0 or %d..%d, got %d", minStartingBudget, startingBudgetLimit, s.StartingBudget)
+	case s.BarrierDensity != 0 && (!(s.BarrierDensity >= minBarrierDensity) || s.BarrierDensity > maxBarrierDensity):
+		// Zero alone is exempt: it means "unset", and barriers() reads it as
+		// the default. The negation also rejects NaN, which is never zero.
+		//
+		// Unlike duration, richness and budget (rc-8hu), this one keeps a
+		// ceiling: density is not the host's taste but the shape of the board,
+		// and past 0.15 the arena stops being a place two colonies can fight
+		// over. repairPockets guarantees reachability, not a game.
+		return fmt.Errorf("barrier_density must be %g..%g, got %g", minBarrierDensity, maxBarrierDensity, s.BarrierDensity)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:
@@ -123,7 +167,7 @@ func (s Settings) GenOpts(colonies int) sim.GenOpts {
 		Width:          arenaWidth,
 		Height:         arenaHeight,
 		Colonies:       colonies,
-		BarrierDensity: barrierDensity,
+		BarrierDensity: s.barriers(),
 		Richness:       s.Richness,
 	}
 }

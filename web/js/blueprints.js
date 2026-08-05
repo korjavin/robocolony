@@ -50,6 +50,7 @@ async function api(method, path, body) {
 let lang = null;        // /api/language: the component catalogue and the limits
 let blueprints = [];    // the saved library
 let picked = [];        // the design on screen, as variant ids in slot order
+let editing = 0;        // library id the draft writes back to, 0 = a new design
 let preview = null;     // the last /api/blueprints/preview answer
 let previewFor = "";    // the parts list that answer describes
 let timer = null;
@@ -296,6 +297,8 @@ function refresh() {
   renderFit();
   renderSilhouette();
   $("save").disabled = !(preview && preview.ok && previewFor === key());
+  $("save").textContent = editing ? "Save changes" : "Save blueprint";
+  for (const id of ["edit", "copy", "del"]) $(id).disabled = !selected();
   clearTimeout(timer);
   timer = setTimeout(async () => {
     const k = key();
@@ -312,9 +315,13 @@ function refresh() {
   }, 150);
 }
 
-function load(bp) {
+// load opens a saved design in the draft. inPlace is the difference between the
+// Edit button and the Copy button, and it is the only thing that decides whether
+// Save writes back to that library row or mints a new one.
+function load(bp, inPlace) {
+  editing = inPlace ? bp.id : 0;
   picked = [...bp.components];
-  $("name").value = `${bp.name} mk2`;
+  $("name").value = inPlace ? bp.name : `${bp.name} mk2`;
   preview = null;
   previewFor = "";
   status("");
@@ -335,20 +342,46 @@ const selected = () => blueprints.find((b) => String(b.id) === $("library").valu
 // Wiring
 // ---------------------------------------------------------------------------
 
-$("library").addEventListener("change", () => { const b = selected(); if (b) load(b); });
-$("copy").addEventListener("click", () => { const b = selected(); if (b) load(b); });
+// Picking a design from the library opens it to look at, which is a copy: the
+// safe default is the one where nothing you do can change a row you did not
+// mean to touch. Edit is the deliberate one.
+$("library").addEventListener("change", () => { const b = selected(); if (b) load(b, false); });
+$("edit").addEventListener("click", () => { const b = selected(); if (b) load(b, true); });
+$("copy").addEventListener("click", () => { const b = selected(); if (b) load(b, false); });
 $("clear").addEventListener("click", () => {
-  picked = []; preview = null; previewFor = ""; $("name").value = ""; status(""); refresh();
+  editing = 0; picked = []; preview = null; previewFor = "";
+  $("name").value = ""; status(""); refresh();
 });
 
-// There is no PUT. An approved blueprint is immutable (design §5.1) — robots
-// already built to it are still walking around — so editing one saves a copy.
+// Deleting a design cannot reach a lobby that already approved it: the approval
+// stored a frozen snapshot of the parts list, not this id.
+$("del").addEventListener("click", async () => {
+  err(""); status("");
+  const b = selected();
+  if (!b || !confirm(`Delete the blueprint "${b.name}"?`)) return;
+  try {
+    await api("DELETE", `/api/blueprints/${b.id}`);
+    blueprints = blueprints.filter((x) => x.id !== b.id);
+    if (editing === b.id) editing = 0; // the draft is a new design now, not an edit
+    // Emptying the library re-seeds the starter kit on the next read, so the
+    // picker is never left with nothing in it.
+    if (blueprints.length === 0) blueprints = (await api("GET", "/api/blueprints")).blueprints;
+    renderLibrary();
+    status(`Deleted. Matches already running on it are unaffected.`);
+  } catch (e) { err(e.message); }
+});
+
 $("save").addEventListener("click", async () => {
   err(""); status("");
+  const body = { name: $("name").value, components: picked };
   try {
-    const bp = await api("POST", "/api/blueprints", { name: $("name").value, components: picked });
+    const bp = editing
+      ? await api("PUT", `/api/blueprints/${editing}`, body)
+      : await api("POST", "/api/blueprints", body);
     if (!bp) return;
-    blueprints.push(bp);
+    const at = blueprints.findIndex((x) => x.id === bp.id);
+    if (at < 0) blueprints.push(bp); else blueprints[at] = bp;
+    editing = bp.id;
     renderLibrary();
     $("library").value = String(bp.id);
     status(`Saved. Approve it on the lobbies page and your base will build it.`);
@@ -365,7 +398,7 @@ $("save").addEventListener("click", async () => {
     renderPalette();
     if (blueprints.length > 0) {
       $("library").value = String(blueprints[0].id);
-      load(blueprints[0]);
+      load(blueprints[0], false);
     } else {
       refresh();
     }

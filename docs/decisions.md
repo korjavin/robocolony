@@ -24,7 +24,7 @@ epics.
 | P1 | Production timing | **Mass-dependent.** | A heavy design should cost tempo as well as parts. |
 | P1 | Terrain balance | Full §3.1 matrix implemented; `speedScale` raised 12 → 24. | At 12, every chassis with speed ≥ 12 collapsed to 1 tick/cell, so the fast end of the range was invisible and locomotion choice barely mattered. |
 | P1 | Diplomacy / friendly fire | **No alliances. No friendly fire.** All colonies always hostile. | Friendly fire punishes beginners hardest; alliances are a large feature touching lobby, scoring and the shared signal channel. |
-| P1 | Match parameters | Duration, richness, spawn rate, max players, budget — all lobby settings, server-validated. | |
+| P1 | Match parameters | Duration, richness, spawn rate, max players, budget — all lobby settings. Only the load-bearing limits are enforced: the player/colony cap, the spawn-rate cap, the budget floor and a start-cost guard on the budget. | The duration, richness and budget ceilings were taste, not invariants, so a host can run a six-hour, resource-drenched, big-budget match. |
 | P2 | AI profiles | Four: tutorial, peaceful, defensive, aggressive. A profile is a **blueprint set plus a program library**, never a privileged controller. | Measured ladder below. |
 | P2 | Spectating / replay | Eliminated players get **spectate plus full trace inspection**, not continued editing. | The trace machinery already exists, so this is cheap. |
 
@@ -52,6 +52,17 @@ the whole persistence design rests on.
 **A colony's loadout is stored as a frozen snapshot** (parts list + rules), never
 as library ids. Ids would let a mid-match library edit make a restart rebuild the
 colony from rules the match never ran.
+
+**A player's opening roster is drawn, not repeated** (2026-08-05, rc-w9s.36).
+Each of the up-to-`startingRobots` robots is picked uniformly from the approvals
+that still fit the *remaining* budget, so approving a mixed set buys a mixed
+opening; it used to be the first approval repeated, which made every approval
+after the first worth nothing until §5.2 production started. The cap and the
+budget ceiling are untouched — that pair is §2.1's equal-strength guarantee. The
+draw is on the world's rng inside `equipColony`, because a replay rebuilds a
+match from seed + command log alone. **Player loadouts only**: the built-in human
+kit and every AI profile keep their fixed openings, which is what the AI ladder
+measured below was tuned against.
 
 ## Measurements behind the balance decisions
 

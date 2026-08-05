@@ -241,7 +241,10 @@ func checkGenerated(t *testing.T, seed int64) {
 		if !w.In(l.Coord) {
 			t.Fatalf("loose component %d outside arena at %v", l.ID, l.Coord)
 		}
-		if w.At(l.Coord).Terrain != Open {
+		// Since E8 loot lives in the sand fields and the rubble massifs too, so
+		// the rule is no longer "open ground" but "ground something can stand
+		// on". TestGenerationSolvable checks the reachability half of it.
+		if w.At(l.Coord).Terrain == Barrier {
 			t.Fatalf("loose component %d on %s terrain", l.ID, w.At(l.Coord).Terrain)
 		}
 		if seen[l.Coord] {

@@ -21,6 +21,19 @@ const DELTA = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, 
 // drawing none.
 const VISION_RANGE = 6;
 
+// Radar reach, design §7.2 / sim.radar: omnidirectional, Chebyshev-ranged, and
+// the range depends on which radar the robot carries (sim.radarRange,
+// sim.baseRadarRange). Duplicated here for the same reason as VISION_RANGE —
+// the wire carries state, not rules. Keyed by the slugged catalogue name, like
+// SHAPES below, so a rename cannot leave a stale entry pointing at nothing; a
+// radar this file has never heard of draws no mark at all, because a guessed
+// reach is worse than none. web/radar_test.go fails when either drifts.
+const RADAR_RANGE = {
+  "parts-radar": 16,
+  "enemy-robot-radar": 16,
+  "enemy-base-radar": 28,
+};
+
 const css = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
@@ -45,11 +58,15 @@ const ctx = canvas.getContext("2d");
 
 // Terrain is painted once into an offscreen canvas and blitted every frame.
 // Repainting 4096 cells ten times a second is the obvious performance cliff.
+//
+// Nothing here touches canvas.style: the baked surface *is* the intrinsic size
+// of the element, and match.html sizes the box off that. An inline max-width
+// here used to say "never upscale", and it silently beat the stylesheet's
+// max-width: 100% — which is the clamp that kept the arena inside its pane.
 function bakeTerrain() {
   cell = Math.max(6, Math.min(24, Math.floor(900 / Math.max(init.width, init.height))));
   canvas.width = init.width * cell;
   canvas.height = init.height * cell;
-  canvas.style.maxWidth = `${canvas.width}px`; // never upscale past the baked size
 
   const colors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");
@@ -104,7 +121,7 @@ const BARREL = new Path2D(MUZZLE);
 // it. A blueprint id means one design for the whole match, so the entry never
 // goes stale; the map is cleared with the rest of the match state on init.
 const styles = new Map();
-const UNKNOWN_STYLE = { shape: "unknown", armed: false };
+const UNKNOWN_STYLE = { shape: "unknown", armed: false, radar: 0 };
 
 function robotStyle(r) {
   const key = `${r.colony}|${r.blueprint}`;
@@ -117,9 +134,14 @@ function robotStyle(r) {
   const parts = bp.components.map(catalogue);
   const loco = parts.find((c) => c && c.kind === "locomotion");
   const name = loco ? slug(loco.name) : "unknown";
+  // Radar is a component (design §6.3: at most one), so presence and reach both
+  // come out of the blueprint and a robot without one gets no mark. 0 means
+  // "draws nothing", which is also what an unknown radar name gets.
+  const radar = parts.find((c) => c && c.kind === "radar");
   const style = {
     shape: SHAPES[name] ? name : "unknown",
     armed: parts.some((c) => c && c.kind === "weapon"),
+    radar: (radar && RADAR_RANGE[slug(radar.name)]) || 0,
   };
   styles.set(key, style);
   return style;
@@ -239,7 +261,13 @@ function draw() {
   weaponColor = css("--kind-weapon", "#c23b3b");
 
   const sel = snap.robots.find((r) => r.id === selected);
-  if (sel) drawVision(sel);
+  if (sel) {
+    drawVision(sel);
+    // Both senses or neither: the wedge alone was the map claiming a robot
+    // perceives only what is in front of its nose.
+    const { radar } = robotStyle(sel);
+    if (radar) drawRadar(sel, radar);
+  }
 
   for (const b of snap.bases) drawBase(b);
   for (const l of snap.loose) drawLoose(l);
@@ -263,6 +291,21 @@ function drawVision(r) {
     }
   }
   ctx.globalAlpha = 1;
+}
+
+// drawRadar outlines the box sim.radar actually sweeps. It is a square and not
+// a circle for the same reason drawVision paints cells and not an arc: the
+// range is Chebyshev, so the corner cell at (±range, ±range) is in reach and a
+// circle would lie about it. Dashed and unfilled, so at a glance it reads as a
+// second sense rather than more of the wedge.
+function drawRadar(r, range) {
+  const side = (2 * range + 1) * cell;
+  ctx.save();
+  ctx.strokeStyle = colonyColor(r.colony);
+  ctx.lineWidth = 2;
+  ctx.setLineDash([cell / 2, cell / 2]);
+  ctx.strokeRect((r.x - range) * cell, (r.y - range) * cell, side, side);
+  ctx.restore();
 }
 
 function drawBase(b) {
@@ -376,7 +419,33 @@ canvas.addEventListener("click", (ev) => {
     const d = (r.x + .5 - px) ** 2 + (r.y + .5 - py) ** 2;
     if (d < best) { best = d; hit = r; }
   }
-  selected = hit ? hit.id : null;
+  // Bases share the one `best`, and they come second with a strict <, so the
+  // genuinely nearest thing wins and a robot standing on its base still beats
+  // the base underneath it.
+  let base = null;
+  for (const b of snap.bases) {
+    const d = (b.x + .5 - px) ** 2 + (b.y + .5 - py) ** 2;
+    if (d < best) { best = d; base = b; hit = null; }
+  }
+  if (base) {
+    // A base has no selection state of its own: the inspector, the roster
+    // highlight and the command panel all hang off `selected`, so clicking a
+    // base means "select this colony" and is routed through one of its robots —
+    // the one nearest the base, ties by id, so the same click twice does not
+    // jump between two equidistant robots. An eliminated colony has none, and
+    // then baseColony alone carries the panel (see renderBase).
+    baseColony = base.colony;
+    const d2 = (r) => (r.x - base.x) ** 2 + (r.y - base.y) ** 2;
+    const rep = snap.robots.filter((r) => r.colony === base.colony)
+      .sort((a, b) => d2(a) - d2(b) || a.id - b.id)[0];
+    selected = rep ? rep.id : null;
+    // The Base panel is closed by default, so without this the click looks like
+    // a no-op — the same reason render() reopens #p-selected on a robot pick.
+    $("p-base").open = true;
+    $("p-base").scrollIntoView({ block: "nearest" });
+  } else {
+    selected = hit ? hit.id : null;
+  }
   render();
 });
 
@@ -1122,10 +1191,19 @@ function renderBase() {
 
 function renderClock() {
   if (!snap || !init) return;
-  const left = Math.max(0, Number(snap.end_tick) - Number(snap.tick));
+  const end = Number(snap.end_tick);
+  const left = Math.max(0, end - Number(snap.tick));
   const secs = Math.ceil(left / (init.tick_rate || 10));
   $("clock").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   $("tick").textContent = `tick ${snap.tick} / ${snap.end_tick}`;
+
+  // The timeline is one filled bar whose right edge is now. It is not a
+  // scrubber: nothing behind the head is seekable, because the server keeps no
+  // per-tick history to seek into.
+  const done = end > 0 ? Math.min(1, Number(snap.tick) / end) : 0;
+  $("progress").style.width = `${(done * 100).toFixed(2)}%`;
+  const gone = Math.floor(Number(snap.tick) / (init.tick_rate || 10));
+  $("tick-mid").textContent = `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`;
 }
 
 // -------------------------------------------------------------- folding
