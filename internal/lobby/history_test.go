@@ -63,7 +63,7 @@ func TestHistoryIsBounded(t *testing.T) {
 		world:   &sim.World{Bases: []*sim.Base{{Colony: 0, Inventory: map[sim.Variant]int{}}}},
 		history: History{Interval: historyEvery, Colonies: []ColonyHistory{{Colony: 0}}},
 	}
-	const ticks = 200_000 // ~5.5 hours of match time, well past maxDurationSec
+	const ticks = 200_000 // ~5.5 hours of match time, far past any usual match
 	for tick := uint64(0); tick <= ticks; tick++ {
 		m.world.Tick = tick
 		m.sample()

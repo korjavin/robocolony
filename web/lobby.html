@@ -73,11 +73,11 @@
         <fieldset>
           <legend>Settings</legend>
           <label>Name <input name="name" required maxlength="64" value="my colony"></label><br>
-          <label>Duration (s) <input name="duration_sec" type="number" min="60" max="7200" value="600"></label>
-          <label>Richness <input name="richness" type="number" step="0.001" min="0.001" max="0.25" value="0.02"></label>
+          <label>Duration (s) <input name="duration_sec" type="number" min="1" value="600"></label>
+          <label>Richness <input name="richness" type="number" step="0.001" min="0" value="0.02"></label>
           <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
           <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
-          <label>Starting budget <input name="starting_budget" type="number" min="115" max="3450" value="345"></label>
+          <label>Starting budget <input name="starting_budget" type="number" min="0" value="345"></label>
           <p class="meta">Budget is component value per colony. Whatever your opening robots do not spend arrives as parts in your base.</p>
           <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
           <button class="btn primary" type="submit">Create</button>

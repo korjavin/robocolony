@@ -274,7 +274,7 @@ func TestRestoreAbandonsUnusableRecords(t *testing.T) {
 // nothing behind for a restart to replay.
 func TestFinishedMatchDropsItsRecord(t *testing.T) {
 	svc, database := newService(t)
-	set := shortSettings(minDurationSec)
+	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
 	set.Seed = mustSettings(t, lobby).Seed
 

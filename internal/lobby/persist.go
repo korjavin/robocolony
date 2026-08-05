@@ -27,8 +27,8 @@ import (
 // VPS this runs on, and it is the record E7.7's replays want anyway.
 //
 // The cost is CPU at startup, proportional to how far the match has run:
-// measured at ~7s for the worst case the settings allow (8 colonies, a 7200s
-// match nearly over) and ~0.6s for a default 600s match. The other cost is
+// measured at ~7s for 8 colonies in a 7200s match nearly over, and ~0.6s for a
+// default 600s match. Duration has no ceiling, so a long match costs more. The other cost is
 // that a log only replays under a build that simulates identically, which
 // fingerprint below is what refuses.
 
