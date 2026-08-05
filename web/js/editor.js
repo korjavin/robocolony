@@ -524,7 +524,12 @@ async function reloadLibrary() {
 }
 
 // ---------------------------------------------------------------------------
-// Blueprints: design the robot, not just the program.
+// Blueprints: which robot these rules are being written for.
+//
+// Only the picker and its one-line summary. Designing the robot itself is
+// /blueprints (web/js/blueprints.js): the parts and their consequences needed a
+// column each, and a <details> in this sidebar could show the four numbers but
+// never what they meant.
 //
 // Every number shown here — mass, value, derived health, effective speed — and
 // the §6.3 verdict itself come from the server. sim.Blueprint.Validate is
@@ -569,80 +574,6 @@ function statLine(s) {
 }
 
 const componentName = (v) => (lang.components.find((c) => c.variant === v) || { name: `#${v}` }).name;
-
-let picked = [];
-let bpStats = null;     // last /api/blueprints/preview verdict
-let bpStatsFor = "";    // the parts list that verdict describes
-let bpTimer = null;
-const pickedKey = () => picked.join(",");
-
-// renderParts draws the palette grouped by the catalogue's own kind field, so
-// E7.2 adding legs or an enemy-robot radar needs no change here.
-function renderParts() {
-  const host = $("bpparts");
-  host.replaceChildren();
-  const kinds = new Map();
-  for (const c of lang.components) {
-    if (!kinds.has(c.kind)) kinds.set(c.kind, []);
-    kinds.get(c.kind).push(c);
-  }
-  for (const [kind, comps] of kinds) {
-    const box = el("div", { className: "kindrow" }, el("span", { className: "kindname", textContent: kind }));
-    for (const c of comps) {
-      box.append(iconButton(`+ ${c.name}`, `mass ${c.mass} · value ${c.value}`, () => {
-        picked.push(c.variant);
-        previewBlueprint();
-      }));
-    }
-    host.append(box);
-  }
-}
-
-function renderPicked() {
-  const host = $("bppicked");
-  host.replaceChildren();
-  if (picked.length === 0) {
-    host.append(el("span", { className: "meta", textContent: "Nothing installed yet." }));
-  }
-  picked.forEach((v, i) => {
-    const chip = el("span", { className: "chip" }, el("span", { textContent: componentName(v) }));
-    chip.append(iconButton("✕", "remove", () => { picked.splice(i, 1); previewBlueprint(); }));
-    host.append(chip);
-  });
-}
-
-function renderBlueprintDraft() {
-  renderPicked();
-  const host = $("bpstats");
-  host.replaceChildren();
-  if (bpStats) {
-    host.append(statLine(bpStats));
-    if (!bpStats.ok) host.append(el("div", { className: "issue error", textContent: bpStats.error }));
-  }
-  // The server's verdict is the gate, exactly as it is for the save itself —
-  // and only while it still describes the parts list on screen. A verdict for
-  // some earlier design must never open the button for this one.
-  $("bpcreate").disabled = !(bpStats && bpStats.ok && bpStatsFor === pickedKey());
-}
-
-// previewBlueprint asks the server what the current parts list would build.
-// Debounced, because clicking through the palette is a burst of edits.
-function previewBlueprint() {
-  renderBlueprintDraft();
-  clearTimeout(bpTimer);
-  bpTimer = setTimeout(async () => {
-    const key = pickedKey();
-    try {
-      const res = await api("POST", "/api/blueprints/preview", { components: picked });
-      // Responses can land out of order; one for a design the player has
-      // already moved on from is dropped rather than shown.
-      if (!res || key !== pickedKey()) return;
-      bpStats = res;
-      bpStatsFor = key;
-      renderBlueprintDraft();
-    } catch (e) { err(e.message); }
-  }, 150);
-}
 
 // ---------------------------------------------------------------------------
 // Actions on the whole program
@@ -811,36 +742,6 @@ $("templates").addEventListener("change", (ev) => {
   changed();
 });
 
-// bpcopy starts a new design from the selected one. There is no PUT: an
-// approved blueprint is immutable (design §5.1), and a robot already built to
-// one must not have its hardware change underneath it.
-$("bpcopy").addEventListener("click", () => {
-  const b = blueprints.find((x) => x.id === blueprintID());
-  if (!b) return;
-  picked = [...b.components];
-  $("bpname").value = `${b.name} mk2`;
-  $("bpnew").open = true;
-  previewBlueprint();
-});
-
-$("bpcreate").addEventListener("click", async () => {
-  err("");
-  try {
-    const bp = await api("POST", "/api/blueprints", { name: $("bpname").value, components: picked });
-    if (!bp) return;
-    blueprints.push(bp);
-    picked = [];
-    bpStats = null;
-    bpStatsFor = "";
-    $("bpname").value = "";
-    renderBlueprints();
-    $("blueprint").value = String(bp.id);
-    renderBlueprintMeta();
-    renderBlueprintDraft();
-    changed();
-  } catch (e) { err(e.message); }
-});
-
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
@@ -852,12 +753,9 @@ if (lang) {
     $("templates").append(el("option", { value: String(i), textContent: `${t.name} (${t.section})` }));
   });
   $("name").maxLength = lang.limits.max_name_len;
-  $("bpname").maxLength = lang.limits.max_name_len;
 
   blueprints = (await api("GET", "/api/blueprints")).blueprints;
   renderBlueprints();
-  renderParts();
-  renderBlueprintDraft();
 
   current = blank();
   $("name").value = current.name;

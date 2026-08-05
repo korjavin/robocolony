@@ -70,16 +70,40 @@ type BlueprintStats struct {
 	Value  int    `json:"value"`
 	Health int    `json:"health"`
 	Speed  int    `json:"speed"`
+
+	// What the configurator's two meters and its silhouette are drawn from.
+	// TicksPerCell is Speed in the unit a player thinks in; Budget is the
+	// default starting budget the Value meter fills against and Fleet how many
+	// robots it opens with; Sight and Radar are the wedge and the ring.
+	TicksPerCell int `json:"ticks_per_cell"`
+	Budget       int `json:"budget"`
+	Fleet        int `json:"fleet"`
+	Sight        int `json:"sight"`
+	Radar        int `json:"radar"`
+
+	// Consequences is what those numbers mean, in sentences (blueprint.go).
+	// Empty for an illegal parts list.
+	Consequences []string `json:"consequences,omitempty"`
 }
 
 func blueprintStats(bp sim.Blueprint) BlueprintStats {
+	budget := lobby.DefaultStartingBudget()
 	s := BlueprintStats{
 		OK: true, Mass: bp.Mass(), Value: bp.Value(),
 		Health: sim.StartingHealth(bp), Speed: sim.EffectiveSpeed(bp),
+		TicksPerCell: sim.TicksPerCell(bp, sim.Open),
+		Budget:       budget,
+		Sight:        sim.VisionRange,
+		Radar:        sim.BlueprintRadarRange(bp),
+		Consequences: consequences(bp),
 	}
 	if err := bp.Validate(); err != nil {
 		s.OK, s.Error = false, err.Error()
+		return s
 	}
+	// Only meaningful once §6.3 is satisfied: startingRoster reads the first
+	// approved blueprint, and an illegal one is never approved.
+	s.Fleet = lobby.StartingFleet(bp, budget)
 	return s
 }
 
@@ -752,7 +776,22 @@ func (l *Library) handlePreviewBlueprint(w http.ResponseWriter, r *http.Request)
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, stats)
+	// Which of the player's programs this hardware can actually run is part of
+	// the same question: a design is not finished until something can be
+	// installed on it. Only asked once the parts list is legal — prog.Validate
+	// against a blueprint §6.3 rejects would report the missing locomotion as
+	// a program fault.
+	out := BlueprintPreview{BlueprintStats: stats}
+	if stats.OK {
+		user, _ := auth.UserFrom(r.Context())
+		fits, err := l.programFit(r.Context(), user.ID, sim.Blueprint{Components: toVariants(body.Components)})
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		out.Programs = fits
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func pathID(r *http.Request) (int64, error) {

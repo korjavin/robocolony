@@ -183,6 +183,18 @@ func defaultStartingBudget() int { return startingRobots * DefaultBlueprint().Va
 // What is left over is not wasted: equipColony converts it into base inventory
 // (design §12 P0), so spending less than the budget buys spares rather than
 // nothing.
+// DefaultStartingBudget is Settings.StartingBudget's default, and StartingFleet
+// is how many robots a colony would open with if this design were its first
+// approved blueprint. Both exist for the blueprint configurator: "the starting
+// budget fields three of these, or two of that" is the trade a player is
+// actually making, and it must be answered by the code that decides it rather
+// than by arithmetic in the browser.
+func DefaultStartingBudget() int { return defaultStartingBudget() }
+
+func StartingFleet(bp sim.Blueprint, budget int) int {
+	return len(startingRoster([]sim.Blueprint{bp}, budget))
+}
+
 func startingRoster(bps []sim.Blueprint, budget int) []sim.Blueprint {
 	bp := bps[0]
 	n := startingRobots

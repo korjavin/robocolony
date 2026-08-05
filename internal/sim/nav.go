@@ -30,7 +30,7 @@ func headingTo(a, b Coord) Heading {
 // the reflected half of that equality out.
 func inCone(from Coord, h Heading, to Coord) (dist int, ok bool) {
 	dist = from.Chebyshev(to)
-	if dist == 0 || dist > visionRange {
+	if dist == 0 || dist > VisionRange {
 		return dist, false
 	}
 	d := Coord{to.X - from.X, to.Y - from.Y}
@@ -71,6 +71,30 @@ func (w *World) look(r *Robot) (components, enemies []Sighting) {
 	return sortSightings(components), sortSightings(enemies)
 }
 
+// RadarRange is how far a radar variant reports, in Chebyshev cells, and false
+// for anything that is not a radar. radar() below reads it rather than the
+// constants, so the reach the configurator draws is the reach perception uses.
+func RadarRange(v Variant) (int, bool) {
+	switch v {
+	case PartsRadar, EnemyRadar:
+		return radarRange, true
+	case BaseRadar:
+		return baseRadarRange, true
+	}
+	return 0, false
+}
+
+// BlueprintRadarRange is RadarRange for the one radar a blueprint may carry
+// (design §6.3), and 0 when it carries none.
+func BlueprintRadarRange(bp Blueprint) int {
+	for _, v := range bp.Components {
+		if rng, ok := RadarRange(v); ok {
+			return rng
+		}
+	}
+	return 0
+}
+
 // radar returns what the installed radar reports (design §7.2): longer range,
 // omnidirectional, and exactly one target class — which is the whole point of
 // the radar choice, since a blueprint may carry only one (design §6.3).
@@ -83,10 +107,14 @@ func (w *World) radar(r *Robot) []Sighting {
 		if k, ok := v.Kind(); !ok || k != KindRadar {
 			continue
 		}
+		rng, ok := RadarRange(v)
+		if !ok {
+			break // a radar row RadarRange has never heard of reports nothing
+		}
 		switch v {
 		case PartsRadar:
 			for _, l := range w.Loose {
-				if d := r.Coord.Chebyshev(l.Coord); d > 0 && d <= radarRange {
+				if d := r.Coord.Chebyshev(l.Coord); d > 0 && d <= rng {
 					out = append(out, Sighting{ID: l.ID, Kind: SightComponent, Coord: l.Coord, Variant: l.Variant, Distance: d})
 				}
 			}
@@ -98,7 +126,7 @@ func (w *World) radar(r *Robot) []Sighting {
 				if o.Colony == r.Colony || isDestroyed(o) {
 					continue
 				}
-				if d := r.Coord.Chebyshev(o.Coord); d > 0 && d <= radarRange {
+				if d := r.Coord.Chebyshev(o.Coord); d > 0 && d <= rng {
 					out = append(out, Sighting{ID: o.ID, Kind: SightRobot, Coord: o.Coord, Colony: o.Colony, Distance: d})
 				}
 			}
@@ -107,7 +135,7 @@ func (w *World) radar(r *Robot) []Sighting {
 				if b.Colony == r.Colony {
 					continue
 				}
-				if d := r.Coord.Chebyshev(b.Coord); d > 0 && d <= baseRadarRange {
+				if d := r.Coord.Chebyshev(b.Coord); d > 0 && d <= rng {
 					out = append(out, Sighting{ID: baseSightingID(b.Colony), Kind: SightBase, Coord: b.Coord, Colony: b.Colony, Distance: d})
 				}
 			}

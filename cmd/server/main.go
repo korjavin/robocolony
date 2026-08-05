@@ -144,6 +144,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
 	mux.HandleFunc("GET /lobby", lobbyPage)
 	mux.HandleFunc("GET /match", matchPage)
+	mux.HandleFunc("GET /blueprints", blueprintsPage)
 	mux.HandleFunc("GET /editor", editorPage)
 	mux.HandleFunc("GET /help", helpPage)
 	// Everything under /api needs a session; the static shell does not.
@@ -182,9 +183,16 @@ func matchPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "match.html")
 }
 
-// editorPage gives the program and blueprint editor a route of its own. It was
-// previously reachable only as the static file /editor.html, which no page
-// linked to — so the editor existed and could not be found.
+// blueprintsPage is the blueprint configurator: assemble a robot and see what
+// the parts cost it. It used to be a <details> block in the editor's sidebar,
+// where the numbers fit but their consequences did not.
+func blueprintsPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "blueprints.html")
+}
+
+// editorPage gives the program editor a route of its own. It was previously
+// reachable only as the static file /editor.html, which no page linked to — so
+// the editor existed and could not be found.
 func editorPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "editor.html")
 }
