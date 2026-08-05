@@ -111,7 +111,11 @@
     position: relative; height: 26px; margin-top: 8px;
     border: 1px solid var(--line-1); background: var(--bg-1);
   }
-  .track > i { display: block; height: 100%; width: 0; background: var(--bg-2); }
+  /* position: relative is load-bearing. The head below is the fill's own right
+     edge, and without it the nearest positioned ancestor is .track — so the
+     head would sit at the end of the *match* rather than at the current tick,
+     and would not move all game. */
+  .track > i { display: block; position: relative; height: 100%; width: 0; background: var(--bg-2); }
   /* The head is the right edge of the fill: one element, no second position to
      keep in step with it. */
   .track > i::after {
