@@ -24,7 +24,7 @@ epics.
 | P1 | Production timing | **Mass-dependent.** | A heavy design should cost tempo as well as parts. |
 | P1 | Terrain balance | Full §3.1 matrix implemented; `speedScale` raised 12 → 24. | At 12, every chassis with speed ≥ 12 collapsed to 1 tick/cell, so the fast end of the range was invisible and locomotion choice barely mattered. |
 | P1 | Diplomacy / friendly fire | **No alliances. No friendly fire.** All colonies always hostile. | Friendly fire punishes beginners hardest; alliances are a large feature touching lobby, scoring and the shared signal channel. |
-| P1 | Match parameters | Duration, richness, spawn rate, max players, budget — all lobby settings, server-validated. | |
+| P1 | Match parameters | Duration, richness, spawn rate, max players, budget — all lobby settings. Only the load-bearing limits are enforced: the player/colony cap, the spawn-rate cap, and the budget floor. | Duration, richness and budget ceilings were taste, not invariants, so a host can run a six-hour, resource-drenched, big-budget match. |
 | P2 | AI profiles | Four: tutorial, peaceful, defensive, aggressive. A profile is a **blueprint set plus a program library**, never a privileged controller. | Measured ladder below. |
 | P2 | Spectating / replay | Eliminated players get **spectate plus full trace inspection**, not continued editing. | The trace machinery already exists, so this is cheap. |
 

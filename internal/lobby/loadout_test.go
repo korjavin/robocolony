@@ -491,7 +491,8 @@ func TestStartingBudgetIsSpentInFull(t *testing.T) {
 	const seats = 2
 	cheapest := cheapestComponentValue(t)
 	aiWorth := map[int]int{}
-	for _, budget := range []int{minStartingBudget, defaultStartingBudget(), 500, maxStartingBudget} {
+	// 3450 is just a big budget, not a ceiling: the settings have none.
+	for _, budget := range []int{minStartingBudget, defaultStartingBudget(), 500, 3450} {
 		t.Run(fmt.Sprint(budget), func(t *testing.T) {
 			set := shortSettings(60)
 			set.StartingBudget = budget

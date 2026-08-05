@@ -43,20 +43,18 @@ type Settings struct {
 // profile.
 func (s Settings) Colonies(members int) int { return members + len(s.AI) }
 
-// Legal ranges. Wide enough to be worth tuning, narrow enough that no setting
-// can turn one match into a denial of service for the whole server.
+// Legal ranges. Only the load-bearing ones: duration, richness and budget are
+// the host's taste, so they carry a floor and no ceiling.
 const (
-	minDurationSec, maxDurationSec = 60, 7200
-	minRichness, maxRichness       = 0.001, 0.25
-	maxSpawnPerMin                 = 120
-	minPlayers, maxPlayers         = 1, 8
+	maxSpawnPerMin         = 120
+	minPlayers, maxPlayers = 1, 8
 
 	// The floor is the price of one built-in scavenger, so the default kit
 	// always fields at least one robot and no host can create a lobby that
-	// cannot be started (see startingRoster). The ceiling is ten times the
-	// default: enough for a rich skirmish, and it bounds the leftover
-	// conversion at a few hundred components per base (see spendRemainder).
-	minStartingBudget, maxStartingBudget = 115, 3450
+	// cannot be started: below it startingRoster fields zero robots and
+	// memberKit refuses the match at start. There is no ceiling — a bigger
+	// budget only spends longer in spendRemainder, it does not grow the world.
+	minStartingBudget = 115
 
 	// The arena is fixed for the POC: design §2.3 has no size setting, and
 	// generation needs room for maxPlayers bases (Generate caps colonies at
@@ -91,16 +89,20 @@ func (s Settings) budget() int {
 // "unset" here: a caller that wants defaults asks for DefaultSettings.
 func (s Settings) Validate() error {
 	switch {
-	case s.DurationSec < minDurationSec || s.DurationSec > maxDurationSec:
-		return fmt.Errorf("duration_sec must be %d..%d, got %d", minDurationSec, maxDurationSec, s.DurationSec)
-	case !(s.Richness >= minRichness) || s.Richness > maxRichness: // the negation also rejects NaN
-		return fmt.Errorf("richness must be %g..%g, got %g", minRichness, maxRichness, s.Richness)
+	case s.DurationSec <= 0:
+		// A zero-duration match would end on tick zero. Any positive length is
+		// the host's business: it is wall-clock, and history decimates.
+		return fmt.Errorf("duration_sec must be positive, got %d", s.DurationSec)
+	case !(s.Richness >= 0): // the negation also rejects NaN
+		// No ceiling: Generate clamps richness to 0..1 and spends it as a
+		// target count of loose components.
+		return fmt.Errorf("richness must be >= 0, got %g", s.Richness)
 	case !(s.SpawnPerMin >= 0) || s.SpawnPerMin > maxSpawnPerMin:
 		return fmt.Errorf("spawn_per_min must be 0..%d, got %g", maxSpawnPerMin, s.SpawnPerMin)
-	case s.StartingBudget != 0 && (s.StartingBudget < minStartingBudget || s.StartingBudget > maxStartingBudget):
+	case s.StartingBudget != 0 && s.StartingBudget < minStartingBudget:
 		// Zero alone is exempt: it means "unset", and budget() reads it as the
-		// default. Anything else the client sends is held to the range.
-		return fmt.Errorf("starting_budget must be %d..%d, got %d", minStartingBudget, maxStartingBudget, s.StartingBudget)
+		// default. Anything else the client sends has to buy at least a robot.
+		return fmt.Errorf("starting_budget must be 0 or >= %d, got %d", minStartingBudget, s.StartingBudget)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:
