@@ -282,7 +282,12 @@ func (m *Match) spawnResources() {
 	c := sim.Coord{X: w.Rand().Intn(w.Width), Y: w.Rand().Intn(w.Height)}
 	cat := sim.Catalogue()
 	v := cat[w.Rand().Intn(len(cat))].Variant
-	if !w.Passable(c, sim.Tracks) {
+	// Any cell some locomotion can enter is a legal spawn. AntiGrav is the
+	// locomotion that enters everything except a hard barrier (internal/sim
+	// terrainSpecs), so this is the test "not a hard barrier" without naming a
+	// terrain class: a rubble massif is a legs colony's supply, and filtering on
+	// one locomotion left whole regions barren for the match.
+	if !w.Passable(c, sim.AntiGrav) {
 		return
 	}
 	for _, b := range w.Bases {
