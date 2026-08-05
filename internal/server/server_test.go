@@ -25,6 +25,12 @@ import (
 // not worth testing against a hand-built world it will never see in production.
 func startMatch(t *testing.T) (*lobby.Registry, *lobby.Match) {
 	t.Helper()
+	return startMatchWith(t, lobby.DefaultSettings())
+}
+
+// startMatchWith is startMatch on settings of the caller's choosing.
+func startMatchWith(t *testing.T, set lobby.Settings) (*lobby.Registry, *lobby.Match) {
+	t.Helper()
 	database, err := db.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("db.Open() = %v", err)
@@ -46,7 +52,7 @@ func startMatch(t *testing.T) (*lobby.Registry, *lobby.Match) {
 	if err != nil {
 		t.Fatalf("UpsertUser() = %v", err)
 	}
-	view, err := svc.Create(t.Context(), owner.ID, "stream test", lobby.DefaultSettings())
+	view, err := svc.Create(t.Context(), owner.ID, "stream test", set)
 	if err != nil {
 		t.Fatalf("Create() = %v", err)
 	}
@@ -100,6 +106,30 @@ func TestTerrainLegendMatchesSpecs(t *testing.T) {
 				t.Errorf("%s: variant %d is not in the component catalogue", s.Name, v)
 			}
 		}
+	}
+}
+
+// TestArenaPresetReachesTheInitFrame: the host picks a size on the lobby form
+// and the renderer sizes itself off the init frame, so the preset is only
+// really wired up if it survives create -> start -> init. A unit test on
+// GenOpts would pass with the settings dropped anywhere in between.
+func TestArenaPresetReachesTheInitFrame(t *testing.T) {
+	for name, want := range map[string]int{"XS": 32, "XL": 128} {
+		t.Run(name, func(t *testing.T) {
+			set := lobby.DefaultSettings()
+			set.Arena = name
+			_, m := startMatchWith(t, set)
+
+			info, hist := m.Info(), m.History()
+			var in Init
+			m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist) })
+			if in.Width != want || in.Height != want {
+				t.Fatalf("init frame is %dx%d, want %dx%d", in.Width, in.Height, want, want)
+			}
+			if len(in.Terrain) != want || len(in.Terrain[0]) != want {
+				t.Fatalf("init.Terrain is %d rows of %d, want %d square", len(in.Terrain), len(in.Terrain[0]), want)
+			}
+		})
 	}
 }
 

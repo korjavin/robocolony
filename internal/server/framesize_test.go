@@ -36,17 +36,19 @@ func TestFrameSize(t *testing.T) {
 	if os.Getenv("ROBOCOLONY_FRAMESIZE") == "" {
 		t.Skip("set ROBOCOLONY_FRAMESIZE=1 to run the frame size harness")
 	}
-	// Two lobbies: the defaults every match is created with, and the legal
-	// ceiling — richness, spawn rate and starting budget all at the maximum
-	// Settings.Validate accepts, which is the largest frame a player can ask
-	// this build for without changing it.
+	// Three lobbies: the defaults every match is created with, the same board
+	// with every setting pushed to a chosen worst case, and that worst case on
+	// the largest arena preset a host can pick (rc-rys) — four times the cells,
+	// so four times the loose components at the same richness, and a terrain
+	// row per cell in the init frame.
 	for _, cfg := range []struct {
-		name string
-		max  bool
-	}{{"default", false}, {"maxsettings", true}} {
+		name  string
+		max   bool
+		arena string
+	}{{"default", false, ""}, {"default-XL", false, "XL"}, {"maxsettings", true, ""}, {"maxsettings-XL", true, "XL"}} {
 		for _, tick := range []int64{600, 1800, 3600, 6000} {
 			t.Run(cfg.name+"/"+strconv.FormatInt(tick, 10)+"ticks", func(t *testing.T) {
-				m := replayLargeMatch(t, tick, cfg.max)
+				m := replayLargeMatch(t, tick, cfg.max, cfg.arena)
 				info, hist := m.Info(), m.History()
 				var in Init
 				var snap Snapshot
@@ -74,7 +76,7 @@ func TestFrameSize(t *testing.T) {
 //
 // The AI seats are the two profiles that do not hunt: an aggressive colony
 // clears the board, and an empty board is the small frame, not the big one.
-func replayLargeMatch(t *testing.T, tick int64, maxSettings bool) *lobby.Match {
+func replayLargeMatch(t *testing.T, tick int64, maxSettings bool, arena string) *lobby.Match {
 	t.Helper()
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "framesize.db")
@@ -92,6 +94,9 @@ func replayLargeMatch(t *testing.T, tick int64, maxSettings bool) *lobby.Match {
 	set := lobby.DefaultSettings()
 	set.MaxPlayers = 1
 	set.DurationSec = 3600 // 36000 ticks: every measured tick is mid-match
+	if arena != "" {
+		set.Arena = arena
+	}
 	if maxSettings {
 		// A chosen worst case, not the legal ceiling: only spawn_per_min
 		// still has one. Richness and budget are unbounded settings.

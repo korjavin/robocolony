@@ -107,6 +107,24 @@ func liveMatch(t *testing.T, svc *Service, lobby db.Lobby, set Settings, members
 // and the profile list travels in the settings the replay re-reads. If AI
 // behaviour ever stopped being a pure function of the seed, this is what would
 // notice.
+// TestStoredSettingsWithoutArenaStay64: a lobby row written before the arena
+// setting existed has no "arena" key, and Restore rebuilds its match from that
+// JSON. If the missing key stopped meaning 64x64 every stored match would
+// replay into a different world, and its recorded commands into a world where
+// they never made sense.
+func TestStoredSettingsWithoutArenaStay64(t *testing.T) {
+	set, err := decodeSettings(`{"duration_sec":600,"richness":0.02,"spawn_per_min":6,"max_players":4,"seed":23}`)
+	if err != nil {
+		t.Fatalf("decodeSettings() = %v", err)
+	}
+	if set.Arena != "" {
+		t.Fatalf("Arena = %q, want empty: the fixture has no arena key", set.Arena)
+	}
+	if opts := set.GenOpts(2); opts.Width != 64 || opts.Height != 64 {
+		t.Fatalf("GenOpts() = %dx%d, want 64x64", opts.Width, opts.Height)
+	}
+}
+
 func TestReplayPreservesStateHash(t *testing.T) {
 	withAI := shortSettings(600)
 	withAI.AI = Profiles()

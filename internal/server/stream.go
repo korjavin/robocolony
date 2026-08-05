@@ -24,30 +24,44 @@ const heartbeatEvery = 15 * time.Second
 // answer. Exceeding it is logged, not worked around: deltas are a bead, not
 // something to invent inside a stream handler.
 //
-// Measured, not extrapolated (rc-w9s.31): eight colonies on the full 64×64
-// arena, seed 0x5eed, replayed to the tick shown, tick frame in bytes.
-// framesize_test.go is the harness and re-runs this.
+// Measured, not extrapolated (rc-w9s.31, re-measured for the arena presets in
+// rc-rys): eight colonies, seed 0x5eed, replayed to the tick shown, tick frame
+// in bytes. framesize_test.go is the harness and re-runs this. "stressed" is
+// richness 0.25, spawn 120/min, budget 3450 — a chosen worst case, not a legal
+// ceiling: richness and budget have had no ceiling since rc-8hu.
 //
-//	                        tick 600  tick 1800  tick 3600  tick 6000
-//	default settings          10,351     11,680     11,212     11,444
-//	  robots                      23         27         25         25
-//	every setting at its max  36,755     44,040     47,288     60,317
-//	  robots                      55        112        125        164
+//	                       tick 600  tick 1800  tick 3600  tick 6000
+//	default, M (64×64)       10,593     10,784     11,297     11,037
+//	  robots                     22         22         24         24
+//	default, XL (128×128)    19,351     20,233     19,996     20,015
+//	  robots                     25         31         33         38
+//	stressed, M              46,692     54,178     59,361     63,633
+//	  robots                     57        116        160        172
+//	stressed, XL            148,792    147,558    152,256    156,396
+//	  robots                     55        117        238        363
 //
 // The two extrapolations this budget was argued against — 45 KB in E4.1, then
 // 75 KB while adding statistics — were both pessimistic by about six times:
 // they assumed 8 colonies × 20 robots, and a default board sustains about 25
 // robots in total, because the loose components run out and production stalls.
-// An ordinary match sits at a sixth of this budget.
+// An ordinary match sits at a sixth of this budget, and the largest arena a
+// host can pick only doubles that: a bigger board is more ground, and richness
+// is per cell, so the frame grows with the cell count rather than with the
+// side.
 //
-// The bottom row is a lobby created with richness, spawn rate and starting
-// budget all at the ceiling Settings.Validate accepts. It is legal, its
-// population keeps growing while the components keep coming, and it is what
-// this WARN is for: before the rc-w9s.31 trim (the approved designs moved to
-// the init frame — 11 KB a frame of data that cannot change while a match
-// runs) it crossed the budget by tick 6000. It will cross it again on a long
-// enough match, and that is the signal to build deltas — with a real
-// deployment behind it rather than an extrapolation.
+// The stressed rows are what this WARN is for. Before the rc-w9s.31 trim (the
+// approved designs moved to the init frame — 11 KB a frame of data that cannot
+// change while a match runs) the M row crossed the budget by tick 6000; the XL
+// row sits at two and a half times it throughout. Neither is a bound this code
+// enforces, and neither is new: the same harness measures 97 KB on a *64×64*
+// board at richness 1.0, which any host can create today. The knob is the loose
+// component count, and the arena preset is one of three ways to turn it. When
+// deltas get built, that is the reason — with a real deployment behind it
+// rather than an extrapolation.
+//
+// The init frame grows with the arena too, and it is the one that scales
+// cleanly: one terrain char per cell puts XL at 31–36 KB against M's 18–23 KB.
+// It is sent once per connection, not per tick.
 const maxFrameBytes = 64 << 10
 
 // pollInterval is how often the stream checks for a new tick. Deliberately
