@@ -574,6 +574,10 @@ function changed() {
   // is one walk down a rule list rather than a simulation.
   dryrun = null;
   shadow = null;
+  // And an answer already in flight is about the program as it was a keystroke
+  // ago: retire its sequence number too, or it lands during the debounce and
+  // fills the verdict column with the draft that has just been edited away.
+  shadowSeq++;
   err("");
   render();
   clearTimeout(timer);
