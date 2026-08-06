@@ -1,7 +1,13 @@
-// The program and blueprint editor. Plain ES module, no build step: the
-// catalogue, the limits, the templates, the §6.3 constraints and every balance
-// number come from the server, so this file never holds a second copy of the
-// language or of the simulation's tables.
+// The program editor. Plain ES module, no build step: the catalogue, the
+// limits, the templates, the §6.3 constraints and every balance number come
+// from the server, so this file never holds a second copy of the language or of
+// the simulation's tables.
+//
+// Two views of one program (UX pass 1d/1e): CARDS is the editor — a rule is a
+// card, the order of the cards is the program — and CODE is the same rules
+// written out as text with the same per-rule verdicts in the gutter. The text
+// is generated from the rules and never parsed back, so switching views cannot
+// rewrite anything.
 const $ = (id) => document.getElementById(id);
 function el(tag, props = {}, ...kids) {
   const n = document.createElement(tag);
@@ -42,6 +48,8 @@ let current = null;         // { id, name, program }
 let findings = { errors: [], warnings: [], notes: [] };
 let pending = 0;
 let dryrun = null;          // last /api/programs/dryrun report, or null
+let view = "cards";         // "cards" | "code"
+let picked = -1;            // selected line in the code view
 
 const blank = () => ({
   id: 0, name: "new program",
@@ -50,6 +58,11 @@ const blank = () => ({
 const firstPred = () => ({ op: "pred", pred: lang.catalogue.predicates[0].id });
 const newRule = () => ({ when: firstPred(), then: [{ do: lang.catalogue.actions[0].id }] });
 const blueprintID = () => Number($("blueprint").value || 0);
+
+// argFor gives a catalogue row the argument its kind requires, or none.
+const argFor = (spec) => (spec.arg === "none" ? {} : { arg: spec.arg === "point" ? 1 : 0 });
+const predNode = (spec) => ({ op: "pred", pred: spec.id, ...argFor(spec) });
+const actNode = (spec) => ({ do: spec.id, ...argFor(spec) });
 
 // ---------------------------------------------------------------------------
 // Widgets
@@ -188,6 +201,88 @@ function renderGroup(node, replace, remove) {
 }
 
 // ---------------------------------------------------------------------------
+// Catalogue rail. The parts bin the rules are built from: drag a row onto a
+// rule to add it there, drop it past the end of the list to start a new rule,
+// or click it, which is the same thing without a mouse gesture.
+// ---------------------------------------------------------------------------
+
+// bpKinds is what the selected robot actually carries. It greys the rows whose
+// hardware is missing; the server still has the last word, per rule, in Checks.
+function bpKinds() {
+  const b = blueprints.find((x) => x.id === blueprintID());
+  const kind = (v) => (lang.components.find((c) => c.variant === v) || {}).kind;
+  return new Set((b ? b.components : []).map(kind));
+}
+
+function renderCatalogue() {
+  const host = $("catalogue");
+  host.replaceChildren();
+  const q = $("filter").value.trim().toLowerCase();
+  const have = bpKinds();
+  const hit = (s) => !q || s.id.includes(q) || s.label.toLowerCase().includes(q) || s.group.includes(q);
+  const section = (kind, prefix, specs) => {
+    const groups = new Map();
+    for (const s of specs.filter(hit)) {
+      if (!groups.has(s.group)) groups.set(s.group, []);
+      groups.get(s.group).push(s);
+    }
+    for (const [group, rows] of groups) {
+      host.append(el("span", { className: "label", textContent: `${prefix} · ${group}` }));
+      for (const s of rows) host.append(chip(kind, s, have));
+    }
+  };
+  section("pred", "conditions", lang.catalogue.predicates);
+  section("act", "actions", lang.catalogue.actions);
+  if (!host.children.length) {
+    host.append(el("p", { className: "meta", textContent: `Nothing in the language matches “${q}”.` }));
+  }
+}
+
+function chip(kind, spec, have) {
+  const unmet = (spec.needs || []).some((k) => !have.has(k));
+  const c = el("div", {
+    className: `chip${unmet ? " unmet" : ""}`,
+    draggable: true,
+    title: `${spec.label} — ${spec.desc}`
+      + (unmet ? `\n\nNeeds ${spec.needs.join(" + ")}; this blueprint carries none.` : "")
+      + "\n\nClick to add it as a new rule, or drag it onto one.",
+  }, el("span", { className: "id", textContent: spec.id }));
+  c.addEventListener("dragstart", (ev) => {
+    drag = { kind, spec };
+    ev.dataTransfer.setData("text/plain", spec.id);
+    ev.dataTransfer.effectAllowed = "copy";
+  });
+  c.addEventListener("dragend", () => { drag = null; clearDropMarks(); });
+  c.addEventListener("click", () => addFromCatalogue(kind, spec, -1));
+  return c;
+}
+
+// addFromCatalogue lands a catalogue row: onto a rule, a condition ANDs into
+// its WHEN and an action joins its THEN; past the end of the list, either one
+// starts a new rule. The limits are the server's, read from /api/language.
+function addFromCatalogue(kind, spec, i) {
+  const rules = current.program.rules;
+  err("");
+  if (!rules[i]) {
+    if (rules.length >= lang.limits.max_rules) {
+      err(`a program holds at most ${lang.limits.max_rules} rules`);
+      return;
+    }
+    rules.push(kind === "pred"
+      ? { when: predNode(spec), then: [{ do: lang.catalogue.actions[0].id }] }
+      : { when: firstPred(), then: [actNode(spec)] });
+  } else if (kind === "pred") {
+    rules[i].when = { op: "and", of: [rules[i].when, predNode(spec)] };
+  } else if (rules[i].then.length >= lang.limits.max_actions_per_rule) {
+    err(`a rule holds at most ${lang.limits.max_actions_per_rule} actions`);
+    return;
+  } else {
+    rules[i].then.push(actNode(spec));
+  }
+  changed();
+}
+
+// ---------------------------------------------------------------------------
 // Rules
 // ---------------------------------------------------------------------------
 
@@ -196,34 +291,52 @@ function renderRules() {
   host.replaceChildren();
   const rules = current.program.rules;
   if (rules.length === 0) {
-    host.append(el("p", { className: "meta", textContent: "No rules yet. Add one, or start from a template." }));
+    host.append(el("p", { className: "meta", textContent: "No rules yet. Drag a condition in, add one, or start from a template." }));
   }
   rules.forEach((rule, i) => host.append(renderRule(rule, i, rules.length)));
   $("addrule").disabled = rules.length >= lang.limits.max_rules;
+  $("rulecount").textContent = String(rules.length);
+  $("ruleinfo").textContent = `${rules.length} rules`;
+}
+
+// topRule is the rule the last dry run spent most of its decisions in — the one
+// actually running this robot, which is what the report exists to point at.
+function topRule() {
+  if (!dryrun) return -1;
+  let best = -1;
+  for (const r of dryrun.rules || []) {
+    if (r.fired > 0 && (best < 0 || r.fired > dryrun.rules[best].fired)) best = r.rule;
+  }
+  return best;
 }
 
 function renderRule(rule, i, total) {
-  const card = el("div", { className: "rule" });
-  const head = el("header");
-  head.append(
-    dragHandle(card, i),
-    el("span", { className: "prio", textContent: String(i + 1), title: `priority ${i + 1}` }),
-    iconButton("▲", "raise priority", () => move(i, -1), i === 0),
-    iconButton("▼", "lower priority", () => move(i, 1), i === total - 1),
-    iconButton("✕", "delete this rule", () => { current.program.rules.splice(i, 1); changed(); }),
-  );
-  for (const b of dryRunBadges(i)) head.append(b);
-  const when = el("div", { className: "when" },
-    renderCond(rule.when, (next) => { rule.when = next; changed(); }, null));
-  const then = el("div", { className: "then" });
-  rule.then.forEach((action, j) => then.append(renderAction(rule, action, j)));
-  then.append(iconButton("+ action", "add an action to this rule",
+  const dead = dryrun && dryrun.never_fired.includes(i);
+  const card = el("div", { className: `rule${topRule() === i ? " wins" : ""}${dead ? " dead" : ""}` });
+
+  const body = el("div", { className: "body" },
+    el("div", { className: "kw", textContent: "WHEN" }),
+    renderCond(rule.when, (next) => { rule.when = next; changed(); }, null),
+    el("div", { className: "kw", textContent: "THEN" }));
+  rule.then.forEach((action, j) => body.append(renderAction(rule, action, j)));
+  body.append(iconButton("+ action", "add an action to this rule",
     () => { rule.then.push({ do: lang.catalogue.actions[0].id }); changed(); },
     rule.then.length >= lang.limits.max_actions_per_rule));
-  card.append(head, el("div", { className: "kw", textContent: "WHEN" }), when,
-    el("div", { className: "kw", textContent: "THEN" }), then);
+  for (const is of issuesFor(i)) body.append(issueLine(is));
 
-  for (const is of issuesFor(i)) card.append(issueLine(is));
+  // The verdict column: what you can do to this rule, and what the server and
+  // the dry run make of it. A verdict belongs at the far end of the row, not
+  // crowding the sentence.
+  const verdict = el("div", { className: "verdict" },
+    el("div", { className: "ctl" },
+      iconButton("▲", "raise priority", () => move(i, -1), i === 0),
+      iconButton("▼", "lower priority", () => move(i, 1), i === total - 1),
+      iconButton("✕", "delete this rule", () => { current.program.rules.splice(i, 1); changed(); })));
+  for (const b of dryRunBadges(i)) verdict.append(b);
+
+  card.append(el("div", { className: "gutter" },
+    el("span", { className: "prio", textContent: String(i + 1), title: `priority ${i + 1}` }),
+    dragHandle(card, i)), body, verdict);
   makeDropTarget(card, i);
   return card;
 }
@@ -264,14 +377,16 @@ function move(i, delta) {
 }
 
 // ---------------------------------------------------------------------------
-// Drag-and-drop reordering (design §10.10). Native HTML5 DnD, no dependency.
-// The ▲▼ buttons stay: they are the keyboard path, and dragging is not.
+// Drag and drop (design §10.10). Native HTML5 DnD, no dependency. Two things
+// are dragged into the rule list — a rule, which reorders, and a catalogue row,
+// which is added — so one payload says which. The ▲▼ buttons and the click on
+// a catalogue row stay: they are the keyboard path, and dragging is not.
 //
 // Only the handle is draggable, so a number field inside a card can still be
 // selected with the mouse. The drag image is the whole card, because the card
 // is what is moving.
 // ---------------------------------------------------------------------------
-let dragFrom = null;
+let drag = null; // { kind: "rule", i } | { kind: "pred" | "act", spec }
 
 function dragHandle(card, i) {
   const h = el("span", {
@@ -279,40 +394,47 @@ function dragHandle(card, i) {
     title: "drag to reorder — or use ▲ ▼, which the keyboard can reach",
   });
   h.addEventListener("dragstart", (ev) => {
-    dragFrom = i;
+    drag = { kind: "rule", i };
     card.classList.add("dragging");
     // Firefox refuses to start a drag without payload, even unused payload.
     ev.dataTransfer.setData("text/plain", String(i));
     ev.dataTransfer.effectAllowed = "move";
     ev.dataTransfer.setDragImage(card, 12, 12);
   });
-  h.addEventListener("dragend", () => { dragFrom = null; clearDropMarks(); });
+  h.addEventListener("dragend", () => { drag = null; clearDropMarks(); });
   return h;
 }
 
-// makeDropTarget marks the card as a drop site. Which half of the card the
-// pointer is in decides whether the rule lands above or below it — rule order
-// is the program, so the landing slot is drawn, never guessed.
+// makeDropTarget marks the card as a drop site. For a rule, which half of the
+// card the pointer is in decides whether it lands above or below — rule order
+// is the program, so the landing slot is drawn, never guessed. A catalogue row
+// has no such choice: it goes into the rule it is dropped on.
 function makeDropTarget(card, i) {
   const below = (ev) => ev.clientY > card.getBoundingClientRect().top + card.offsetHeight / 2;
   card.addEventListener("dragover", (ev) => {
-    if (dragFrom === null) return;
+    if (!drag) return;
     ev.preventDefault();
+    if (drag.kind !== "rule") {
+      ev.dataTransfer.dropEffect = "copy";
+      card.classList.add("over-into");
+      return;
+    }
     ev.dataTransfer.dropEffect = "move";
     card.classList.toggle("over-below", below(ev));
     card.classList.toggle("over-above", !below(ev));
   });
-  card.addEventListener("dragleave", () => card.classList.remove("over-above", "over-below"));
+  card.addEventListener("dragleave", () => card.classList.remove("over-above", "over-below", "over-into"));
   card.addEventListener("drop", (ev) => {
-    if (dragFrom === null) return;
+    if (!drag) return;
     ev.preventDefault();
-    reorder(dragFrom, i + (below(ev) ? 1 : 0));
+    if (drag.kind === "rule") reorder(drag.i, i + (below(ev) ? 1 : 0));
+    else addFromCatalogue(drag.kind, drag.spec, i);
   });
 }
 
 function clearDropMarks() {
-  for (const n of document.querySelectorAll(".dragging, .over-above, .over-below")) {
-    n.classList.remove("dragging", "over-above", "over-below");
+  for (const n of document.querySelectorAll(".dragging, .over-above, .over-below, .over-into")) {
+    n.classList.remove("dragging", "over-above", "over-below", "over-into");
   }
 }
 
@@ -327,6 +449,22 @@ function reorder(from, to) {
   changed();
 }
 
+// The end of the list is a drop site too: a rule dropped there becomes the last
+// one, and a catalogue row dropped there starts a rule of its own.
+$("droprow").addEventListener("dragover", (ev) => {
+  if (!drag) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = drag.kind === "rule" ? "move" : "copy";
+  $("droprow").classList.add("over-into");
+});
+$("droprow").addEventListener("dragleave", () => $("droprow").classList.remove("over-into"));
+$("droprow").addEventListener("drop", (ev) => {
+  if (!drag) return;
+  ev.preventDefault();
+  if (drag.kind === "rule") reorder(drag.i, current.program.rules.length);
+  else addFromCatalogue(drag.kind, drag.spec, -1);
+});
+
 // ---------------------------------------------------------------------------
 // Validation feedback. Errors block the save, warnings never do (design §10.10).
 // ---------------------------------------------------------------------------
@@ -334,18 +472,31 @@ function reorder(from, to) {
 // Buckets in descending loudness: an error, then a warning, then a note. Notes
 // are observations about a correct program, so they are rendered quietly and
 // never counted anywhere that gates a save.
-const issuesFor = (rule) =>
-  [...findings.errors, ...findings.warnings, ...(findings.notes || [])].filter((e) => e.rule === rule);
+const allIssues = () => [...findings.errors, ...findings.warnings, ...(findings.notes || [])];
+const issuesFor = (rule) => allIssues().filter((e) => e.rule === rule);
 
+// The server's messages name the rule they are about ("rule 3: ..."), so
+// nothing here prefixes them with a number they already carry.
 function issueLine(is) {
-  return el("div", { className: `issue ${is.severity}`, textContent: `${is.severity}: ${is.message}` });
+  return el("div", { className: `issue ${is.severity}`, textContent: is.message });
 }
 
 function renderIssues() {
   const host = $("issues");
   host.replaceChildren();
-  for (const is of issuesFor(-1)) host.append(issueLine(is));
+  // The panel carries every issue, rule-scoped ones included: it is the list
+  // read down before a match. Each is repeated on its own card, where it is
+  // read against the rule it is about.
+  for (const is of allIssues()) host.append(issueLine(is));
+  if (!allIssues().length) {
+    host.append(el("p", { className: "meta", style: "padding:.6rem .9rem;margin:0",
+      textContent: "Nothing to say about this program." }));
+  }
   const n = findings.errors.length;
+  const w = findings.warnings.length;
+  $("counts").replaceChildren(
+    el("span", { className: `badge${n ? " solid" : ""}`, textContent: `${n} errors` }),
+    el("span", { className: "badge dashed", textContent: `${w} warnings` }));
   $("save").disabled = n > 0;
   $("dup").disabled = n > 0;
   $("save").title = n > 0 ? "fix the errors first; warnings do not block saving" : "";
@@ -373,6 +524,7 @@ async function validate() {
     findings = res;
     renderRules();
     renderIssues();
+    renderCode();
   } catch (e) { err(e.message); }
 }
 
@@ -392,7 +544,7 @@ function dryRunBadges(i) {
   const out = [];
   if (dryrun.never_fired.includes(i)) {
     out.push(el("span", {
-      className: "badge never", textContent: "never fired",
+      className: "badge solid", textContent: "never fired",
       title: "in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held",
     }));
   }
@@ -405,51 +557,67 @@ function dryRunBadges(i) {
 
 const when = (ev) => (ev.count > 0 ? `${ev.count}×, first at tick ${ev.first_tick}` : "never");
 
+// The report is figures first and prose second: which rule is running this
+// robot is a comparison, and a comparison is a set of bars, not a sentence.
 function renderDryRun() {
   const host = $("dryrun");
   host.replaceChildren();
-  if (!dryrun) return;
+  if (!dryrun) {
+    host.append(el("p", { className: "meta", textContent: "Not run yet." }));
+    return;
+  }
   const d = dryrun;
-  const lines = [
-    d.acted.count > 0
-      ? `Acted on ${d.acted.count} of ${d.decisions} decisions, first at tick ${d.acted.first_tick}.`
-      : `Never acted: in ${d.decisions} decisions no rule ever took a tick.`,
-    d.never_fired.length > 0
-      ? `Rules that never fired: ${d.never_fired.map((i) => i + 1).join(", ")} — marked on the cards.`
-      : "Every rule that can be seen firing did fire.",
-    `Picked something up: ${when(d.picked_up)}.`,
-    `Delivered to base: ${when(d.deposited)}.`,
-  ];
-  // Combat. The attack line is only printed when the program actually took a
-  // shot: a scavenger design carries no weapon, and "never attacked" on a
-  // blueprint that cannot attack reads as a failure it is not. The damage line
-  // is unconditional, because it is the proof that there was an opponent — a
-  // report with no combat in it at all could otherwise be mistaken for the
-  // empty arena this replaced.
+  const figs = el("div", { className: "figs" });
+  const fig = (k, v, title) => figs.append(
+    el("span", { className: "k", textContent: k, title: title || "" }),
+    el("span", { textContent: String(v) }));
+  fig("ticks simulated", d.ticks);
+  fig("decisions", d.decisions, "ticks on which the rule list was evaluated");
+  fig("acted", d.acted.count, "decisions that produced a primary action");
+  fig("idle", d.idle.count, "decisions in which no rule took the tick");
+  fig("picked up", d.picked_up.count);
+  fig("deposited", d.deposited.count);
+  if (d.attacked.count > 0) fig("damage dealt", d.damage_dealt);
+  fig("survived", d.survived ? `✓ ${d.health}/${d.max_health} hp` : `✗ tick ${d.destroyed_tick}`);
+  host.append(figs);
+
+  // Share of decisions, per rule, biggest first — plus what nothing matched,
+  // because the ticks no rule wanted are the ones that cost the match.
+  const rows = [...(d.rules || [])].sort((a, b) => b.fired - a.fired);
+  if (rows.length && d.decisions > 0) {
+    host.append(el("div", { className: "label", style: "margin:.8rem 0 .3rem", textContent: "rule firing share" }));
+    for (const r of rows) host.append(shareBar(String(r.rule + 1), r.fired, d.decisions));
+    if (d.idle.count > 0) host.append(shareBar("—", d.idle.count, d.decisions, "no rule matched"));
+  }
+
+  const notes = [];
+  if (d.acted.count === 0) notes.push(`Never acted: in ${d.decisions} decisions no rule ever took a tick.`);
+  if (d.never_fired.length > 0) {
+    notes.push(`Rules that never fired: ${d.never_fired.map((i) => i + 1).join(", ")} — marked on the cards.`);
+  }
   if (d.attacked.count > 0) {
-    lines.push(`Attacked: ${when(d.attacked)} — ${d.hit.count} of those took health off it,`
-      + ` ${d.damage_dealt} damage in total${d.kills > 0 ? `, destroying ${d.kills}` : ""}.`);
+    notes.push(`Attacked ${when(d.attacked)} — ${d.hit.count} of those took health off it`
+      + `${d.kills > 0 ? `, destroying ${d.kills}` : ""}.`);
   }
-  lines.push(d.survived
-    ? `Took ${d.damage_taken} damage from the sparring partner over ${d.took_damage.count} ticks;`
-      + ` ${d.health} of ${d.max_health} health left.`
-    : `Destroyed at tick ${d.destroyed_tick} after ${d.damage_taken} damage — nothing`
-      + " after that tick is your program.");
-  if (d.idle.count > 0) {
-    lines.push(`Idle on ${d.idle.count} decisions${d.idle_reason ? ` — last reason: ${d.idle_reason}` : ""}.`);
-  }
-  const box = el("div", { className: "report" },
-    el("strong", { textContent: "Dry run" }));
-  for (const t of lines) box.append(el("div", { textContent: t }));
-  box.append(el("p", {
-    className: "meta",
-    textContent: `${d.ticks} ticks on a ${d.width}×${d.height} practice arena, seed ${d.seed}. `
-      + "You get one unarmed scout that calls out enemies it sees, against one hostile "
-      + "sparring partner that hunts you on radar — so combat, defensive and signal rules "
-      + "all have something to match. "
+  if (!d.survived) notes.push("Nothing after the tick it was destroyed on is your program.");
+  if (d.idle.count > 0 && d.idle_reason) notes.push(`Last idle reason: ${d.idle_reason}.`);
+  for (const t of notes) host.append(el("p", { className: "meta", style: "margin:.5rem 0 0", textContent: t }));
+
+  host.append(el("p", {
+    className: "meta", style: "margin:.6rem 0 0",
+    textContent: `${d.width}×${d.height} practice arena, seed ${d.seed}. One unarmed scout `
+      + "that calls out enemies it sees, against one hostile sparring partner that hunts you on "
+      + "radar — so combat, defensive and signal rules all have something to match. "
       + "Two runs of the same program are always comparable; this is a smoke test, not a match.",
   }));
-  host.append(box);
+}
+
+function shareBar(n, count, total, title) {
+  const pct = Math.round((count / total) * 100);
+  return el("div", { className: `share${count ? "" : " zero"}`, title: title || `${count} of ${total} decisions` },
+    el("span", { className: "n", textContent: n }),
+    el("div", { className: "track" }, el("div", { className: "fill", style: `width:${pct}%` })),
+    el("span", { className: "pct", textContent: `${pct}%` }));
 }
 
 async function tryIt() {
@@ -463,6 +631,7 @@ async function tryIt() {
     dryrun = res;
     renderRules();
     renderDryRun();
+    renderCode();
   } catch (e) {
     dryrun = null;
     renderDryRun();
@@ -476,44 +645,143 @@ async function tryIt() {
 }
 
 // ---------------------------------------------------------------------------
+// Code view (UX pass 1e). The program written out as text, one row per line,
+// with the same per-rule verdict in the gutter that the cards carry.
+//
+// One direction only: the text is generated from the rules and never parsed
+// back. That is what makes "toggling views never rewrites the file" true rather
+// than aspirational, and it is why there is no text parser in this codebase to
+// drift from prog.Decode. Ids, not labels: this is the wire language.
+// ---------------------------------------------------------------------------
+
+const argText = (n) => (n.arg === undefined ? "" : ` ${n.arg}`);
+
+function condText(node) {
+  if (!node) return "?";
+  if (node.op === "not") return `not ${parens(node.of[0])}`;
+  if (node.op === "and" || node.op === "or") return (node.of || []).map(parens).join(` ${node.op} `);
+  return `${node.pred}${argText(node)}`;
+}
+// A group inside a group gets brackets, so the picture the cards draw with
+// indentation survives the flattening.
+const parens = (n) => (n && (n.op === "and" || n.op === "or") ? `(${condText(n)})` : condText(n));
+
+const condRefs = (node, out = []) => {
+  if (!node) return out;
+  if (node.of) node.of.forEach((k) => condRefs(k, out));
+  else if (node.pred) out.push(node.pred);
+  return out;
+};
+
+// mark is the gutter verdict, and it is the card's verdict said in one glyph.
+function mark(i) {
+  if (issuesFor(i).some((s) => s.severity !== "note")) return "!";
+  if (!dryrun) return "·";
+  const row = (dryrun.rules || []).find((r) => r.rule === i);
+  return row && row.fired > 0 ? "✓" : "✗";
+}
+
+function codeLines() {
+  const out = [
+    { text: `program ${current.program.name || "unnamed"} v${lang.schema_version}` },
+    { text: "rules:" },
+  ];
+  current.program.rules.forEach((r, i) => {
+    out.push({ text: `  when ${condText(r.when)}`, rule: i, refs: condRefs(r.when) });
+    out.push({ text: `    then ${r.then.map((a) => `${a.do}${argText(a)}`).join(", ")}`,
+               rule: i, refs: r.then.map((a) => a.do) });
+  });
+  if (!current.program.rules.length) out.push({ text: "  # no rules yet" });
+  return out;
+}
+
+function renderCode() {
+  if (view !== "code") return;
+  const host = $("code");
+  host.replaceChildren();
+  const lines = codeLines();
+  lines.forEach((line, n) => {
+    // The number and the verdict go on the rule's first line only; its THEN is
+    // the same rule continued, and repeating the mark would read as two.
+    const first = line.rule !== undefined && (n === 0 || lines[n - 1].rule !== line.rule);
+    const m = line.rule === undefined ? "" : (first ? `${String(line.rule + 1).padStart(2, "0")} ${mark(line.rule)}` : "");
+    const row = el("div", { className: `cl${line.refs && line.refs.length ? " pick" : ""}${picked === n ? " on" : ""}` },
+      el("span", { className: "no", textContent: String(n + 1) }),
+      el("span", { className: `mk${m.endsWith("✓") ? " fired" : ""}`, textContent: m }),
+      el("span", { className: "tx", textContent: line.text }));
+    if (line.refs && line.refs.length) {
+      row.addEventListener("click", () => { picked = n; renderCode(); renderCodeDoc(line); });
+    }
+    host.append(row);
+  });
+  const n = findings.errors.length;
+  $("codestatus").textContent = `schema v${lang.schema_version} · ${current.program.rules.length} rules · `
+    + (n ? `${n} errors` : "valid");
+}
+
+// The documentation is the catalogue's own Desc, served by the server beside the
+// evaluator that implements it, so it cannot drift from what the rule does.
+function renderCodeDoc(line) {
+  const host = $("codedoc");
+  host.replaceChildren();
+  for (const id of line.refs) {
+    const spec = preds.get(id) || acts.get(id);
+    host.append(el("div", { style: "margin:0 0 .6rem" },
+      el("code", { textContent: id }),
+      el("p", { className: "meta", style: "margin:.2rem 0 0",
+        textContent: spec ? spec.desc : "not in this build's catalogue." })));
+  }
+}
+
+function setView(v) {
+  view = v;
+  $("v-cards").setAttribute("aria-pressed", String(v === "cards"));
+  $("v-code").setAttribute("aria-pressed", String(v === "code"));
+  $("cardsview").hidden = v !== "cards";
+  $("checksview").hidden = v !== "cards";
+  $("codeview").hidden = v !== "code";
+  $("codeside").hidden = v !== "code";
+  renderCode();
+}
+
+// ---------------------------------------------------------------------------
 // Library
 // ---------------------------------------------------------------------------
 
 function renderLibrary() {
-  const host = $("library");
-  host.replaceChildren();
-  if (programs.length === 0) {
+  const sel = $("library");
+  sel.replaceChildren();
+  // An unsaved program is a row of its own: the picker always shows what is on
+  // screen, rather than pointing at whichever saved program it started from.
+  if (current.id === 0) sel.append(el("option", { value: "0", textContent: `${$("name").value || current.name} (unsaved)` }));
+  for (const p of programs) {
+    sel.append(el("option", { value: String(p.id), textContent: `${p.name} · ${p.program.rules.length} rules` }));
+  }
+  if (!programs.length && current.id !== 0) {
     // Reachable only if a read ever comes back empty: the library seeds the
     // three worked programs whenever it has none, so a player cannot strand
-    // themselves by deleting everything. This says what to do about it anyway,
-    // because a robot at its base can only be given a program from here.
-    host.append(el("li", {
-      className: "meta",
-      textContent: "Empty. Start from a template, import a file, or add rules and Save.",
-    }));
+    // themselves by deleting everything.
+    sel.append(el("option", { value: "0", textContent: "empty — start from a template" }));
   }
-  for (const p of programs) {
-    const li = el("li", { className: p.id === current.id ? "on" : "" });
-    li.append(el("div", { textContent: p.name }),
-      el("div", { className: "meta", textContent: `${p.program.rules.length} rules · ${p.updated_at.slice(0, 10)}` }));
-    li.addEventListener("click", () => open(p));
-    host.append(li);
-  }
+  sel.value = String(current.id);
 }
 
 function open(p) {
   current = { id: p.id, name: p.name, program: structuredClone(p.program) };
   $("name").value = p.name;
   findings = { errors: [], warnings: [], notes: [] };
+  picked = -1;
   status("");
   changed();
 }
 
 function render() {
   renderLibrary();
+  renderCatalogue();
   renderRules();
   renderIssues();
   renderDryRun();
+  renderCode();
 }
 
 async function reloadLibrary() {
@@ -587,6 +855,7 @@ function showRefusal(e) {
     findings = { errors: e.data.errors, warnings: e.data.warnings || [], notes: e.data.notes || [] };
     renderRules();
     renderIssues();
+    renderCode();
   }
 }
 
@@ -703,6 +972,14 @@ $("import").addEventListener("change", async (ev) => {
 $("save").addEventListener("click", () => save(false));
 $("dup").addEventListener("click", () => save(true));
 $("tryit").addEventListener("click", tryIt);
+$("v-cards").addEventListener("click", () => setView("cards"));
+$("v-code").addEventListener("click", () => setView("code"));
+$("filter").addEventListener("input", renderCatalogue);
+
+$("library").addEventListener("change", () => {
+  const p = programs.find((x) => String(x.id) === $("library").value);
+  if (p) open(p); else renderLibrary();
+});
 
 $("del").addEventListener("click", async () => {
   err("");
@@ -725,7 +1002,7 @@ $("new").addEventListener("click", () => {
 
 $("addrule").addEventListener("click", () => { current.program.rules.push(newRule()); changed(); });
 
-$("name").addEventListener("change", () => { current.program.name = $("name").value; });
+$("name").addEventListener("change", () => { current.program.name = $("name").value; render(); });
 
 $("blueprint").addEventListener("change", () => { renderBlueprintMeta(); changed(); });
 

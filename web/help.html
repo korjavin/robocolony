@@ -255,7 +255,7 @@
   that out in general is the same problem as deciding satisfiability, so
   <code>unreachable_rule</code> stays quiet on any condition containing a NOT
   (and on any containing an ANY, for the same reason) rather than guessing and
-  marking a live rule dead. Use <em>Try it</em>: a rule that never fires in a few
+  marking a live rule dead. Use <em>Dry run</em>: a rule that never fires in a few
   hundred ticks shows up on its own card.</p>
 
   <h2 id="see">What a robot can actually perceive</h2>
@@ -498,7 +498,7 @@
     <li><code>WHEN carrying_nothing THEN move_forward</code> &mdash; the
         fallback that keeps it moving, and the reason it is never inert.</li>
   </ol>
-  <p>Then press <em>Try it</em>: it runs the program in a practice arena and
+  <p>Then press <em>Dry run</em>: it runs the program in a practice arena and
   reports which rules actually fired. A rule that never fires in a few hundred
   ticks is either unreachable or waiting for something that never happens.</p>
 
