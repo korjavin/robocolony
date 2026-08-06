@@ -148,11 +148,14 @@ func (rt *Runtime) evict(now uint64) {
 	}
 }
 
-// drop stops recording a robot and releases its ring.
+// drop stops recording a robot and releases its ring, and with it the last
+// condition table. Both go together: a watch that is evicted and later
+// re-established starts an empty ring, and leaving the table behind would pair
+// that empty history with a table dated before the gap.
 func (rt *Runtime) drop(robotID int) {
 	delete(rt.watched, robotID)
 	if e, ok := rt.robots[robotID]; ok {
-		e.hist = nil
+		e.hist, e.explain = nil, Explanation{}
 	}
 }
 

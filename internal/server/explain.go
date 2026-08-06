@@ -89,6 +89,23 @@ type ConditionRow struct {
 type ShadowResult struct {
 	Robot int `json:"robot"`
 	Explanation
+
+	// SignalsAssumedAbsent is the one caveat of evaluating from outside a tick.
+	// A tick's signals are delivered into sim.World.Step and consumed inside
+	// it, so there is no inbox out here to evaluate against and the whole
+	// answer is computed as if no signal arrived — which is what happens on the
+	// overwhelming majority of ticks, signals being one-tick events.
+	//
+	// It is one flag on the whole result rather than a mark on the affected
+	// rows, because the rule verdicts are computed under the same assumption:
+	// flagging only the rows would leave the table saying "cannot know" beside
+	// a verdict that had already decided. Every row carries its catalogue
+	// group, so the client can qualify the communication group from this.
+	//
+	// The recorded trace has no such gap: it is taken inside Decide, where the
+	// inbox is right there. Always true here, and named rather than implied so
+	// a client cannot mistake the assumption for an observation.
+	SignalsAssumedAbsent bool `json:"signals_assumed_absent"`
 }
 
 func explanation(ex prog.Explanation) Explanation {
@@ -144,7 +161,7 @@ func (h *Robots) ShadowTest(matchID int64, robotID int, raw json.RawMessage) (Sh
 		}
 	}
 
-	out := ShadowResult{Robot: robotID}
+	out := ShadowResult{Robot: robotID, SignalsAssumedAbsent: true}
 	var fail error
 	// Read, not Apply: evaluating a draft is observation. A finished match is
 	// allowed — its world is frozen, which makes it a perfectly good thing to
@@ -167,25 +184,7 @@ func (h *Robots) ShadowTest(matchID int64, robotID int, raw json.RawMessage) (Sh
 	if fail != nil {
 		return ShadowResult{}, fail
 	}
-	markSignalsUnknown(&out.Explanation)
 	return out, nil
-}
-
-// markSignalsUnknown is the one honest caveat of a shadow evaluation. A tick's
-// signals are delivered into sim.World.Step and consumed inside it, so from out
-// here there is no inbox to evaluate against: every received_* predicate would
-// read false. False is a claim, and the wrong one — the robot may well be
-// hearing something on this very tick — so those rows are reported as unknown
-// and the truth table shows "·" for them.
-//
-// The recorded trace has no such gap: it is taken inside Decide, where the
-// inbox is right there.
-func markSignalsUnknown(ex *Explanation) {
-	for i := range ex.Conditions {
-		if ex.Conditions[i].Group == prog.GroupCommunication {
-			ex.Conditions[i].Unknown, ex.Conditions[i].True = true, false
-		}
-	}
 }
 
 func (h *Robots) handleShadow(w http.ResponseWriter, r *http.Request) {

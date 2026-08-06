@@ -450,4 +450,20 @@ func TestExplanationIsRecordedOnlyForWatchedRobots(t *testing.T) {
 	if _, ok := rt.Explanation(ignored.ID); ok {
 		t.Error("an unwatched robot recorded a condition table")
 	}
+
+	// A dropped watch takes the table with it. Otherwise a watch that was
+	// evicted and re-established would pair an empty history ring with a table
+	// dated before the gap, and the inspector would show the robot's mind as it
+	// was several seconds ago.
+	rt.drop(watched.ID)
+	rt.Watch(watched.ID, w.Tick)
+	if stale, ok := rt.Explanation(watched.ID); ok {
+		t.Errorf("a re-established watch served a table from tick %d before the robot decided again", stale.Tick)
+	}
+	for i := 0; i < 20; i++ {
+		w.Step()
+	}
+	if _, ok := rt.Explanation(watched.ID); !ok {
+		t.Error("a re-established watch never started recording again")
+	}
 }

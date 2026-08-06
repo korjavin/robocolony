@@ -58,12 +58,18 @@ func TestShadowTestAnswersWhichRuleWins(t *testing.T) {
 	}
 	assertTable(t, got.Explanation)
 
-	// The one caveat of evaluating from outside a tick: the signal inbox is
-	// consumed inside sim.World.Step, so the communication rows say "unknown"
-	// rather than a confident false.
+	// The one caveat of evaluating from outside a tick, stated on the result
+	// rather than left for the reader to infer: there is no signal inbox out
+	// here, so the whole answer assumes none arrived.
+	if !got.SignalsAssumedAbsent {
+		t.Error("a shadow test cannot observe the signal inbox and must say so")
+	}
+	if len(got.Conditions) == 0 {
+		t.Fatal("no condition rows to check the assumption against")
+	}
 	for _, row := range got.Conditions {
-		if row.Group == prog.GroupCommunication && !row.Unknown {
-			t.Errorf("communication row %s claims a truth value the shadow test cannot know", row.Pred)
+		if row.Group == prog.GroupCommunication && row.Unknown {
+			t.Errorf("row %s is marked unknown while the verdicts were decided from it", row.Pred)
 		}
 	}
 }
