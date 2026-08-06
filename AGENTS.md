@@ -75,7 +75,11 @@ incident behind every one — go there before you decide a rule is over-cautious
   it. Name where the player reaches it, or say in the PR body that UI is out of
   scope so a follow-up gets filed.
 - **Never edit an existing migration.** Add `NNN_next.sql`. Numbers must be
-  contiguous.
+  contiguous, and unique against `origin/master` **at merge time** — not just
+  against your own branch. Two branches can each be contiguous and still pick
+  the same number; git merges them cleanly because the filenames differ, and
+  goose then refuses the provider on master. Re-check `origin/master` before
+  merging, and renumber your file if it was taken while you were working.
 - **`CGO_ENABLED=0`** everywhere. Do not introduce `mattn/go-sqlite3`.
 - **Never `:latest` in a deployed compose.** CI rewrites the image tag to the
   commit SHA on the `deploy` branch; `master` carries `:latest` as a
