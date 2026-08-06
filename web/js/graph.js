@@ -15,8 +15,22 @@
 // them. The graph is built once and updated in place, and on the match page it
 // lives in the Colonies panel rather than in #inspector, which is cleared on
 // every tick.
+//
+// The colony dashboard (web/history.html) asks for three more: gridlines, the
+// y axis they are labelled by, and a legend that names the colours. They are
+// the *optional* half of the contract — the match view carries none of them and
+// draws the same graph without — so they are read through opt() rather than
+// $(). binding_test.go checks that every id this module looks up through $
+// exists on every page that loads it, which is the right rule for the required
+// half and would be the wrong one here.
+//
+// The y labels are HTML, not <text>: the svg is preserveAspectRatio="none", so
+// anything drawn inside it is stretched horizontally by whatever width the page
+// gives it, and stretched digits are unreadable. Lines survive that; glyphs do
+// not.
 
 const $ = (id) => document.getElementById(id);
+const opt = $; // the same lookup, a different contract: may be absent
 const setText = (n, s) => { if (n.textContent !== s) n.textContent = s; };
 
 export const SVGNS = "http://www.w3.org/2000/svg";
@@ -28,6 +42,12 @@ export const colonyVar = (id) => `--colony-${((id % 8) + 8) % 8}`;
 const GRAPH_MAX = 512;
 
 const METRICS = { score: "score", robots: "robots", collected: "parts collected" };
+
+// The drawing box, in viewBox units. The dashboard's y-axis column lines its
+// labels up against these, so pad is padding on the *value* axis: the top
+// gridline sits at pad from the top edge and the zero line at pad from the
+// bottom. web/history.html repeats the ratio in one CSS declaration and says so.
+const W = 600, H = 180, PAD = 6;
 
 let series = null;   // {interval, ticks, colonies:[{colony, score, robots, collected}]}
 let rate = 10;       // ticks per second, for mmss
@@ -74,29 +94,79 @@ export const mmss = (ticks) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
+// The y axis: four intervals of one step, drawn as gridlines in the svg and
+// labelled in HTML beside it. Both are optional (see the header), and both are
+// cleared rather than left stale when the series goes away.
+function drawAxis(top, step, y) {
+  const grid = opt("graph-grid"), labels = opt("graph-yaxis");
+  if (!grid && !labels) return;
+  const values = top ? [4, 3, 2, 1, 0].map((n) => n * step) : [];
+  if (grid) {
+    grid.replaceChildren(...values.map((v) => {
+      const l = document.createElementNS(SVGNS, "line");
+      l.setAttribute("x1", 0);
+      l.setAttribute("x2", W);
+      l.setAttribute("y1", y(v).toFixed(1));
+      l.setAttribute("y2", y(v).toFixed(1));
+      return l;
+    }));
+  }
+  if (labels) {
+    labels.replaceChildren(...values.map((v) => {
+      const d = document.createElement("div");
+      d.textContent = String(v);
+      return d;
+    }));
+  }
+}
+
+// The legend: which colour is whose. The graph already carries a <title> per
+// polyline, which is a tooltip nobody hovers — on a dashboard the mapping is
+// the first thing read, so it is on screen.
+function drawLegend() {
+  const box = opt("graph-legend");
+  if (!box) return;
+  box.replaceChildren(...(series?.colonies || []).map((c) => {
+    const s = document.createElement("span");
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = `var(${colonyVar(c.colony)})`;
+    s.append(sw, document.createTextNode(colonyName(c.colony)));
+    return s;
+  }));
+}
+
 export function drawGraph() {
   const lines = $("graph-lines");
   const note = $("graph-note");
   const metric = $("graph-metric").value;
   if (!series || series.ticks.length < 2) {
     lines.replaceChildren();
+    drawAxis(0, 0, () => 0);
+    drawLegend();
     setText(note, "Waiting for the first samples — one every "
       + `${mmss(series?.interval || 100)} of match time.`);
     return;
   }
 
-  const W = 600, H = 180, pad = 6;
   const t0 = series.ticks[0];
   const span = Math.max(1, series.ticks[series.ticks.length - 1] - t0);
   let peak = 0;
   for (const c of series.colonies) for (const v of c[metric]) peak = Math.max(peak, v);
-  const scale = peak || 1;
+  // Four intervals, and the top gridline is the peak itself: every series here
+  // counts things, so an integer step keeps the labels whole and the axis tight
+  // — a "round number" rule would put 512 robots on an axis to 800.
+  const step = Math.max(1, Math.ceil(peak / 4));
+  const top = step * 4;
+  const y = (v) => H - PAD - (v / top) * (H - 2 * PAD);
+  drawAxis(top, step, y);
+  drawLegend();
 
   lines.replaceChildren(...series.colonies.map((c) => {
     const p = document.createElementNS(SVGNS, "polyline");
     p.setAttribute("points", series.ticks.map((t, i) =>
       `${((t - t0) / span * W).toFixed(1)},`
-      + `${(H - pad - (c[metric][i] || 0) / scale * (H - 2 * pad)).toFixed(1)}`).join(" "));
+      + `${y(c[metric][i] || 0).toFixed(1)}`).join(" "));
     // var(), not a resolved colour: the same custom property the map and the
     // legend read, so a theme switch needs no redraw.
     p.style.stroke = `var(${colonyVar(c.colony)})`;

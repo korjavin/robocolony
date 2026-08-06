@@ -7,37 +7,85 @@
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  /* A finished match is a record, so this page is a list on the left and the
-     record you picked on the right — the same two-column contract as the
-     lobbies page, which is the page this one is the past tense of. */
+  /* The colony dashboard (design screen 1h). It is still the history page — the
+     nav is the shipped six items and this is what /history grew into, not a new
+     destination — so it is still the list of finished matches and still the door
+     into a replay. What changed is what it leads with: your numbers, from the
+     match you picked or from every match you have played.
+
+     The design's layout: charts on the left, the ranked lists and the match
+     picker in a fixed column on the right. */
   :root { --page: 84rem; }
-  .cols { display: grid; grid-template-columns: 24rem minmax(0, 1fr); gap: 0; align-items: start; }
-  .cols > .detail {
+  .head { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  .grow { flex: 1 1 auto; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) 24rem; gap: 0; align-items: start; }
+  .cols > .side {
     border-left: 1px solid var(--line-2); padding-left: 1.5rem; margin-left: 1.5rem;
   }
   @media (max-width: 68rem) {
     .cols { grid-template-columns: 1fr; }
-    .cols > .detail { border-left: 0; padding-left: 0; margin-left: 0; }
+    .cols > .side { border-left: 0; padding-left: 0; margin-left: 0; }
   }
   h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
        color: var(--fg-2); font-weight: 500; margin: 1.6rem 0 .5rem; }
 
-  ul { list-style: none; padding: 0; margin: 0; }
-  /* One button per match: focus, Enter and Space come free, and the whole row
-     is the target. Selected inverts, like the match view's roster. */
-  li > .pick {
-    display: block; width: 100%; text-align: left; font: inherit;
-    border: 1px solid var(--line-2); background: var(--bg-elev); color: inherit;
-    box-shadow: none; padding: .6rem .8rem; margin: .4rem 0;
+  /* The chart, its y axis and its legend. The axis labels are HTML because the
+     svg scales non-uniformly (graph.js says why), which means this block owns
+     lining them up: the column is the same height as the svg, and its padding
+     is the graph's own vertical pad — PAD/H = 6/180 of that height. Change one
+     and change the other. */
+  .chart { display: flex; gap: .5rem; align-items: stretch; }
+  .chart > .graph { flex: 1 1 0; min-width: 0; height: 14rem; }
+  #graph-yaxis {
+    flex: 0 0 3ch; height: 14rem; padding: .47rem 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    font-size: 11px; color: var(--fg-2); text-align: right;
+    font-variant-numeric: tabular-nums;
   }
-  li > .pick:hover { background: var(--bg-1); color: var(--fg-0); }
-  li > .pick[aria-pressed=true] { border-color: var(--line-1); box-shadow: var(--shadow-1); }
-  li > .pick .who { font-weight: 700; }
+  #graph-grid line { stroke: var(--line-2); vector-effect: non-scaling-stroke; }
+  #graph-legend { display: flex; flex-wrap: wrap; gap: .1rem 1.2rem;
+                  font-size: 12px; margin: .4rem 0 0 3.5ch; }
+  /* A legend for lines is a line, not a block: the swatch is the stroke. */
+  #graph-legend .swatch { width: 11px; height: 3px; vertical-align: middle;
+                          margin-right: .45rem; }
+
+  /* Kills and losses per minute: one column per bucket, kills stacked over
+     losses, filled the way the design fills them — kills solid, losses hollow,
+     because neither is a colony and colour belongs to colonies. */
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 9rem;
+          border: 1px solid var(--line-1); background: var(--bg-elev);
+          padding: 12px 14px; overflow-x: auto; }
+  .bars > * { flex: 1 1 0; min-width: 1rem; height: 100%;
+              display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+  /* The heights are a percentage of the column, written by the script; nothing
+     may shrink them back to fit. */
+  .bars .k, .bars .l { flex: 0 0 auto; }
+  .bars .k { background: var(--fg-0); }
+  .bars .l { background: var(--bg-2); border: 1px solid var(--line-1); }
+  .bars .t { text-align: center; font-size: 10px; color: var(--fg-2); }
+  .bars-key { display: flex; gap: 1.2rem; font-size: 12px; margin-top: .4rem; }
+  .bars-key .swatch { vertical-align: middle; margin-right: .45rem; }
+  .bars-key .k { background: var(--fg-0); }
+  .bars-key .l { background: var(--bg-2); border: 1px solid var(--line-1); }
+
   #standing { font-size: 13px; font-variant-numeric: tabular-nums; }
   #standing td.who { white-space: nowrap; }
   /* The winner is the row you came here to read. */
   #standing tr.win td { font-weight: 700; }
   #standing .badge { margin-left: .4rem; font-weight: 500; }
+
+  /* The match picker is the design's MATCH HISTORY table: the same rows that
+     answer "how did I do" are the rows you click to look. The lobby name is a
+     real button, so focus, Enter and Space come free. */
+  #matches td { cursor: pointer; }
+  #matches .pick {
+    font: inherit; border: 0; padding: 0; background: none; box-shadow: none;
+    color: inherit; text-align: left; text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  #matches tr.on td { background: var(--bg-2); }
+  #matches tr.on .pick { font-weight: 700; text-decoration: none; }
+  #matches td.first { font-weight: 700; }
 </style>
 </head>
 <body>
@@ -53,45 +101,83 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>History</h1>
-  <p class="tag">Every match that has finished, newest first &mdash; the final
-  standing, how the score got there, and the whole thing played back if this
-  build still simulates the way that one did.</p>
+  <div class="head">
+    <h1>History</h1>
+    <span class="grow"></span>
+    <!-- The range the four numbers above cover. The lists below it are always
+         every match: this is the picker as well as the record, and a filter
+         that hid matches would hide the way back into them. -->
+    <div class="seg" id="range" role="group" aria-label="Range">
+      <button type="button" data-range="match" aria-pressed="true">This match</button>
+      <button type="button" data-range="30d" aria-pressed="false">30 days</button>
+      <button type="button" data-range="all" aria-pressed="false">All time</button>
+    </div>
+  </div>
+  <p class="tag">Every match that has finished, newest first &mdash; your robots
+  and what happened to them, the final standing, and the whole thing played back
+  if this build still simulates the way that one did.</p>
 
   <p class="err" id="err"></p>
 
+  <div class="stat-grid" id="stats"></div>
+  <p class="meta" id="stats-note"></p>
+
   <div class="cols">
     <div>
-      <h2>Finished matches</h2>
-      <ul id="matches"></ul>
-    </div>
-
-    <div class="detail">
       <h2 id="detail-name">Pick a match</h2>
-      <p class="meta" id="detail-when">Its standing and its graph appear here.</p>
-
-      <div id="watch"></div>
-
-      <div class="tablewrap"><table id="standing"></table></div>
+      <p class="meta" id="detail-when">Its standing and its graphs appear here.</p>
 
       <!-- The same graph the match view draws, from the same module: score,
            robots or parts collected over the match, one polyline per colony,
-           coloured from --colony-N through var(). -->
-      <h3>Over time</h3>
+           coloured from --colony-N through var(). The dashboard adds the axis,
+           the gridlines and the legend, which graph.js draws when the page
+           carries them. -->
+      <h2>Robots over time &middot; per colony</h2>
       <div class="graph-head">
         <label for="graph-metric">Series</label>
         <select id="graph-metric">
+          <option value="robots" selected>Robots</option>
           <option value="score">Score</option>
-          <option value="robots">Robots</option>
           <option value="collected">Parts collected</option>
         </select>
+        <span class="grow"></span>
+        <span class="meta" id="graph-open"></span>
       </div>
-      <svg class="graph" id="graph" viewBox="0 0 600 180"
-           preserveAspectRatio="none" role="img"
-           aria-label="Colony series over the finished match">
-        <g id="graph-lines"></g>
-      </svg>
-      <p class="meta" id="graph-note">Pick a match to see how its score moved.</p>
+      <div class="chart">
+        <div id="graph-yaxis" aria-hidden="true"></div>
+        <svg class="graph" id="graph" viewBox="0 0 600 180"
+             preserveAspectRatio="none" role="img"
+             aria-label="Colony series over the finished match">
+          <g id="graph-grid"></g>
+          <g id="graph-lines"></g>
+        </svg>
+      </div>
+      <div id="graph-legend"></div>
+      <p class="meta" id="graph-note">Pick a match to see how its robots moved.</p>
+
+      <h2>Kills and losses &middot; per minute</h2>
+      <div class="bars" id="bars"></div>
+      <div class="bars-key">
+        <span><span class="swatch k"></span>Kills</span>
+        <span><span class="swatch l"></span>Losses</span>
+      </div>
+      <p class="meta" id="bars-note"></p>
+
+      <h2>Final standing</h2>
+      <div class="tablewrap"><table id="standing"></table></div>
+    </div>
+
+    <div class="side">
+      <div id="watch"></div>
+
+      <h2>What killed your robots</h2>
+      <div id="killedby"></div>
+      <p class="meta" id="killedby-note"></p>
+
+      <div class="rule-double"></div>
+
+      <h2>Match history</h2>
+      <div class="tablewrap"><table class="t" id="matches"></table></div>
     </div>
   </div>
 
