@@ -18,6 +18,13 @@
   :root { --page: none; }
   body.shell { grid-template-rows: 48px auto 1fr; }
 
+  /* Half of what this page shows is shown by clearing [hidden] on it, and most
+     of those boxes are given a display by a class — .badge, .btn, .overlay.col
+     — which beats the UA sheet's bare [hidden] on specificity. Said once here
+     rather than as a pinned exception per widget, which is the version that
+     rots the next time a card gains a layout. */
+  [hidden] { display: none !important; }
+
   /* The nav has to stay byte-identical across six files (web/nav_test.go), so
      the match's own identity — name, clock, connection — gets the band under
      it rather than a seventh nav variant. */
@@ -29,6 +36,9 @@
   .matchbar > * { flex-shrink: 0; }
   .matchbar h1 { font-size: 13px; font-weight: 400; color: var(--fg-2); letter-spacing: 0; }
   .grow { flex: 1 1 auto; }
+  /* The clock block, design 1a 75-77: the time left is the big number, and
+     everything else about where we are in the match is one line of meta beside
+     it rather than four competing figures. */
   .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   #tick { font-variant-numeric: tabular-nums; }
   /* Connection state is a badge like every other fact in the chrome. It keeps a
@@ -73,6 +83,21 @@
   }
   .field-bar > * { flex-shrink: 0; }
 
+  /* SIGHT and RADAR are real toggles (design 1a 192-193), and they live in this
+     bar rather than in the inspector: that panel is replaceChildren()-ed ten
+     times a second, and a button inside it would be detached mid-click. The
+     state is [aria-pressed] and only that, so what a screen reader announces
+     cannot drift from the box that is drawn. */
+  .field-bar .toggle {
+    font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 1px 7px; border: 1px dashed var(--line-2); color: var(--fg-2);
+    background: none; box-shadow: none; cursor: pointer;
+  }
+  .field-bar .toggle[aria-pressed="true"] {
+    border-style: solid; border-color: var(--line-1); color: var(--fg-0);
+  }
+  .field-bar .toggle:hover { background: var(--fg-0); color: var(--bg-0); }
+
   /* The canvas is sized by its own drawing surface and two clamps, and by
      nothing else. width/height stay auto, so the box starts at the baked
      pixels — that is "never upscale", for free — and max-width/max-height
@@ -108,6 +133,27 @@
   }
   .overlay.tl { top: 20px; left: 20px; }
   .overlay.bl { bottom: 20px; left: 20px; }
+  .overlay.tr { top: 20px; right: 20px; }
+  .overlay.br { bottom: 20px; right: 20px; }
+  /* The cards are read at a glance over a moving map, so they are one column of
+     short tabular lines and nothing else (design 1a 207-213, 1c 530-535). */
+  .overlay.col { display: flex; flex-direction: column; gap: 4px; }
+  .overlay.col > span { font-size: 11px; font-variant-numeric: tabular-nums; }
+  .overlay .sense { display: flex; align-items: center; gap: 7px; }
+  /* The two swatches are the marks the renderer draws, in the colour it draws
+     them: the wedge is a filled patch, the radar an unfilled dashed box. Both
+     take the selected robot's own --colony-N, written by match.js. */
+  .overlay .mark { width: 14px; height: 8px; flex: none; display: inline-block; }
+  .overlay .mark.cone { opacity: .5; }
+  .overlay .mark.ring { background: none; border: 1px dashed currentColor; }
+
+  /* The minimap is the whole arena at a glance, kept small enough that it is
+     read rather than played on. It is a second canvas: match.js blits the baked
+     terrain into it scaled and then draws one rect per robot and base, so a
+     frame allocates nothing (design 1a 215-226). */
+  #minimap { cursor: default; }
+  .overlay.tr { padding: 8px; }
+  .overlay.tr .label { display: block; font-size: 10px; margin-bottom: 6px; }
 
   /* Timeline. Live there is no scrubbing: the server keeps no per-tick history
      to seek into, so this says where in the match you are and nothing it cannot
@@ -115,8 +161,10 @@
      is on disk — so ?replay=1 adds the .replay row below. */
   .timeline { border-top: 1px solid var(--line-1); padding: 10px 14px 12px; }
   .timeline .head { display: flex; align-items: baseline; gap: 12px; }
+  /* The top margin is the chip's room: it floats above the head, outside the
+     track, and a smaller gap would put it through the row above. */
   .track {
-    position: relative; height: 26px; margin-top: 8px;
+    position: relative; height: 26px; margin-top: 28px;
     border: 1px solid var(--line-1); background: var(--bg-1);
   }
   /* position: relative is load-bearing. The head below is the fill's own right
@@ -130,47 +178,80 @@
     content: ""; position: absolute; top: -3px; bottom: -3px; right: -1px;
     width: 3px; background: var(--fg-0);
   }
+  /* The chip rides on the fill's right edge — the same element the head is
+     drawn from — so it cannot drift from the position it labels. It says NOW
+     live and TICK n in a replay, which is the one difference between the two
+     tenses of this bar (design 1a 252, 1c 560). */
+  .track > i > .now {
+    position: absolute; right: 0; top: -22px; transform: translateX(50%);
+    background: var(--fg-0); color: var(--bg-0); padding: 1px 6px;
+    font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* Where the live match has got to while you are behind it. Shown only when
+     the client actually knows that tick — see liveTick in match.js. */
+  .track > .live-mark {
+    position: absolute; top: 0; bottom: 0; width: 2px; background: var(--fg-3);
+  }
+  .track > .live-mark > span {
+    position: absolute; bottom: -19px; left: 0; transform: translateX(-50%);
+    font-size: 10px; color: var(--fg-2); white-space: nowrap;
+  }
   .ticks {
     display: flex; justify-content: space-between; margin-top: 6px;
     font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums;
   }
   /* Replay only, and shown by match.js. The range takes the width that is left
-     so the whole match is one drag. */
-  .replay { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+     so the whole match is one drag; the transport sits above it, because the
+     buttons and the speed are what you reach for between drags. */
+  .replay { display: grid; gap: 8px; margin-top: 10px; }
+  .replay .transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .replay .scrub { display: flex; align-items: center; gap: 10px; }
   .replay #rp-seek { flex: 1 1 auto; min-width: 0; }
   .replay #rp-at { font-variant-numeric: tabular-nums; }
-  .replay #rp-play { min-width: 5rem; }
-  .replay select { padding: .1rem .4rem; font-size: 12px; }
+  .replay #rp-play { min-width: 4rem; }
+  .replay .hint { font-size: 11px; color: var(--fg-2); }
 
   /* Roster --------------------------------------------------------------- */
 
   /* Rows are <button>s so focus, Enter and Space come for free. One line per
      robot, inverted when selected — the design's rule that the loudest thing
-     in a list is the thing you picked. */
+     in a list is the thing you picked.
+
+     The list is grouped by colony (design 86-96, 153-170): the swatch that used
+     to repeat on every row is said once, in a header that also carries the
+     colony's name, its robot count and the YOU tag on your own. */
   .roster { display: grid; align-content: start; }
+  .roster .group {
+    display: flex; align-items: center; gap: 8px; font-size: 12px;
+    padding: 10px 14px 6px;
+    border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line-2);
+  }
+  .roster .group:first-child { border-top: 0; }
+  .roster .group .name { font-weight: 700; letter-spacing: .06em;
+                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .roster .group .swatch { flex: none; width: 9px; height: 9px; margin: 0; }
   .roster .row {
-    display: grid; grid-template-columns: 9px 1fr auto; gap: 2px 8px;
-    align-items: baseline; width: 100%; text-align: left;
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     font: inherit; font-size: 12px;
     padding: 7px 14px; border: 0; border-bottom: 1px solid var(--line-3);
     background: none; color: inherit; box-shadow: none;
   }
   .roster .row:hover { background: var(--bg-2); color: var(--fg-0); }
   .roster .row.sel { background: var(--fg-0); color: var(--bg-0); }
-  .roster .row.sel .sub, .roster .row.sel .num { color: inherit; opacity: .85; }
-  .roster .swatch { width: 9px; height: 9px; display: block; align-self: center; }
-  .roster .row .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .roster .row .num { font-variant-numeric: tabular-nums; color: var(--fg-2); }
-  .roster .row .num.hurt { color: var(--warn); }
-  .roster .row .num.crit { color: var(--bad); }
-  .roster .row.sel .num.hurt, .roster .row.sel .num.crit { color: inherit; font-weight: 700; }
-  .roster .row .sub {
-    grid-column: 2 / 4; display: flex; gap: .5rem; justify-content: space-between;
-    font-size: 11px; color: var(--fg-2); min-width: 0;
+  .roster .row.sel .act, .roster .row.sel .num { color: inherit; }
+  /* The short id is the same name the arena draws in the robot: archetype
+     initial and number. A fixed column so a stack of them aligns. */
+  .roster .row .who { font-weight: 700; flex: none; min-width: 3.2rem; }
+  .roster .row .act {
+    flex: 1 1 0; min-width: 0; color: var(--fg-1);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .roster .row .act { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .roster .row .cargo:not(:empty)::before { content: "◆ "; }
-  .roster .row .cargo { white-space: nowrap; }
+  .roster .row .act.idle { font-style: italic; color: var(--fg-3); }
+  .roster .row .num { flex: none; font-variant-numeric: tabular-nums; }
+  .roster .row .num.hurt { color: var(--warn); font-weight: 700; }
+  .roster .row .num.crit { color: var(--bad); font-weight: 700; }
+  .roster .row.sel .num.hurt, .roster .row.sel .num.crit { color: inherit; font-weight: 700; }
 
   /* Inspector ------------------------------------------------------------ */
 
@@ -246,6 +327,21 @@
      is a worse trade than scrolling the last column into view. */
   #stats td.who { white-space: nowrap; }
 
+  /* Inspector header, design 261-266: swatch, the short id the arena draws in
+     the robot, the archetype, and the one fact that decides whether everything
+     under it is present tense or history. */
+  .idcard { display: flex; align-items: center; gap: 10px; margin: .2rem 0 .5rem; }
+  .idcard .swatch { width: 11px; height: 11px; margin: 0; flex: none; }
+  .idcard .id { font-size: 16px; font-weight: 700; }
+  .idcard .kind { font-size: 12px; color: var(--fg-2); min-width: 0;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .idcard .badge { margin-left: auto; flex: none; }
+  .idcard .badge.gone { color: var(--bad); border-color: currentColor; }
+  /* The number goes above the bar, not under it: the fraction is the fact and
+     the bar is the shape of it (design 269-277). */
+  .hp-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .hp-head .v { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
   .hp { height: 8px; border: 1px solid var(--line-1); background: var(--bg-1);
         overflow: hidden; margin: .3rem 0 .5rem; }
   .hp > i { display: block; height: 100%; background: var(--fg-0); }
@@ -271,8 +367,14 @@
   /* Recall and reprogramming (design §4.2). The controls themselves come from
      app.css, so they are the lobby page's controls: one visual language. */
   .cmd { display: grid; gap: .4rem; padding-top: .4rem; }
+  /* Two equal buttons side by side and one caption under them (design 321-328).
+     The program picker sits above the pair: it is what INSTALL acts on, and a
+     dialog to hold it would be a second interactive thing over a panel that is
+     rebuilt ten times a second. */
   .cmd .row { display: flex; gap: .4rem; }
-  .cmd .row select, .cmd .row button { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+  .cmd .row > * { flex: 1 1 0; min-width: 0; text-align: center; }
+  .cmd select { width: 100%; font-size: 12px; }
+  .cmd .caption { margin: 0; font-size: 11px; color: var(--fg-2); }
   .cmd .state { font-size: 12px; }
   .cmd .state.back { color: var(--warn); font-weight: 700; }
   .cmd .state.home { color: var(--ok); font-weight: 700; }
@@ -290,18 +392,23 @@
   .hist { border-left: 2px solid var(--line-2); padding: .1rem 0 .1rem .55rem; }
   .hist.idle { color: var(--fg-2); }
   .hist.acted { border-left-color: var(--fg-0); }
-  .hist .when { font-size: 10px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
-  .hist .head { display: flex; gap: .45rem; align-items: baseline; flex-wrap: wrap; }
-  .hist .idx { font-size: 12px; font-weight: 700; }
-  .hist .act { font-size: 11px; }
-  .hist .at { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
+  /* The tick range is right-aligned on the head row rather than stacked above
+     it (design 337-339): the rule and its action are what the eye runs down,
+     and when it happened is the column it checks against. */
+  .hist .head { display: flex; gap: .45rem; align-items: baseline; }
+  .hist .when { font-size: 10px; color: var(--fg-2); font-variant-numeric: tabular-nums;
+                margin-left: auto; flex: none; }
+  .hist .idx { font-size: 12px; font-weight: 700; flex: none; }
+  .hist .act { font-size: 11px; min-width: 0;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist .at { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-2); flex: none; }
   .hist .why { font-size: 11px; color: var(--fg-1); }
   .hist .also { font-size: 10px; color: var(--fg-2); }
-  /* Same name as app.css's 9px colour square, different thing — pin the box
-     back to a plain block row. rc-pt6.4 reconciles them. */
-  .hist .chip { font-size: 11px; display: block; width: auto; height: auto; }
-  .hist .chip.mem::before { content: "✎ "; }
-  .hist .chip.sig::before { content: "📡 "; }
+  /* Not .chip: app.css owns that name for the 9px colour square, and this is a
+     line of text. Renamed rather than pinned (was the rc-pt6.4 note here). */
+  .hist .evt { font-size: 11px; }
+  .hist .evt.mem::before { content: "✎ "; }
+  .hist .evt.sig::before { content: "📡 "; }
 
   /* Below three columns there is no instrument left to fill: the shell stops
      owning the viewport, every pane goes back to flowing in the document, and
@@ -338,13 +445,24 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
+  <!-- Design 1a 67-81 and 1c 509-518. The two badges are the facts that
+       identify *this* match rather than the match in general: which one it is,
+       and the seed its world was generated from — the number a player quotes
+       when the terrain is worth talking about. Both are filled from the init
+       frame, so neither exists before the stream says so. -->
   <div class="matchbar">
     <span class="label">Match</span>
     <h1 id="subtitle">Connecting to the world stream&hellip;</h1>
+    <span class="badge" id="match-no" hidden></span>
+    <span class="badge dashed" id="match-seed" hidden></span>
     <span class="err" id="err"></span>
     <span class="grow"></span>
+    <!-- Replay only, and shown by match.js: which tense this page is in, and
+         the way back to the running match when there is one. -->
+    <span class="badge dashed" id="replay-badge" hidden>&#9664;&#9664; Replay</span>
     <span class="clock" id="clock">--:--</span>
     <span class="meta" id="tick"></span>
+    <a class="btn sm primary" id="to-live" hidden href="/lobby">Jump to live &rarr;</a>
     <span class="conn" id="conn">connecting</span>
   </div>
 
@@ -362,16 +480,26 @@
         <div class="roster" id="roster"></div>
         <p class="meta" id="roster-empty" style="padding:10px 14px">No robots yet.</p>
       </div>
+      <!-- Design 177-180. FOLLOW is the POV bead's (rc-pt6.7); the arrow keys
+           are here because a list you can only click is a list you cannot walk
+           down while watching the map. -->
       <div class="pane-foot">
-        <span class="meta">Click a row &mdash; or the arena &mdash; to inspect a robot.</span>
+        <span class="kbd">&uarr;&darr;</span>
+        <span class="meta">Step robot &mdash; or click a row, or the arena</span>
       </div>
     </section>
 
     <section class="field">
+      <!-- The two toggles are outside #inspector for the reason the whole file
+           keeps repeating: that panel is replaceChildren()-ed ten times a
+           second. MAP/POV/SPLIT, FOLLOW and zoom belong to the POV bead
+           (rc-pt6.7) and are deliberately not stubbed here. -->
       <div class="field-bar">
         <span class="badge solid">Field</span>
-        <span class="badge dashed">Sight &mdash; 90&deg; wedge</span>
-        <span class="badge dashed">Radar &mdash; square reach, if fitted</span>
+        <button class="badge toggle" type="button" id="t-sight" aria-pressed="true"
+                title="The 90° forward wedge the selected robot can see (design §7.1)">Sight &#10003;</button>
+        <button class="badge toggle" type="button" id="t-radar" aria-pressed="true"
+                title="The square reach of the selected robot's radar, if it carries one (design §7.2)">Radar &#10003;</button>
         <span class="grow"></span>
         <span class="meta">Overlays are drawn for the selected robot only</span>
       </div>
@@ -379,13 +507,42 @@
       <div class="arena-wrap">
         <canvas id="arena" width="256" height="256"></canvas>
 
+        <!-- The selected robot, said over the map it is standing on (design
+             207-213). Text only and never interactive, so it is safe to rewrite
+             every frame — and match.js builds the nodes once and only sets
+             their text, so a frame allocates nothing for it. -->
+        <div class="overlay tl col" id="sel-card" hidden>
+          <span class="label" id="sel-who"></span>
+          <span id="sel-cell"></span>
+          <div class="rule-dashed"></div>
+          <span class="sense" id="sel-sight"><i class="mark cone"></i><span></span></span>
+          <span class="sense" id="sel-radar"><i class="mark ring"></i><span></span></span>
+        </div>
+
+        <!-- The whole arena at a glance (design 215-226). The terrain is the
+             baked offscreen canvas blitted down, so nothing is re-rasterised;
+             robots and bases are one fillRect each. There is no viewport rect
+             because there is no camera to draw one for — panning and zoom are
+             the POV bead's. -->
+        <div class="overlay tr" id="minimap-card" hidden>
+          <span class="label" id="minimap-label"></span>
+          <canvas id="minimap" width="0" height="0"></canvas>
+        </div>
+
+        <!-- Replay only (design 524-535): which robot's recent path is drawn
+             over the map, and how far back it goes. -->
+        <div class="overlay bl col" id="trails-card" hidden>
+          <span class="label" id="trails-label"></span>
+        </div>
+
         <!-- The legend is an overlay card rather than a block under the map:
              the field wants every pixel, and this is reference material you
-             open once. It is outside #inspector, which is cleared with
-             replaceChildren() every tick. The four lists below are filled once
-             from the init frame, and the marks are static except for the robot
-             body in each, which comes from the renderer's own shape table. -->
-        <details class="legend fold overlay tl" id="legend">
+             open once. Bottom right, out of the way of the three cards above,
+             and outside #inspector, which is cleared with replaceChildren()
+             every tick. The four lists below are filled once from the init
+             frame, and the marks are static except for the robot body in each,
+             which comes from the renderer's own shape table. -->
+        <details class="legend fold overlay br" id="legend">
           <summary>Legend</summary>
 
           <h4>Terrain</h4>
@@ -491,25 +648,40 @@
           <span class="label">Timeline</span>
           <span class="meta" id="timeline-note">the match runs whether or not anyone is watching</span>
         </div>
-        <div class="track"><i id="progress"></i></div>
+        <!-- The chip is a child of the fill, so it is carried by the same edge
+             the head is drawn from. The live mark is only ever shown when the
+             client has actually been told where the live match is. -->
+        <div class="track">
+          <i id="progress"><span class="now" id="now-chip">now</span></i>
+          <span class="live-mark" id="live-mark" hidden><span id="live-mark-label"></span></span>
+        </div>
         <div class="ticks"><span>start</span><span id="tick-mid">&nbsp;</span><span>end</span></div>
 
         <!-- Replay controls. Every one of them is a reconnect with new query
-             params (see match.js): pause closes the stream, play, scrub and
-             speed reopen it. -->
+             params (see match.js): pause closes the stream, play, scrub, skip
+             and speed reopen it. The speed set is the server's own clamp
+             (internal/server/replay.go: 0.25 to 16), so no button here can ask
+             for a rate that is silently rounded. -->
         <div class="replay" id="replay" hidden>
-          <button class="btn sm" type="button" id="rp-play">Pause</button>
-          <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"
-                 aria-label="Seek to a tick of the match">
-          <span class="meta" id="rp-at">0:00</span>
-          <label class="meta" for="rp-speed">Speed</label>
-          <select id="rp-speed" aria-label="Playback speed">
-            <option value="0.5">0.5&times;</option>
-            <option value="1" selected>1&times;</option>
-            <option value="2">2&times;</option>
-            <option value="4">4&times;</option>
-            <option value="8">8&times;</option>
-          </select>
+          <div class="transport">
+            <button class="btn sm" type="button" id="rp-back" title="Back ten seconds">&#9664;&#9664;</button>
+            <button class="btn sm" type="button" id="rp-play">Pause</button>
+            <button class="btn sm" type="button" id="rp-fwd" title="Forward ten seconds">&#9654;&#9654;</button>
+            <div class="seg" id="rp-speed" role="group" aria-label="Playback speed">
+              <button type="button" data-speed="0.25">0.25&times;</button>
+              <button type="button" data-speed="1" aria-pressed="true">1&times;</button>
+              <button type="button" data-speed="4">4&times;</button>
+              <button type="button" data-speed="16">16&times;</button>
+            </div>
+            <span class="grow"></span>
+            <span class="kbd">&larr;</span><span class="kbd">&rarr;</span>
+            <span class="hint">&plusmn; 1 tick</span>
+          </div>
+          <div class="scrub">
+            <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"
+                   aria-label="Seek to a tick of the match">
+            <span class="meta" id="rp-at">0:00</span>
+          </div>
         </div>
       </div>
     </section>
