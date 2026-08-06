@@ -831,7 +831,15 @@ function renderShadowPicker() {
   sel.value = want === "" || cands.some((b) => botKey(b) === want) ? want : botKey(cands[0]);
 }
 
+// Asks are serialised by sequence, exactly as validate() serialises its own:
+// switching robots while an answer is in flight, or editing during the first
+// one, would otherwise let the slower reply land last and put one robot's
+// verdicts on the cards under another robot's name. The server echoes the robot
+// back (ShadowResult.Robot) so the check does not rest on the counter alone.
+let shadowSeq = 0;
+
 async function runShadow() {
+  const seq = ++shadowSeq;
   shadow = null;
   shadowNote = "";
   const t = shadowTarget();
@@ -844,9 +852,12 @@ async function runShadow() {
     return;
   }
   try {
-    shadow = await api("POST", `/api/matches/${t.match}/robots/${t.id}/shadow`,
+    const res = await api("POST", `/api/matches/${t.match}/robots/${t.id}/shadow`,
       { program: current.program });
+    if (seq !== shadowSeq || !res || res.robot !== t.id) return;
+    shadow = res;
   } catch (e) {
+    if (seq !== shadowSeq) return;
     // 422: the draft does not fit that robot's blueprint, which is the same
     // refusal an install would give. 404: the robot has been destroyed since
     // the picker was built.
