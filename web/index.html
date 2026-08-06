@@ -17,10 +17,10 @@
      only colour on the page, which is the rule the whole design turns on. */
   :root { --page: 84rem; }
   .first {
-    display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 0; align-items: stretch; margin: 0 0 2.5rem;
     border: 1px solid var(--line-1); box-shadow: var(--shadow-2);
-    background: var(--bg-elev);
+    background: var(--bg-0);
   }
   .first > .say {
     padding: 2rem 2.2rem; border-right: 1px solid var(--line-1);
@@ -50,7 +50,15 @@
   ol.steps span { font-size: 12px; color: var(--fg-2); }
 
   .alpha { border: 1px solid var(--line-2); padding: .5rem .8rem; font-size: 12px; color: var(--fg-1); }
-  .cta { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: auto; }
+  /* The one thing a first-time reader needs before the buttons: they do not
+     have to write anything to press either of them. It sits directly above the
+     CTAs, and it is the only place on the page that says it. */
+  .truth {
+    margin-top: auto; border: 1px solid var(--line-1); background: var(--bg-1);
+    padding: .6rem .9rem;
+  }
+  .truth p { margin: .3rem 0 0; font-size: 12px; color: var(--fg-1); }
+  .cta { display: flex; gap: .6rem; flex-wrap: wrap; }
 
   /* The frame fills its half and the two cards float on it, because that is
      how the match view reads too: paper laid over the field. */
@@ -71,25 +79,32 @@
     background: var(--bg-elev); border: 1px solid var(--line-1);
     box-shadow: var(--shadow-1); padding: .7rem .9rem; font-size: 12px;
   }
-  .over.tr { top: 1.25rem; left: auto; max-width: 18rem; }
+  .over.t { top: 1.25rem; }
   .over.b { bottom: 1.25rem; }
   .over h3 {
     font-size: 10px; margin: 0 0 .4rem; text-transform: uppercase;
     letter-spacing: .06em; color: var(--fg-2); font-weight: 500;
   }
-  .over dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: .1rem .6rem; }
-  .over dt { color: var(--fg-2); }
-  .over dd { margin: 0; }
   .over p { margin: 0; color: var(--fg-1); }
-  .rule { border-left: 3px solid var(--fg-0); padding-left: .5rem; margin: 0 0 .6rem; }
-  .rule .idx { font-weight: 700; }
-  .rule .act { font-size: 11px; }
+
+  /* The swatches are the two marks the renderer actually makes (match.js
+     drawVision / drawRadar): the wedge is a colony-tinted fill, radar the same
+     colour as a dashed outline. Same custom properties, so they re-theme with
+     the frame above them. */
+  .legend {
+    list-style: none; margin: .5rem 0 0; padding: .45rem 0 0;
+    border-top: 1px dashed var(--line-2);
+    display: flex; flex-direction: column; gap: .25rem; font-size: 11px;
+  }
+  .legend li { display: flex; align-items: center; gap: .45rem; }
+  .legend .sw { width: 16px; height: 9px; flex: none; }
+  .legend .sight { background: var(--colony-0); opacity: .35; border: 1px dashed var(--colony-0); }
+  .legend .radar { border: 1px dashed var(--colony-0); }
   @media (max-width: 48rem) {
     /* At phone width the cards would cover the frame they annotate, so they
        stop floating and stack under it. */
     figure.frame { min-height: 0; }
     .over { position: static; margin: 0; border-top: 0; }
-    .over.tr { max-width: none; }
   }
 
   ul { padding-left: 1.2rem; }
@@ -113,7 +128,7 @@
   <section class="first">
     <div class="say">
       <div>
-        <div class="label">Step 1 of 3 &mdash; what you do</div>
+        <div class="label">Step 1 of 3 &middot; what you do</div>
         <h1>You are not the commander.</h1>
       </div>
       <p class="tag">You design the robots and write the rules they follow. Then
@@ -139,8 +154,15 @@
       balance still moves. A restart resumes the matches that were running; a
       deploy that changes the simulation ends them instead.</p>
 
+      <div class="truth">
+        <div class="label">You do not have to write anything yet</div>
+        <p>A colony that has approved nothing opens with the built-in starter
+        kit. It is unarmed, and against the aggressive AI it usually dies
+        &mdash; which is the moment to open the editor.</p>
+      </div>
+
       <div class="cta">
-        <a class="btn primary" href="/lobby">Start a match &rarr;</a>
+        <a class="btn primary" href="/lobby">Start with the starter kit &rarr;</a>
         <a class="btn" href="/editor">Open the editor first</a>
       </div>
     </div>
@@ -170,46 +192,30 @@
         <g class="bot" transform="translate(301 91) rotate(180) scale(6)"><path class="hull" d="M-.22-.9L.22-.9L.22-1.8L-.22-1.8Z" fill="var(--kind-weapon)"/><path class="hull" d="M0-1.25L.9-.5L.9.9L-.9.9L-.9-.5Z" fill="var(--colony-0)"/></g><text x="301" y="91">H</text><rect x="294" y="96" width="14" height="2" fill="#0006"/><rect x="294" y="96" width="13.5" height="2" fill="#c98a00"/>
       </svg>
 
-      <!-- The inspector, as the match page renders it for the robot you have
-           selected: the rule that took the tick, then what the robot is. It
-           floats on the frame here for the same reason it does there. -->
-      <div class="over tr">
-        <h3>Active rule</h3>
-        <div class="rule">
-          <div class="idx">rule 3</div>
-          <div class="act">pick_up_component</div>
-          <div>Pick up component</div>
-          <div class="meta">decided on tick 398, 2 ticks ago</div>
-        </div>
-        <h3>Loadout</h3>
-        <dl>
-          <dt>Blueprint</dt><dd>scavenger</dd>
-          <dt>Parts</dt><dd>tracks, medium armor, manipulator, parts radar</dd>
-          <dt>Program</dt><dd>default scavenger</dd>
-          <dt>Cargo</dt><dd>laser</dd>
-          <dt>Health</dt><dd>106 / 120</dd>
-        </dl>
+      <!-- The one rule the whole game turns on, annotating the frame that shows
+           it: a robot acts on what it perceived, and nothing else. The two marks
+           in the picture get named here, in the colours the renderer draws them
+           in. -->
+      <div class="over t">
+        <h3>Two senses, drawn differently</h3>
+        <p>A robot sees 90&deg; and six cells in front of its nose, and nothing
+        else. Radar, if you paid the mass for it, answers in every direction. If
+        it did not perceive a thing, no rule of yours can react to it.</p>
+        <ul class="legend">
+          <li><span class="sw sight"></span>Sight &middot; 90&deg; &times; 6 cells &middot; forward only</li>
+          <li><span class="sw radar"></span>Radar &middot; 16&ndash;28 cells &middot; omnidirectional</li>
+        </ul>
       </div>
 
       <figcaption class="over b">
         <h3>One real frame &mdash; seed 55, tick 400</h3>
-        <p>The hulls are robots, drawn as what they are built from: the shape is
-        the chassis they run on, a barrel past the nose means a weapon, the nose
-        is the way they face, and the letter is their blueprint's initial. The
-        tinted wedge is everything the selected robot can see, diamonds are
-        components lying on the ground, and <strong>B</strong> is a base. Blue
-        has just picked up a laser it cannot fire and is carrying it home for the
-        base to build with; four cells from that base, another of its scavengers
-        is down to 50 health with an orange gunner in the next cell &mdash; and
-        nobody is going to tell either of them what to do about it.</p>
+        <p>This scavenger has picked up a laser it cannot fire, and is carrying
+        it home for the base to build with. Four cells from that base, one of its
+        own is at 50 health with a gunner in the next cell &mdash; and nobody is
+        going to tell either of them what to do about it.</p>
       </figcaption>
     </figure>
   </section>
-
-  <p class="alpha" style="margin-bottom:2rem">You do not have to write anything
-  yet. A colony that has approved nothing opens with the built-in starter kit. It
-  is unarmed, and against the aggressive AI it usually dies &mdash; which is the
-  moment to open the editor.</p>
 
   <h2>What you actually do</h2>
 
@@ -267,11 +273,6 @@
     and the rule that made this tick's decision &mdash; and, on your own robots,
     to recall one or install a different program mid-match.</li>
   </ol>
-
-  <p>You do not have to write anything to play that first match: a colony that
-  approves none of its own designs opens with a built-in starter kit. The kit is
-  unarmed, and against the aggressive profile it usually dies &mdash; which is
-  the moment to open the editor.</p>
 
   <h2>Where things are</h2>
 
