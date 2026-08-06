@@ -1857,8 +1857,12 @@ function whenList(when, ex) {
   for (const item of whenLeaves(when)) {
     if (item.op) { row.append(el("span", "op", item.op.toUpperCase())); continue; }
     const c = truth.get(`${item.pred}#${item.arg}`);
-    // No row, or a row nothing was asked of: neither ✓ nor ✗ is honest.
-    const val = c && !c.unknown && !c.impossible ? (item.negate ? !c.true : c.true) : null;
+    // Only "nothing was asked" is dotless. A row the hardware makes impossible
+    // still has a truth value — false — and it is a perfectly good reason for a
+    // rule to have matched: "not weapon_ready" holds on an unarmed robot, and
+    // drawing it as a dot would contradict the rule that won on it. The truth
+    // table greys that row on its own; this list answers the rule.
+    const val = c && !c.unknown ? (item.negate ? !c.true : c.true) : null;
     const leaf = el("span", val === true ? null : "no");
     leaf.append(el("span", null, `${val === null ? "·" : val ? "✓" : "✗"} `),
       el("code", null, (item.negate ? "not " : "") + condText(item)));
