@@ -37,6 +37,12 @@ type Settings struct {
 	// default, for the same replay reason as StartingBudget.
 	BarrierDensity float64 `json:"barrier_density,omitempty"`
 
+	// Arena is the size preset the host picked, one of arenaPresets. Empty means
+	// "unset" and arenaSize() supplies M — settings rows written before this
+	// field existed decode that way and must still rebuild a 64x64 world, or
+	// every persisted match replays into a different arena (persist.go).
+	Arena string `json:"arena,omitempty"`
+
 	// AI is the computer colonies seated alongside the players (design §12 P2),
 	// one entry per colony, in the order they take their bases after the human
 	// seats. It lives in the settings rather than in lobby_members because a
@@ -70,17 +76,39 @@ const (
 	// budget a host would play, so it bounds nothing but the abuse.
 	startingBudgetLimit = 10_000_000
 
-	// The arena is fixed for the POC: design §2.3 has no size setting, and
-	// generation needs room for maxPlayers bases (Generate caps colonies at
-	// width*height/16).
-	arenaWidth, arenaHeight = 64, 64
-
 	// The floor is 0.01 rather than 0 so that zero keeps meaning "unset"
 	// (barriers reads it as the default). The ceiling is a maze that is still
 	// playable: about 58% of the arena non-open.
 	minBarrierDensity, maxBarrierDensity = 0.01, 0.15
 	defaultBarrierDensity                = 0.08
 )
+
+// arenaPresets are the arena sizes a host may pick, square. Presets rather than
+// a free width×height: a numeric pair is a validation surface and a
+// denial-of-service knob for no gameplay gain.
+//
+// The floor clears every downstream constraint: Generate caps colonies at
+// width*height/16, so the smallest preset still seats 64 colonies against a
+// maxPlayers of 8.
+//
+// Never resize a preset without bumping the replay fingerprint (persist.go): a
+// settings row records the preset by *name*, so a retune silently resizes the
+// world every in-flight match created on that preset replays into. The
+// fingerprint mini-match runs on the default and would not notice.
+var arenaPresets = map[string]int{"XS": 32, "S": 48, "M": 64, "L": 96, "XL": 128}
+
+// defaultArena is what an unset Arena resolves to, and the only size this game
+// had before the setting existed.
+const defaultArena = "M"
+
+// arenaSize is the side of the arena this match generates. An unrecognised name
+// cannot reach here — Validate rejects it — so the fallback only serves "".
+func (s Settings) arenaSize() int {
+	if n, ok := arenaPresets[s.Arena]; ok {
+		return n
+	}
+	return arenaPresets[defaultArena]
+}
 
 // DefaultSettings is what the lobby form starts from.
 func DefaultSettings() Settings {
@@ -89,6 +117,7 @@ func DefaultSettings() Settings {
 		Richness:    0.02,
 		SpawnPerMin: 6,
 		MaxPlayers:  4,
+		Arena:       defaultArena,
 
 		StartingBudget: defaultStartingBudget(),
 		BarrierDensity: defaultBarrierDensity,
@@ -145,6 +174,10 @@ func (s Settings) Validate() error {
 		// and past 0.15 the arena stops being a place two colonies can fight
 		// over. repairPockets guarantees reachability, not a game.
 		return fmt.Errorf("barrier_density must be %g..%g, got %g", minBarrierDensity, maxBarrierDensity, s.BarrierDensity)
+	case s.Arena != "" && arenaPresets[s.Arena] == 0:
+		// Empty alone is exempt: it means "unset", and arenaSize() reads it as
+		// the default.
+		return fmt.Errorf("arena must be empty or one of XS, S, M, L, XL, got %q", s.Arena)
 	case s.MaxPlayers < minPlayers || s.MaxPlayers > maxPlayers:
 		return fmt.Errorf("max_players must be %d..%d, got %d", minPlayers, maxPlayers, s.MaxPlayers)
 	case s.MaxPlayers+len(s.AI) > maxPlayers:
@@ -164,8 +197,8 @@ func (s Settings) Validate() error {
 // GenOpts is the arena generation slice of the settings (E1.1).
 func (s Settings) GenOpts(colonies int) sim.GenOpts {
 	return sim.GenOpts{
-		Width:          arenaWidth,
-		Height:         arenaHeight,
+		Width:          s.arenaSize(),
+		Height:         s.arenaSize(),
 		Colonies:       colonies,
 		BarrierDensity: s.barriers(),
 		Richness:       s.Richness,

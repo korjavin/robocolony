@@ -97,6 +97,24 @@ func liveMatch(t *testing.T, svc *Service, lobby db.Lobby, set Settings, members
 	return m
 }
 
+// TestStoredSettingsWithoutArenaStay64: a lobby row written before the arena
+// setting existed has no "arena" key, and Restore rebuilds its match from that
+// JSON. If the missing key stopped meaning 64x64 every stored match would
+// replay into a different world, and its recorded commands into a world where
+// they never made sense.
+func TestStoredSettingsWithoutArenaStay64(t *testing.T) {
+	set, err := decodeSettings(`{"duration_sec":600,"richness":0.02,"spawn_per_min":6,"max_players":4,"seed":23}`)
+	if err != nil {
+		t.Fatalf("decodeSettings() = %v", err)
+	}
+	if set.Arena != "" {
+		t.Fatalf("Arena = %q, want empty: the fixture has no arena key", set.Arena)
+	}
+	if opts := set.GenOpts(2); opts.Width != 64 || opts.Height != 64 {
+		t.Fatalf("GenOpts() = %dx%d, want 64x64", opts.Width, opts.Height)
+	}
+}
+
 // TestReplayPreservesStateHash is the acceptance test for this bead: a match
 // run some ticks in, persisted, and rebuilt from what reached the disk is the
 // same world, down to the state hash the E1.1 determinism guard uses.

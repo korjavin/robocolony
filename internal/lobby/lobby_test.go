@@ -267,6 +267,13 @@ func TestSettingsValidation(t *testing.T) {
 		// Zero is the one exception: it is what a settings row written before
 		// the setting existed decodes to, and budget() reads it as the default.
 		{"budget unset", bad(func(s *Settings) { s.StartingBudget = 0 }), true},
+		{"arena smallest", bad(func(s *Settings) { s.Arena = "XS" }), true},
+		{"arena largest", bad(func(s *Settings) { s.Arena = "XL" }), true},
+		{"arena unknown", bad(func(s *Settings) { s.Arena = "huge" }), false},
+		{"arena wrong case", bad(func(s *Settings) { s.Arena = "xl" }), false},
+		// Same exception as the budget: empty is what a settings row written
+		// before the setting existed decodes to, and arenaSize() reads it as M.
+		{"arena unset", bad(func(s *Settings) { s.Arena = "" }), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
