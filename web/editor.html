@@ -7,65 +7,123 @@
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  /* Priority is the whole language, so priority is the whole layout: the rule
-     list is one vertical column down the middle, wide enough to read a rule as
-     a sentence, with the parts catalogue on one side and what the server thinks
-     of the program on the other. */
-  :root { --page: 96rem; }
-  /* Prose keeps a reading measure even when the instrument around it does not. */
-  .tag { max-width: 78ch; }
-  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-       color: var(--fg-2); font-weight: 500; margin: 1.4rem 0 .5rem; }
-  .cols {
-    display: grid; grid-template-columns: 20rem minmax(0, 1fr) 23rem;
-    gap: 0; align-items: start;
+  /* The editor is an instrument, not a document: it takes the viewport, and the
+     three panes scroll, not the page. Priority is the whole language, so
+     priority is the whole layout — one vertical rule list down the middle, the
+     catalogue you drag from on one side, and what the server thinks of the
+     program on the other. */
+  :root { --page: none; }
+  [hidden] { display: none !important; }
+
+  main { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+
+  /* App bar: which program, on which robot, in which view. */
+  .appbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
+    padding: 0 16px; height: 44px; border-bottom: 1px solid var(--line-1);
+    overflow-x: auto; white-space: nowrap;
   }
-  .cols > * { padding: 0 1.25rem; min-width: 0; }
-  .cols > .rail { border-right: 1px solid var(--line-2); }
-  .cols > .checks { border-left: 1px solid var(--line-2); }
-  /* The side columns follow the rule list down a long program rather than
-     scrolling out of reach of the rule they are about. */
-  @media (min-width: 76rem) {
-    .cols > .rail, .cols > .checks { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; }
+  .appbar > * { flex-shrink: 0; }
+  .appbar .grow { flex: 1 1 auto; }
+  .appbar select, .appbar input[type=text] { font-size: 12px; padding: .15rem .4rem; }
+  .appbar .err { min-height: 0; font-size: 12px; font-weight: 400; white-space: normal; }
+
+  /* Two views of one program. The toggle is a segmented control: one border,
+     one divider, the live half inverted. */
+  .toggle { display: flex; border: 1px solid var(--line-1); }
+  .toggle button {
+    border: 0; box-shadow: none; padding: 3px 12px; font-size: 12px;
+    color: var(--fg-1); background: var(--bg-0);
   }
+  .toggle button + button { border-left: 1px solid var(--line-1); }
+  .toggle button[aria-pressed="true"] { background: var(--fg-0); color: var(--bg-0); font-weight: 700; }
+
+  .panes { display: grid; grid-template-columns: 20rem minmax(0, 1fr) 23rem; min-height: 0; }
+  .panes > * { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .rail { border-right: 1px solid var(--line-1); }
+  .side { border-left: 1px solid var(--line-1); }
+  .scroll { flex: 1 1 0; overflow-y: auto; min-height: 0; }
+  .panehead {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 16px; border-bottom: 1px solid var(--line-2); background: var(--bg-0);
+  }
+  .panehead .grow { flex: 1 1 auto; }
+  .blk { padding: 10px 14px; border-bottom: 1px solid var(--line-2); }
+  .mid { background: var(--bg-1); }
+  .mid > .scroll { padding: 12px 16px; }
+
+  /* Below the split there is no instrument left to fill: the shell stops owning
+     the viewport, every pane goes back to flowing in the document, and the whole
+     thing scrolls as one page. Anything sized against a pane height — the panes'
+     flex bodies, the catalogue — has to be released with it, or it collapses to
+     nothing inside an auto-height parent. */
   @media (max-width: 76rem) {
-    .cols { grid-template-columns: 1fr; }
-    .cols > .rail, .cols > .checks { border: 0; border-top: 1px solid var(--line-2); padding-top: 1rem; }
+    body.shell { height: auto; overflow: visible; display: block; }
+    nav.site { height: auto; flex-wrap: wrap; padding: .5rem 1rem; }
+    main { display: block; overflow: visible; }
+    /* Stacked, the rule list is the page: the catalogue and the checks follow
+       it rather than burying it under forty draggable rows. */
+    .panes { display: flex; flex-direction: column; }
+    .panes > * { display: block; overflow: visible; }
+    #cardsview, #codeview { order: 1; }
+    .side { order: 2; }
+    .rail { order: 3; }
+    .appbar { height: auto; flex-wrap: wrap; white-space: normal; padding: .5rem 1rem; }
+    .rail, .side { border: 0; border-top: 1px solid var(--line-1); }
+    .scroll, .cat { overflow: visible; flex: none; }
   }
-  input[type=number] { width: 4.5rem; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  .lib li {
-    border: 1px solid var(--line-2); background: var(--bg-elev);
-    padding: .4rem .6rem; margin: .35rem 0; cursor: pointer; font-size: 12px;
-  }
-  .lib li:hover { background: var(--bg-2); }
-  .lib li.on { border-color: var(--line-1); box-shadow: var(--shadow-1); font-weight: 700; }
+
+  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+       color: var(--fg-2); font-weight: 500; margin: 0 0 .4rem; }
   /* Denser than the shared .meta: this page says it after nearly every control. */
   .meta { font-size: 11px; color: var(--fg-2); font-weight: 400; }
-  .bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  .bar { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+  .bar button { font-size: 11px; padding: .15rem .45rem; }
+  input[type=number] { width: 4.5rem; }
+  select, input[type=text] { max-width: 100%; }
+  #filter, #blueprint, #templates { width: 100%; }
 
-  /* A rule card is a number and a sentence, and the number is the loudest
-     thing on it: the order of these cards *is* the program. */
+  /* Catalogue. Every row is draggable — dropping it on a rule adds it there,
+     dropping it at the end of the list starts a new rule. */
+  .cat { flex: 1 1 0; overflow-y: auto; padding-bottom: 1rem; }
+  .cat .label { display: block; padding: 12px 0 5px; }
+  .chip {
+    border: 1px solid var(--line-2); background: var(--bg-elev);
+    padding: .25rem .5rem; margin: .15rem 0; font-size: 12px; cursor: grab;
+    display: flex; gap: .5rem; align-items: baseline;
+  }
+  .chip:hover { background: var(--bg-2); }
+  .chip:active { cursor: grabbing; }
+  .chip .id { font-size: 11px; }
+  /* Hardware this blueprint does not carry: still draggable, because testing a
+     sensor you do not have is legal, just pointless. */
+  .chip.unmet { border-style: dashed; color: var(--fg-3); background: none; }
+
+  /* A rule card is a number, a sentence and a verdict. The number is the
+     loudest thing on it: the order of these cards *is* the program. */
   .rule {
     border: 1px solid var(--line-2); background: var(--bg-elev);
-    padding: 0 .8rem .7rem; margin: .5rem 0;
+    margin: 0 0 .5rem; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto;
   }
-  .rule > header {
-    display: flex; gap: .5rem; align-items: center;
-    margin: 0 -.8rem .2rem; padding: .35rem .8rem;
-    border-bottom: 1px solid var(--line-3); background: var(--bg-1);
+  .rule > .gutter {
+    border-right: 1px solid var(--line-2); display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-start; gap: 3px; padding: .5rem 0;
   }
-  /* The badges the dry run adds ("never fired") sit at the far end, where a
-     verdict belongs, rather than crowding the controls. */
-  .rule > header > .badge { margin-left: auto; }
-  .prio {
-    font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
-    min-width: 1.6rem; text-align: center; line-height: 1.4;
-    background: var(--fg-0); color: var(--bg-0);
+  .rule > .body { padding: .45rem .7rem .6rem; min-width: 0; }
+  .rule > .verdict {
+    padding: .5rem .7rem; display: flex; flex-direction: column; gap: 4px;
+    align-items: flex-end; font-size: 11px; color: var(--fg-2);
   }
-  .rule > header button { padding: 0 .4rem; font-size: 11px; box-shadow: none; }
-  .kw { font-size: 10px; letter-spacing: .1em; color: var(--fg-2); margin: .5rem 0 .2rem; }
+  /* The rule the dry run says takes the ticks is the one to read first. */
+  .rule.wins { border-color: var(--line-1); box-shadow: var(--shadow-1); }
+  .rule.wins > .gutter { background: var(--fg-0); color: var(--bg-0); border-right-color: var(--line-1); }
+  .rule.dead > .body { opacity: .75; }
+  .prio { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .rule .ctl { display: flex; gap: .2rem; }
+  .rule .ctl button { padding: 0 .3rem; font-size: 11px; box-shadow: none; border-color: var(--line-2); }
+  .kw { font-size: 10px; letter-spacing: .1em; color: var(--fg-2); margin: .35rem 0 .1rem; }
   .row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .2rem 0; }
+  .row select { font-size: 12px; padding: .1rem .35rem; }
 
   /* Explicit nesting: every AND/OR/NOT group is a labelled box, so precedence
      is read off the indentation and never guessed (design §10.10). */
@@ -83,7 +141,6 @@
   }
   .group.not > .row > .glabel { color: #c0392b; font-weight: 700; }
   .group > .kids { padding-left: 1rem; }
-  .group > .kids > * { position: relative; }
   .glabel { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-2); }
   /* Inline help, served from the prog catalogue row. flex-basis pushes it onto
      its own line inside the .row flexbox without a second wrapper element. */
@@ -99,15 +156,12 @@
   .issue.error { border-left-color: var(--bad); font-weight: 700; }
   .issue.warning { border-left-color: var(--warn); }
   .issue.note { color: var(--fg-2); }
-  .chip {
-    border: 1px solid var(--line-2); background: var(--bg-elev);
-    padding: 0 .2rem 0 .55rem; margin: .1rem;
-    display: inline-flex; gap: .2rem; align-items: center; font-size: 12px;
-  }
+  .side .issue { margin: 0; padding: .5rem .9rem; border-bottom: 1px solid var(--line-3); border-left-width: 3px; }
+
   /* Import is a file input wearing its own label as the button, so the
      browser's "no file chosen" text stays out of the toolbar. The input is
      hidden but still focusable, and the label shows where the focus is. */
-  .filebtn { padding: .3rem .75rem; border: 1px solid var(--line-1); background: var(--bg-0); cursor: pointer; }
+  .filebtn { padding: .15rem .45rem; font-size: 11px; border: 1px solid var(--line-1); background: var(--bg-0); cursor: pointer; }
   .filebtn:hover { background: var(--fg-0); color: var(--bg-0); }
   .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .filebtn:focus-within { outline: 2px solid var(--fg-0); outline-offset: 1px; }
@@ -116,26 +170,58 @@
      server-side; designing the robot itself lives on /blueprints. */
   .stats { display: flex; flex-wrap: wrap; gap: .1rem .9rem; margin: .3rem 0; }
   .stat { font-size: 11px; color: var(--fg-2); display: inline-flex; gap: .25rem; align-items: baseline; }
-  .stat b { font-size: 15px; color: var(--fg-0); font-variant-numeric: tabular-nums; }
+  .stat b { font-size: 14px; color: var(--fg-0); font-variant-numeric: tabular-nums; }
 
-  /* Dry-run report and the per-rule mark that makes it actionable. */
-  .report {
-    border: 1px solid var(--line-1); background: var(--bg-elev);
-    box-shadow: var(--shadow-1); padding: .6rem .8rem; margin: .6rem 0; font-size: 12px;
-  }
-  .report > div { margin: .15rem 0; font-variant-numeric: tabular-nums; }
-  .badge.never { background: var(--fg-0); color: var(--bg-0); font-weight: 700; }
+  /* Dry-run report: the numbers as a grid, then the share of decisions each
+     rule took, because "which rule is actually running this robot" is the
+     question the report exists to answer. */
+  .figs { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px;
+          font-size: 12px; font-variant-numeric: tabular-nums; }
+  .figs > .k { color: var(--fg-2); }
+  .share { display: flex; align-items: center; gap: 8px; font-size: 11px;
+           font-variant-numeric: tabular-nums; margin: 3px 0; }
+  .share .n { width: 1.4rem; font-weight: 700; }
+  .share .track { flex: 1 1 0; height: 9px; border: 1px solid var(--line-1); background: var(--bg-1); }
+  .share .fill { height: 100%; background: var(--fg-0); }
+  .share .pct { width: 2.4rem; text-align: right; }
+  .share.zero { color: var(--fg-2); }
+  .share.zero .track { border-color: var(--line-2); }
 
-  /* Drag-and-drop reordering. The insertion slot is drawn as a bar on the edge
-     the rule would land on, so where the drop goes is never a guess. */
-  .handle { cursor: grab; color: var(--fg-3); font-size: 1.1rem; padding: 0 .1rem; user-select: none; }
+  /* Drag and drop. The insertion slot is drawn as a bar on the edge the rule
+     would land on, so where the drop goes is never a guess. */
+  .handle { cursor: grab; color: var(--fg-3); font-size: 1.1rem; user-select: none; }
   .handle:active { cursor: grabbing; }
   .rule.dragging { opacity: .4; }
   .rule.over-above { box-shadow: 0 -4px 0 -1px var(--fg-0); }
   .rule.over-below { box-shadow: 0 4px 0 -1px var(--fg-0); }
+  .rule.over-into { outline: 2px dashed var(--fg-0); outline-offset: -2px; }
+  #droprow {
+    border: 1px dashed var(--line-2); padding: .5rem .7rem; font-size: 12px;
+    color: var(--fg-3); display: flex; gap: .6rem; align-items: center;
+  }
+  #droprow.over-into { border-color: var(--fg-0); color: var(--fg-0); }
+
+  /* Code view. Same program, same checks, same verdicts — one row per line,
+     line number and gutter mark in their own columns. */
+  .code { font-size: 13px; line-height: 1.85; padding: 12px 0; }
+  .code .cl { display: grid; grid-template-columns: 3.2rem 3.6rem minmax(0, 1fr); cursor: default; }
+  .code .cl.pick { cursor: pointer; }
+  .code .cl.pick:hover, .code .cl.on { background: var(--bg-2); }
+  .code .no { text-align: right; padding-right: .8rem; color: var(--fg-3);
+              font-variant-numeric: tabular-nums; border-right: 1px solid var(--line-2); }
+  .code .mk { text-align: right; padding-right: .8rem; font-size: 11px; color: var(--fg-2);
+              border-right: 1px solid var(--line-2); }
+  .code .mk.fired { color: var(--fg-0); font-weight: 700; }
+  .code .tx { padding: 0 1rem; white-space: pre-wrap; }
+  .statusbar {
+    border-top: 1px solid var(--line-1); background: var(--bg-0);
+    padding: 7px 16px; display: flex; gap: 16px; align-items: center;
+    font-size: 11px; color: var(--fg-2);
+  }
+  .legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
 </style>
 </head>
-<body>
+<body class="shell">
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby">Lobbies</a>
@@ -148,74 +234,130 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>Program editor</h1>
-  <p class="tag">You write the rules, not the moves. Rules are checked top to
-  bottom every tick, and the first one that matches decides what the robot does.
-  <br>Actions come in two kinds. A <strong>primary</strong> action — moving,
-  navigating, picking up, attacking — is the robot's move for that tick and
-  <strong>ends the tick</strong>: no further rule is checked. The seven
-  <strong>side effects</strong> (five memory writes and two broadcasts) cost no
-  time: they run and checking <strong>continues</strong> down the list, so a rule
-  can remember something and a lower rule still gets to act on the same tick.
-  What was remembered can be read from the next tick onwards.
-  <br><a href="/help" target="_blank">New here? Read the rule language guide</a>
-  &mdash; what a robot can see, why rule order is the program, and what the
-  warnings mean, with diagrams.</p>
-
-  <p class="err" id="err"></p>
-
-  <div class="cols">
-    <div class="rail">
-      <h2>Library</h2>
-      <ul class="lib" id="library"></ul>
-      <div class="bar">
-        <button id="new">New</button>
-        <select id="templates"><option value="">Start from a template…</option></select>
+  <main>
+    <div class="appbar">
+      <span class="label">PROGRAMS &rarr;</span>
+      <select id="library" title="open a saved program"></select>
+      <input type="text" id="name" maxlength="64" placeholder="program name" size="22"
+             title="the program's name — this is what a robot is given in a match">
+      <span class="badge dashed" id="ruleinfo">0 rules</span>
+      <span class="err" id="err"></span>
+      <span class="meta" id="status"></span>
+      <span class="grow"></span>
+      <div class="toggle" role="group" aria-label="View">
+        <button id="v-cards" aria-pressed="true" title="edit the rules as cards">CARDS</button>
+        <button id="v-code" aria-pressed="false" title="read the whole program as text">CODE</button>
       </div>
-
-      <h2>Blueprint</h2>
-      <p class="meta">Programs are checked against the robot they will run on:
-      no radar, no radar actions.</p>
-      <select id="blueprint"></select>
-      <div class="meta" id="bpmeta"></div>
-      <p class="meta">Designing the robot itself is its own page: the parts, the
-      two meters and what they cost you are on the <a href="/blueprints">blueprint
-      configurator</a>.</p>
+      <button id="tryit" title="run this program for a few hundred ticks in a practice arena">DRY RUN</button>
+      <button id="save" class="btn sm primary">SAVE</button>
     </div>
 
-    <div>
-      <fieldset>
-        <legend>Program</legend>
-        <div class="bar">
-          <input type="text" id="name" maxlength="64" placeholder="program name" size="28">
-          <button id="save">Save</button>
-          <button id="dup">Save as copy</button>
-          <button id="del">Delete</button>
-          <button id="tryit" title="run this program for a few hundred ticks in a practice arena">Try it</button>
-          <button id="export" title="download this program as a JSON file you can keep, post or share">Export</button>
-          <label class="filebtn" title="load a program from a JSON file — it is checked against the selected blueprint before it can be saved">Import<input type="file" id="import" accept="application/json,.json"></label>
-          <span class="meta" id="status"></span>
+    <div class="panes">
+      <aside class="rail">
+        <div class="blk">
+          <h2>Program</h2>
+          <div class="bar">
+            <button id="new">New</button>
+            <button id="dup">Save as copy</button>
+            <button id="del">Delete</button>
+            <button id="export" title="download this program as a JSON file you can keep, post or share">Export</button>
+            <label class="filebtn" title="load a program from a JSON file — it is checked against the selected blueprint before it can be saved">Import<input type="file" id="import" accept="application/json,.json"></label>
+          </div>
+          <select id="templates" style="margin-top:.4rem"><option value="">Start from a template&hellip;</option></select>
         </div>
-      </fieldset>
 
-      <!-- Nothing but the rules, in priority order, down the middle of the
-           page. Everything the server has to say about them is one column
-           over, where it can be read against the rule it is about instead of
-           pushing the list off the screen. -->
-      <div id="rules"></div>
-      <button id="addrule">Add rule</button>
-    </div>
+        <div class="blk">
+          <h2>Blueprint</h2>
+          <select id="blueprint"></select>
+          <div class="meta" id="bpmeta"></div>
+          <p class="meta" style="margin:.4rem 0 0">Programs are checked against the
+          robot they will run on: no radar, no radar actions. Designing the robot
+          is its own page: the <a href="/blueprints">blueprint configurator</a>.</p>
+        </div>
 
-    <div class="checks">
-      <h2>Checks</h2>
-      <div id="issues"></div>
-      <h2>Dry run</h2>
-      <p class="meta">Run the program for a few hundred ticks in a practice
-      arena before anything carries it into a match. A rule that never fired is
-      marked on the card itself.</p>
-      <div id="dryrun"></div>
+        <!-- The catalogue is the parts bin: drag a row onto a rule to add it
+             there, or onto the end of the list to start a new rule. -->
+        <div class="blk cat">
+          <h2>Catalogue</h2>
+          <input type="text" id="filter" placeholder="filter conditions and actions&hellip;">
+          <div id="catalogue"></div>
+          <p class="meta" style="border-top:1px dashed var(--line-2);padding-top:.5rem;margin-top:.7rem">
+          Greyed rows need hardware this blueprint does not carry. They stay
+          draggable &mdash; testing a sensor you do not have is legal, just
+          pointless.</p>
+        </div>
+      </aside>
+
+      <!-- Nothing but the rules, in priority order, down the middle. Everything
+           the server has to say about them is one column over, where it can be
+           read against the rule it is about instead of pushing the list off the
+           screen. -->
+      <section class="mid" id="cardsview">
+        <header class="panehead">
+          <span class="label">Rules &middot; <span id="rulecount">0</span></span>
+          <span class="meta">Evaluated top to bottom &middot; first match takes the tick</span>
+          <span class="grow"></span>
+          <a href="/help" target="_blank" class="meta">Rule language guide &nearr;</a>
+        </header>
+        <div class="scroll">
+          <div id="rules"></div>
+          <div id="droprow"><button id="addrule">Add rule</button><span>or drop a condition here</span></div>
+        </div>
+      </section>
+
+      <aside class="side" id="checksview">
+        <header class="panehead">
+          <span class="label">Checks</span>
+          <span class="grow"></span>
+          <span id="counts"></span>
+        </header>
+        <div class="scroll">
+          <div id="issues"></div>
+          <div class="blk">
+            <h2>Dry run</h2>
+            <p class="meta">A few hundred ticks in a practice arena before
+            anything carries this into a match. A rule that never fired is marked
+            on its own card.</p>
+            <div id="dryrun"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Same program, same checks, same verdicts. The text is written from the
+           rules, never parsed back: toggling views cannot rewrite the file. -->
+      <section class="mid" id="codeview" hidden>
+        <div class="scroll"><div class="code" id="code"></div></div>
+        <footer class="statusbar">
+          <span id="codestatus"></span>
+          <span class="grow" style="flex:1 1 auto"></span>
+          <span>Read-only &mdash; the cards are the editor</span>
+        </footer>
+      </section>
+
+      <aside class="side" id="codeside" hidden>
+        <div class="blk">
+          <h2>Gutter</h2>
+          <div class="legend">
+            <span>&#10003;</span><span>fired in the last dry run</span>
+            <span>&#10007;</span><span>never fired: an earlier rule took every tick it wanted</span>
+            <span>!</span><span>a check has something to say about this rule</span>
+            <span>&middot;</span><span>no dry run yet</span>
+          </div>
+        </div>
+        <div class="blk">
+          <h2>Selection</h2>
+          <div id="codedoc" class="meta">Pick a line to read what it means.</div>
+        </div>
+        <div class="blk">
+          <h2>Nothing matched</h2>
+          <p class="meta">There is no <code>otherwise</code>: a robot whose rules
+          all miss stands still for the tick. The last rule is your fallback, so
+          give it a condition that is always true &mdash; standing still is how
+          colonies lose.</p>
+        </div>
+      </aside>
     </div>
-  </div>
+  </main>
 
 <script type="module" src="/js/editor.js"></script>
 </body>
