@@ -1359,8 +1359,14 @@ function rosterRow(r) {
   const who = el("span", "who", shortID(r));
   const act = el("span", "act");
   const hp = el("span", "num");
-  node.append(who, act, hp);
+  const mark = el("span", "evg quiet", "·");
+  node.append(who, act, hp, mark);
   node.addEventListener("click", () => { selected = r.id; render(); });
+
+  // What the glyph column is currently saying, so it is only written when the
+  // answer changes: this runs for every robot ten times a second.
+  let markEv;
+  let markState = "";
 
   const update = (cur) => {
     // One health number, not a fraction: the row is scanned, and hurt and
@@ -1382,6 +1388,23 @@ function rosterRow(r) {
     let why = cur.recalled ? "recalled" : (t && t.reason) || "";
     if (cur.cargo) why = why ? `${why} · carrying ${compName(cur.cargo)}` : `carrying ${compName(cur.cargo)}`;
     if (node.title !== why) node.title = why;
+
+    // The last notable thing that happened to this robot, design 99-151. ✗ is
+    // not among them: a destroyed robot has no row to put it on. ! is the stall
+    // the trace is reporting *now* rather than a feed entry — the feed's idle
+    // event is a base that cannot build, which is a fact about the colony.
+    const ev = lastEventOf.get(cur.id);
+    const fresh = !!ev && Number(snap.tick) - Number(ev.tick)
+      <= EVENT_RECENT_SECS * (init?.tick_rate || 10);
+    const state = (t && !t.action && t.rule < 0) ? "!" : fresh ? "ev" : "·";
+    if (ev !== markEv || state !== markState) {
+      markEv = ev;
+      markState = state;
+      const g = state === "ev" ? (EVENT_GLYPH[ev.kind] || "·") : state;
+      setText(mark, g);
+      mark.className = g === "·" ? "evg quiet" : "evg";
+      mark.title = state === "!" ? "no rule matched — idle" : state === "ev" ? eventText(ev) : "";
+    }
 
     const on = cur.id === selected;
     if (node.classList.contains("sel") !== on) {
@@ -1921,6 +1944,10 @@ function renderClock() {
   }
   const gone = Math.floor(Number(snap.tick) / rate);
   setText($("tick-mid"), `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`);
+  // The marks belong to this bar and are positioned as a fraction of the same
+  // end tick, so they are placed from here rather than from a second reader of
+  // it. Live that is the whole of the feed on screen; a replay also has the log.
+  renderEvents(end);
   if (replay) renderSeek(end);
 }
 
@@ -1953,6 +1980,267 @@ for (const d of document.querySelectorAll("details.fold")) {
 // Unfolding the trace panel starts the poll again now rather than up to half a
 // second from now: the panel is opened to answer a question about this tick.
 $("p-history").addEventListener("toggle", () => { if (!over) pollHistory(); });
+
+// ------------------------------------------------------------- event feed
+//
+// The match's own event feed (internal/lobby/events.go): a robot lost, built, a
+// component banked, a base stalled. It arrives buffered on the init frame and
+// grows a few entries at a time on the tick frames — a tick with nothing to
+// report carries no events key at all. A replay re-derives the same feed by
+// re-running the match, so everything below renders both tenses through one
+// path rather than a live one and a replay one.
+//
+// Three things read it: the marks on the timeline track, the replay's event
+// log, and the last-event glyph on each roster row. None of them rebuilds per
+// frame. The feed only ever grows, so the marks and the log append the tail
+// they have not drawn yet; a reconnect or a seek replaces the whole feed and
+// bumps feedEpoch, which is what tells them to start over.
+
+// eventCap in internal/lobby/events.go: a match keeps its last 400 events and
+// drops the rest. A long one's feed therefore does not reach back to tick 0,
+// and a list that quietly started in the middle would read as a whole history —
+// so the number is here to say when it does not.
+const EVENT_CAP = 400;
+
+// The four kinds of internal/sim/events.go, in the glyphs the design draws them
+// as (1a 233-248). A kind this table has never heard of gets the quiet dot: an
+// unlabelled mark is better than a wrong one.
+const EVENT_GLYPH = { loss: "✗", build: "▮", deposit: "◆", idle: "!" };
+
+// How long a roster row keeps showing what last happened to that robot. Long
+// enough to catch the deposit you just watched, short enough that the column is
+// not a permanent decoration.
+const EVENT_RECENT_SECS = 30;
+
+let feed = [];                 // the whole feed this client holds, oldest first
+let feedDropped = false;       // it does not reach back to the start of the match
+let feedEpoch = 0;             // bumped when the feed is replaced, not appended
+const lastEventOf = new Map(); // robot id -> its newest event
+
+function feedReset(list) {
+  feed = Array.isArray(list) ? list.slice() : [];
+  // A full ring on arrival means the server has already dropped what came
+  // before it. Nothing here can recover those, so the UI says so instead.
+  feedDropped = feed.length >= EVENT_CAP;
+  lastEventOf.clear();
+  feedEpoch++;
+  for (const e of feed) if (e.robot) lastEventOf.set(e.robot, e);
+}
+
+function feedAdd(list) {
+  if (!Array.isArray(list) || list.length === 0) return;
+  for (const e of list) {
+    feed.push(e);
+    if (e.robot) lastEventOf.set(e.robot, e);
+  }
+  // Bounded like the server's ring, and deliberately not in step with it. A
+  // client watching from the start has *seen* the events the server has since
+  // dropped, and showing them is not a lie — feedDropped is a statement about
+  // this list, so it stays false for as long as this list does reach back to
+  // the start, whatever the server is still holding. What is not acceptable is
+  // growing without bound: a long match would put a mark on the track for every
+  // event of it. Trimmed in blocks rather than one at a time because dropping
+  // the head invalidates the appended-so-far state of the marks and the log, so
+  // each trim costs a rebuild; a block of 200 makes that rare.
+  if (feed.length > EVENT_CAP + 200) {
+    feed = feed.slice(-EVENT_CAP);
+    feedDropped = true;
+    feedEpoch++;
+  }
+}
+
+const blueprintName = (colony, id) =>
+  blueprintsOf(colony).find((b) => b.id === id)?.name || "";
+
+// What an event's subject is called, built the way shortID builds the roster's
+// name: the initial of the blueprint's name — which is Robot.archetype on the
+// wire (internal/server/dto.go) — and the id. So the log, the roster and the
+// arena call the same robot the same thing, including after it is destroyed and
+// no snapshot names it any more.
+function eventWho(e) {
+  const name = blueprintName(e.colony, e.blueprint) || "?";
+  return `${name.charAt(0).toUpperCase()}-${String(e.robot).padStart(2, "0")}`;
+}
+
+// One event in a sentence. Only from what is on the wire: the deposit event
+// does not carry which component was banked and the loss event does not carry
+// the attacker's design, so neither is named here. An invented detail in a log
+// is worse than a short line.
+function eventText(e) {
+  switch (e.kind) {
+    case "loss":
+      return e.attacker
+        ? `${eventWho(e)} destroyed by #${e.attacker.robot} · ${colonyName(e.attacker.colony)}`
+        : `${eventWho(e)} destroyed`;
+    case "build":
+      return `Base built ${blueprintName(e.colony, e.blueprint) || "a robot"} — ${eventWho(e)}`;
+    case "deposit":
+      return `${eventWho(e)} banked a component at base`;
+    case "idle":
+      return "Base stalled — nothing approved is covered by the stock";
+    default:
+      return `${colonyName(e.colony)}: ${e.kind}`;
+  }
+}
+
+// The frame an event is watched on, which is not the tick it is stamped with.
+// An event is stamped with the tick it happened *during*, and the snapshot that
+// shows the result is the next one — which is also the first frame to carry it
+// (takeEvents, internal/server/stream.go). So a seek aimed at an event goes one
+// tick past its stamp: landing on the stamp itself rebuilds a world in which it
+// has not happened yet, and a feed that does not contain it.
+const eventFrame = (e) => Number(e.tick) + 1;
+
+// The marks on the timeline track (design 1a 236-248, 1c 553-566). One per
+// event, placed by the tick it happened on, built once and then only appended
+// to: this runs on the same path as the progress bar, ten times a second, and
+// nothing on that path may allocate a few hundred nodes.
+//
+// `end` is the match length a position is a fraction of. It is fixed for a
+// match, so a mark never moves once it is placed — and if it ever did change,
+// the whole strip is rebuilt rather than left lying about where it is.
+let marksEpoch = -1;
+let marksEnd = 0;
+let marksAt = 0;
+
+function renderMarks(end) {
+  const host = $("track-marks");
+  if (marksEpoch !== feedEpoch || marksEnd !== end) {
+    marksEpoch = feedEpoch;
+    marksEnd = end;
+    marksAt = 0;
+    host.replaceChildren();
+  }
+  $("events-dropped").hidden = !feedDropped;
+  if (end <= 0) return;
+  for (; marksAt < feed.length; marksAt++) {
+    const e = feed[marksAt];
+    const mark = el("i", "ev");
+    mark.style.left = `${Math.min(100, Number(e.tick) / end * 100).toFixed(3)}%`;
+    mark.title = `${mmss(Number(e.tick))} · ${eventText(e)}`;
+    mark.append(el("b", null, EVENT_GLYPH[e.kind] || "·"));
+    host.append(mark);
+  }
+}
+
+// The replay's event log (design 1c 576-616). Rows are <button>s: a click seeks
+// the replay to that event's tick through reopen(), which is the same reconnect
+// every other replay control goes through. Appended like the marks are, and
+// rebuilt only when the feed is replaced or the filter changes — never per
+// frame. The one thing that moves per frame is which row is inverted.
+let logEpoch = -1;
+let logAt = 0;      // feed entries already considered for a row
+let logMine = null; // the colony the list was last filtered to, or null for all
+let logRows = [];   // {tick, node}, in list order
+let logCur = null;  // the inverted row
+
+// MY COLONY ONLY. Remembered like the folds are, so the choice is made once
+// rather than on every visit.
+let mineOnly = store.get("rc.match.events.mine") === "1";
+
+function logRow(e) {
+  const row = el("button", "row");
+  row.type = "button";
+  // var(--colony-N) rather than a resolved colour: rows outlive a theme switch.
+  const sw = el("span", "swatch");
+  sw.style.background = `var(${colonyVar(e.colony)})`;
+  sw.title = colonyName(e.colony);
+  row.append(el("span", "when", mmss(Number(e.tick))), sw,
+    el("span", "g", EVENT_GLYPH[e.kind] || "·"), el("span", "what", eventText(e)));
+  row.title = `Seek the replay to tick ${eventFrame(e)}`;
+  row.addEventListener("click", () => reopen(eventFrame(e)));
+  return row;
+}
+
+function renderEventLog() {
+  const mine = mineOnly ? myColony() : null;
+  const host = $("event-log");
+  if (logEpoch !== feedEpoch || logMine !== mine) {
+    logEpoch = feedEpoch;
+    logMine = mine;
+    logAt = 0;
+    logRows = [];
+    logCur = null;
+    host.replaceChildren();
+  }
+  for (; logAt < feed.length; logAt++) {
+    const e = feed[logAt];
+    if (mine !== null && e.colony !== mine) continue;
+    const node = logRow(e);
+    logRows.push({ tick: Number(e.tick), node });
+    host.append(node);
+  }
+
+  const note = $("event-note");
+  if (logRows.length === 0) {
+    setText(note, mine !== null ? "Nothing has happened to your colony yet." : "No events yet.");
+  } else if (feedDropped) {
+    // Never a silent truncation: the list is the last 400 of a longer match.
+    setText(note, `The feed keeps the last ${EVENT_CAP} events — the earliest ones are gone.`);
+  }
+  note.hidden = logRows.length > 0 && !feedDropped;
+
+  // The entry at the current tick, inverted (design 604-609): the newest one at
+  // or before where the replay is standing. A walk rather than a search — a few
+  // hundred comparisons and no allocation — and only the class moves per frame.
+  const cur = at();
+  let hit = null;
+  for (const r of logRows) {
+    if (r.tick > cur) break;
+    hit = r.node;
+  }
+  if (hit !== logCur) {
+    logCur?.classList.remove("cur");
+    hit?.classList.add("cur");
+    // Once per change, not per frame: doing it every frame fights the scrollbar.
+    hit?.scrollIntoView({ block: "nearest" });
+    logCur = hit;
+  }
+}
+
+// The toggle reads its own label out of the markup and puts the tick or the
+// cross back, like the sense toggles do. It is hidden for an observer with no
+// colony of their own, because "mine" is not a question they can ask — and the
+// remembered choice is left alone rather than cleared: /api/me lands a moment
+// after the first frame, and a player's saved preference must survive it.
+// renderEventLog resolves the filter to "no filter" for that stretch by asking
+// myColony() the same way.
+function syncMineToggle() {
+  const btn = $("ev-mine");
+  const can = myColony() !== null;
+  btn.hidden = !can;
+  btn.setAttribute("aria-pressed", mineOnly ? "true" : "false");
+  setText(btn, `${btn.textContent.trim().replace(/\s*[✓✗]$/, "")} ${mineOnly ? "✓" : "✗"}`);
+}
+
+function renderEvents(end) {
+  renderMarks(end);
+  if (!replay) return;
+  syncMineToggle();
+  renderEventLog();
+}
+
+// ⇧←, design 551: jump back to the last thing that actually happened. Over the
+// list the log is showing, so MY COLONY ONLY is one question and not two — and
+// like every other replay control it is one reconnect.
+//
+// There is deliberately no ⇧→. A replay is rebuilt up to the tick it is
+// standing on and streams the feed forward from there, so the client holds the
+// events of the match *so far* and no others: an event ahead of the playhead is
+// not something this page knows about yet, and a key that silently does nothing
+// is worse than a key that is not offered. Putting the finished match's whole
+// feed on the replay init frame is what would make a forward jump real — and
+// would fill the marks in ahead of the head too — and that is a change to
+// internal/server/replay.go rather than to this file.
+function prevEvent() {
+  const mine = mineOnly ? myColony() : null;
+  const list = mine === null ? feed : feed.filter((e) => e.colony === mine);
+  const cur = at();
+  // Against the frame each event is watched on, not its stamp — otherwise
+  // standing on an event's own frame finds that same event and goes nowhere.
+  const target = list.findLast((e) => eventFrame(e) < cur);
+  if (target) reopen(eventFrame(target));
+}
 
 // -------------------------------------------------------------- field bar
 //
@@ -2005,12 +2293,21 @@ setMode(store.get("rc.match.mode"));
 // -------------------------------------------------------------- keyboard
 //
 // ↑/↓ walk the roster in the order it is drawn (design 177-180); ←/→ step a
-// replay one tick (design 550). Both are ignored while a form control has the
-// focus — the program picker is a <select>, and stealing its arrow keys would
-// make it unusable — and while a modifier is down, which is the browser's.
+// replay one tick (design 550) and ⇧←/⇧→ jump between events (design 551). All
+// of them are ignored while a form control has the focus — the program picker
+// is a <select>, and stealing its arrow keys would make it unusable — and while
+// a modifier the browser owns is down.
 document.addEventListener("keydown", (ev) => {
-  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+  if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
   if (ev.target instanceof Element && ev.target.closest("input, select, textarea")) return;
+
+  if (replay && ev.shiftKey && ev.key === "ArrowLeft") {
+    ev.preventDefault();
+    prevEvent();
+    return;
+  }
+  // Shift is the browser's everywhere else on this page.
+  if (ev.shiftKey) return;
 
   if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
     if (rosterOrder.length === 0) return;
@@ -2117,6 +2414,11 @@ function connect() {
     $("match-seed").hidden = false;
     document.title = `${init.name} — robocolony`;
     styles.clear(); // silhouettes are resolved against this catalogue, not the last one
+    // The init frame carries the feed so far — buffered for a client that
+    // reloaded mid-match or joined late, and re-derived up to the seek target in
+    // a replay. Either way it replaces what this page was holding: it is the
+    // whole of the feed as the server has it, not a continuation of ours.
+    feedReset(init.events);
     bakeTerrain();
     buildLegend();
     // The server's series is authoritative and covers the whole match, so a
@@ -2127,6 +2429,9 @@ function connect() {
 
   source.addEventListener("tick", (ev) => {
     snap = JSON.parse(ev.data);
+    // The entries this frame is the first to carry, if any: the key is absent
+    // on a tick where nothing happened, which is most of them.
+    feedAdd(snap.events);
     if (replay) {
       from = Number(snap.tick);
       // One frame per tick, in order, so this is the whole of the trail: a seek
@@ -2280,6 +2585,15 @@ if (replay) {
   $("replay").hidden = false;
   $("replay-badge").hidden = false;
   setText($("timeline-note"), "a finished match, replayed from its command log");
+  // The event log is a replay panel: its rows seek, and live there is nothing
+  // behind the head to seek to.
+  $("p-events").hidden = false;
+  $("ev-mine").addEventListener("click", () => {
+    mineOnly = !mineOnly;
+    store.set("rc.match.events.mine", mineOnly ? "1" : "0");
+    syncMineToggle();
+    renderEventLog();
+  });
   probeLive();
   $("rp-play").addEventListener("click", () => {
     if (source) pause(); else reopen(Number($("rp-seek").value));
