@@ -210,7 +210,8 @@
         <div class="label" style="margin-bottom: 8px">Seat an AI colony</div>
         <div class="ai" id="ai"></div>
         <p class="meta" style="margin-top: 6px">Click the chosen rung again to seat
-        no AI at all.</p>
+        no AI at all. An AI colony takes one of the eight, so eight seats leaves
+        it none.</p>
       </div>
 
       <div class="grow"></div>
@@ -220,6 +221,11 @@
         <div class="checklist" id="field"></div>
       </div>
       <button class="btn primary" type="submit">Create and start</button>
+      <!-- The other half of the page: a lobby that sits in OPEN above until a
+           human walks into it. Create-and-start is the one-click path to a
+           match, but it is the creator alone against the AI, and without this
+           button nothing on the page can fill the list it advertises. -->
+      <button class="btn ghost" type="button" id="create-open">Create and wait for players</button>
     </form>
   </main>
 
@@ -727,33 +733,39 @@ async function start(id) {
 // leaves the lobby standing and open in the list below, which is exactly what
 // the old two-step flow left behind — so a failure is a slower path to the same
 // place, never a lost lobby.
-$("create").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
+async function create(andStart) {
   err("");
-  const f = new FormData(ev.target);
+  const form = $("create");
+  if (form.reportValidity && !form.reportValidity()) return;
+  const f = new FormData(form);
   const num = (k) => Number(f.get(k));
+  const settings = {
+    duration_sec: Number($("duration").value),
+    max_players: Number($("seats").value),
+    richness: num("richness"),
+    barrier_density: num("barrier_density"),
+    spawn_per_min: num("spawn_per_min"),
+    starting_budget: num("starting_budget"),
+    arena: f.get("arena"),
+  };
+  // The AI seat rides in the create request rather than following it. The
+  // server caps colonies, not humans — eight seats plus one AI is nine and is
+  // refused — and a PUT afterwards would fail *after* the lobby existed,
+  // leaving one nobody asked for on the board with the error beside it.
+  if (seatedAI) settings.ai = [seatedAI];
   let lobby;
   try {
-    lobby = await api("POST", "/api/lobbies", {
-      name: f.get("name"),
-      settings: {
-        duration_sec: Number($("duration").value),
-        max_players: Number($("seats").value),
-        richness: num("richness"),
-        barrier_density: num("barrier_density"),
-        spawn_per_min: num("spawn_per_min"),
-        starting_budget: num("starting_budget"),
-        arena: f.get("arena"),
-      },
-    });
+    lobby = await api("POST", "/api/lobbies", { name: f.get("name"), settings });
     if (carry.length) await api("PUT", `/api/lobbies/${lobby.id}/loadout`, { entries: carry });
-    if (seatedAI) await api("PUT", `/api/lobbies/${lobby.id}/ai`, { profiles: [seatedAI] });
   } catch (e) { err(e.message); await refresh(); return; }
-  await start(lobby.id);
-  // start() navigates on success; reaching here means it did not, and the
-  // lobby is open below with the reason on screen.
+  if (andStart) await start(lobby.id);
+  // start() navigates on success; reaching here means it did not, or was never
+  // asked for — either way the lobby is open in the list below.
   await refresh();
-});
+}
+
+$("create").addEventListener("submit", (ev) => { ev.preventDefault(); return create(true); });
+$("create-open").addEventListener("click", () => create(false));
 
 seg($("duration"), [[300, "05"], [600, "10"], [900, "15"], [1800, "30"]], 600);
 seg($("seats"), [[2, "2"], [3, "3"], [4, "4"], [8, "8"]], 4);
