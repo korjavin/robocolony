@@ -2080,6 +2080,14 @@ function eventText(e) {
   }
 }
 
+// The frame an event is watched on, which is not the tick it is stamped with.
+// An event is stamped with the tick it happened *during*, and the snapshot that
+// shows the result is the next one — which is also the first frame to carry it
+// (takeEvents, internal/server/stream.go). So a seek aimed at an event goes one
+// tick past its stamp: landing on the stamp itself rebuilds a world in which it
+// has not happened yet, and a feed that does not contain it.
+const eventFrame = (e) => Number(e.tick) + 1;
+
 // The marks on the timeline track (design 1a 236-248, 1c 553-566). One per
 // event, placed by the tick it happened on, built once and then only appended
 // to: this runs on the same path as the progress bar, ten times a second, and
@@ -2136,8 +2144,8 @@ function logRow(e) {
   sw.title = colonyName(e.colony);
   row.append(el("span", "when", mmss(Number(e.tick))), sw,
     el("span", "g", EVENT_GLYPH[e.kind] || "·"), el("span", "what", eventText(e)));
-  row.title = `Seek the replay to tick ${e.tick}`;
-  row.addEventListener("click", () => reopen(Number(e.tick)));
+  row.title = `Seek the replay to tick ${eventFrame(e)}`;
+  row.addEventListener("click", () => reopen(eventFrame(e)));
   return row;
 }
 
@@ -2225,8 +2233,10 @@ function prevEvent() {
   const mine = mineOnly ? myColony() : null;
   const list = mine === null ? feed : feed.filter((e) => e.colony === mine);
   const cur = at();
-  const target = list.findLast((e) => Number(e.tick) < cur);
-  if (target) reopen(Number(target.tick));
+  // Against the frame each event is watched on, not its stamp — otherwise
+  // standing on an event's own frame finds that same event and goes nowhere.
+  const target = list.findLast((e) => eventFrame(e) < cur);
+  if (target) reopen(eventFrame(target));
 }
 
 // -------------------------------------------------------------- field bar
