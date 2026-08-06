@@ -155,6 +155,18 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 		if n := len(feed); n > 0 {
 			sentEvents = feed[n-1].Tick + 1
 		}
+		// Anything the world produced between those two reads rides this first
+		// board frame rather than waiting for the next fresh tick. Usually
+		// nothing — but if that advance was the match's *final* tick there is no
+		// next fresh tick: the loop below sees world.Tick == last and goes
+		// straight to the end frame, and a spectator who connected in that
+		// window would lose the last thing that happened in the match. After
+		// this drain the world is either frozen and fully drained, or still
+		// running and the loop delivers the rest.
+		if evs := m.Events(sentEvents); len(evs) > 0 {
+			sentEvents = evs[len(evs)-1].Tick + 1
+			board.Events = newEvents(evs)
+		}
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return
