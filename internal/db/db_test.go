@@ -3,8 +3,11 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -372,5 +375,46 @@ func TestForeignKeysEnforced(t *testing.T) {
 	d := openTest(t)
 	if _, err := d.CreateProgram(t.Context(), 999, "orphan", "{}"); err == nil {
 		t.Error("CreateProgram() for a missing user succeeded, want a foreign key violation")
+	}
+}
+
+// TestMigrationVersionsUniqueAndContiguous catches the collision two branches
+// can each pass on their own: both add NNN_*.sql with the same NNN, the
+// filenames differ so git merges them without a conflict, and goose refuses the
+// provider only once both are on master — breaking every test that opens a
+// database, on whatever unrelated PR runs next. Reading the embedded names
+// directly names the offending pair instead.
+func TestMigrationVersionsUniqueAndContiguous(t *testing.T) {
+	names, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatalf("Glob() = %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("no migrations embedded, want at least 001_init.sql")
+	}
+
+	seen := make(map[int]string, len(names))
+	for _, name := range names {
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok {
+			t.Errorf("migration %q: want NNN_name.sql", name)
+			continue
+		}
+		version, err := strconv.Atoi(prefix)
+		if err != nil {
+			t.Errorf("migration %q: version prefix %q is not a number", name, prefix)
+			continue
+		}
+		if prev, dup := seen[version]; dup {
+			t.Errorf("migrations %q and %q share version %d; renumber against origin/master before merging", prev, name, version)
+			continue
+		}
+		seen[version] = name
+	}
+
+	for version := 1; version <= len(seen); version++ {
+		if seen[version] == "" {
+			t.Errorf("no migration with version %d; numbers must be contiguous from 1", version)
+		}
 	}
 }
