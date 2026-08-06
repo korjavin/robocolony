@@ -7,40 +7,100 @@
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  /* A lobby is a contract: duration, seats, and who is sitting in them. The
-     contracts you can join are on the left; the one you are writing is on the
-     right, where it stays put while the lists above it refresh. */
-  :root { --page: 84rem; }
-  .cols { display: grid; grid-template-columns: minmax(0, 1fr) 26rem; gap: 0; align-items: start; }
-  .cols > .new {
-    border-left: 1px solid var(--line-2); padding-left: 1.5rem; margin-left: 1.5rem;
-    position: sticky; top: 1rem;
-  }
-  @media (max-width: 68rem) {
-    .cols { grid-template-columns: 1fr; }
-    .cols > .new { border-left: 0; padding-left: 0; margin-left: 0; position: static; }
-  }
-  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-       color: var(--fg-2); font-weight: 500; margin: 1.6rem 0 .5rem; }
+  /* The lobby is one of the three instrument pages app.css names (its comment
+     at .shell says so): a status board on the left that tells you what is
+     happening right now, and one fixed rail on the right where you write the
+     next contract. The rail is fixed width and never reflows, because the
+     lists beside it refresh under it while you are typing into it. */
+  :root { --page: none; }
 
-  label { display: inline-block; margin: .25rem .75rem .25rem 0; font-size: 12px; }
-  input { width: 8rem; }
-  input[name=name] { width: 100%; }
-  /* Lobby and match rows: a list of panels, so the border matches every other
-     grouped box in the app. */
-  ul { list-style: none; padding: 0; margin: 0; }
-  li {
-    border: 1px solid var(--line-2); background: var(--bg-elev);
-    padding: .6rem .8rem; margin: .4rem 0;
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 440px; min-height: 0; }
+
+  .feed {
+    min-height: 0; overflow-y: auto; padding: 24px 28px;
+    display: flex; flex-direction: column; gap: 20px;
   }
-  li button, li select { margin: .3rem .3rem 0 0; font-size: 12px; }
-  /* A running match is the one thing on this page you cannot get back to any
-     other way, so its row is the raised one and its link is the loud one. */
-  #running li:first-child { border-color: var(--line-1); box-shadow: var(--shadow-1); }
-  .watch { font-weight: 700; font-size: 15px; }
+  .rail {
+    min-height: 0; overflow-y: auto; padding: 24px;
+    border-left: 1px solid var(--line-1); background: var(--bg-1);
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .rail h3 { font-size: 20px; margin: 0; letter-spacing: -.02em; }
+  .rail .meta { margin: 4px 0 0; }
+  .grow { flex: 1 1 auto; }
+
+  .sechead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+  .sechead .aside { font-size: 11px; color: var(--fg-2); }
+
+  /* A running match is the one thing on this page you cannot reach any other
+     way, so it is the raised object. One that is nearly over drops to a plain
+     hairline: it is about to become a history row, and the eye should not be
+     sent to a door that closes in twenty seconds. */
+  .match { display: flex; align-items: center; gap: 18px; margin-top: 8px; }
+  .match.live {
+    border: 1px solid var(--line-1); box-shadow: var(--shadow-1);
+    background: var(--bg-elev); padding: 14px 16px;
+  }
+  .match.ending { border: 1px solid var(--line-2); padding: 12px 16px; }
+  .match > .who { flex: 1 1 0; min-width: 0; }
+  .match .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .match .nm { font-size: 16px; font-weight: 700; }
+  .match.ending .nm { font-size: 14px; }
+  .match .nums {
+    font-size: 12px; color: var(--fg-2); margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .match .stats { display: flex; gap: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .match .stats .label { font-size: 10px; }
+  .match .stats .v { font-weight: 700; }
+  .match .stats .lead .v { font-weight: 400; }
+
+  /* The open table's action column, and the detail row that hangs under a
+     lobby you are sitting in: two <select>s and a couple of buttons do not fit
+     in a table cell, and the seat's choices are the reason you opened the row. */
+  td.act { text-align: right; white-space: nowrap; }
+  td.act > * { margin-left: .3rem; }
+  tr.detail > td { background: var(--bg-1); border-bottom: 1px solid var(--line-1); }
+  tr.detail select, tr.detail button { margin: .3rem .3rem 0 0; font-size: 12px; }
+  tr.detail .meta { margin: 0; }
+
+  /* One card per AI rung, saying what that rung will do to you. A card is a
+     <button> so the keyboard reaches it, but the base button's inverting hover
+     would read as "selected"; selection is [aria-pressed] and only that. */
+  .ai { display: flex; flex-direction: column; gap: 6px; }
+  .ai > button {
+    display: block; width: 100%; text-align: left; font: inherit;
+    padding: 8px 11px; box-shadow: none;
+    border: 1px solid var(--line-2); background: var(--bg-elev); color: var(--fg-0);
+  }
+  .ai > button:hover { background: var(--bg-2); color: var(--fg-0); }
+  .ai > button[aria-pressed="true"] {
+    border-color: var(--line-1); box-shadow: var(--shadow-1); padding: 9px 11px;
+  }
+  .ai .nm { font-size: 13px; font-weight: 700; }
+  .ai .why { font-size: 11px; color: var(--fg-2); margin-top: 2px; }
+  .ai > button[aria-pressed="true"] .why { color: var(--fg-1); }
+
+  .field { border: 1px solid var(--line-1); padding: 12px; background: var(--bg-elev); }
+  .rail input[name=name] { width: 100%; }
+  .rail details { font-size: 12px; }
+  .rail details summary { color: var(--fg-2); cursor: pointer; }
+  .rail details label { display: block; margin: .35rem 0; }
+  .rail details input, .rail details select { font-size: 12px; }
+  .rail details input[type=number] { width: 6rem; }
+
+  /* Below the split there is no instrument left to hold: the shell gives the
+     viewport back and the whole thing scrolls as one document, rail last. */
+  @media (max-width: 76rem) {
+    body.shell { height: auto; overflow: visible; display: block; }
+    nav.site { height: auto; flex-wrap: wrap; padding: .5rem 1rem; }
+    main { display: block; overflow: visible; }
+    .feed, .rail { overflow: visible; }
+    .rail { border-left: 0; border-top: 1px solid var(--line-1); }
+  }
 </style>
 </head>
-<body>
+<body class="shell">
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby" aria-current="page">Lobbies</a>
@@ -53,67 +113,115 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>Lobbies</h1>
-  <p class="tag">Create a lobby, wait for players, start the match. A match keeps
-  running while you are away &mdash; and this page is how you get back to it.</p>
+  <main>
+    <div class="feed">
+      <p class="err" id="err"></p>
 
-  <p class="err" id="err"></p>
+      <section>
+        <div class="sechead">
+          <span class="label" id="running-label">RUNNING</span>
+          <span class="aside">MATCHES RUN WHETHER OR NOT ANYONE IS WATCHING</span>
+        </div>
+        <div id="running"></div>
+      </section>
 
-  <div class="cols">
-    <div>
-      <h2>Matches in progress &mdash; they run whether or not anyone is watching</h2>
-      <ul id="running"></ul>
-      <!-- Where a match goes when it ends. Without this line the only door to
-           the record is the nav, and the player who just watched one finish is
-           standing right here. -->
-      <p class="meta">A match that has ended keeps its standing, its graph and a
-      full replay on the <a href="/history">history page</a>.</p>
+      <section>
+        <!-- Title case, uppercased by .label: cmd/server/main_test.go pins this
+             phrase as the proof the route serves this page. -->
+        <div class="label" style="margin-bottom: 10px">Open lobbies &middot; waiting for players</div>
+        <table class="t"><tbody id="open"></tbody></table>
+      </section>
 
-      <h2>Open lobbies &mdash; waiting for players</h2>
-      <ul id="lobbies"></ul>
+      <section>
+        <div class="label" style="margin-bottom: 10px">FINISHED</div>
+        <table class="t"><tbody id="finished"></tbody></table>
+        <!-- Where a match goes when it ends. Without this line the only door to
+             the full record is the nav, and the player who just watched one
+             finish is standing right here. -->
+        <p class="meta" style="margin-top: .6rem">Every match that has ended keeps
+        its standing, its graph and a full replay on the
+        <a href="/history">history page</a>.</p>
+      </section>
     </div>
 
-    <div class="new">
-      <h2>New lobby</h2>
-      <p class="meta">The defaults make a fine first match.</p>
-      <form id="create">
-        <fieldset>
-          <legend>Settings</legend>
-          <label>Name <input name="name" required maxlength="64" value="my colony"></label><br>
-          <label>Duration (s) <input name="duration_sec" type="number" min="1" value="600"></label>
-          <label>Richness <input name="richness" type="number" step="0.001" min="0" value="0.02"></label>
-          <!-- The presets are sugar: they only fill the number, and the number
-               is the one value that is sent, validated, stored and replayed. -->
-          <label>Terrain
-            <select id="terrain-preset">
-              <option value="0.03">Sparse &mdash; open plain, ~12% blocked</option>
-              <option value="0.08" selected>Normal &mdash; 31% blocked</option>
-              <option value="0.12">Rocky &mdash; ~47% blocked</option>
-              <option value="0.15">Badlands &mdash; a maze, ~58% blocked</option>
-              <option value="">Custom</option>
-            </select>
-          </label>
-          <label>Barrier density <input name="barrier_density" id="barrier-density" type="number" step="0.01" min="0.01" max="0.15" value="0.08"></label>
-          <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
-          <label>Max players <input name="max_players" type="number" min="1" max="8" value="4"></label>
-          <label>Starting budget <input name="starting_budget" type="number" min="0" value="345"></label>
-          <label>Arena
-            <select name="arena">
-              <option value="XS">XS &mdash; 32&times;32</option>
-              <option value="S">S &mdash; 48&times;48</option>
-              <option value="M" selected>M &mdash; 64&times;64</option>
-              <option value="L">L &mdash; 96&times;96</option>
-              <option value="XL">XL &mdash; 128&times;128</option>
-            </select>
-          </label>
-          <p class="meta">A bigger arena is more ground to cover, not more parts per cell: richness is per cell, so the map scales with it.</p>
-          <p class="meta">Budget is component value per colony. Whatever your opening robots do not spend arrives as parts in your base.</p>
-          <p class="meta">The map seed is drawn by the server and shown once the match starts.</p>
-          <button class="btn primary" type="submit">Create</button>
-        </fieldset>
-      </form>
-    </div>
-  </div>
+    <form class="rail" id="create">
+      <div>
+        <h3>New lobby</h3>
+        <p class="meta">The defaults make a fine first match.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px">
+        <div>
+          <div class="label" style="margin-bottom: 5px"><label for="name">Name</label></div>
+          <input id="name" name="name" required maxlength="64" value="my colony">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px">
+          <div>
+            <div class="label" style="margin-bottom: 5px">Duration</div>
+            <div class="seg fill" id="duration" role="group" aria-label="Duration in minutes"></div>
+          </div>
+          <div>
+            <div class="label" style="margin-bottom: 5px">Seats</div>
+            <div class="seg fill" id="seats" role="group" aria-label="Seats"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Everything below is sim tuning nobody needs for a first match, and
+           every one of these fields was in the way of the two that matter. The
+           defaults are the same numbers the form has always sent. -->
+      <details>
+        <summary>Advanced &mdash; terrain, richness, budget, arena</summary>
+        <label>Richness <input name="richness" type="number" step="0.001" min="0" value="0.02"></label>
+        <!-- The presets are sugar: they only fill the number, and the number is
+             the one value that is sent, validated, stored and replayed. -->
+        <label>Terrain
+          <select id="terrain-preset">
+            <option value="0.03">Sparse &mdash; open plain, ~12% blocked</option>
+            <option value="0.08" selected>Normal &mdash; 31% blocked</option>
+            <option value="0.12">Rocky &mdash; ~47% blocked</option>
+            <option value="0.15">Badlands &mdash; a maze, ~58% blocked</option>
+            <option value="">Custom</option>
+          </select>
+        </label>
+        <label>Barrier density <input name="barrier_density" id="barrier-density" type="number" step="0.01" min="0.01" max="0.15" value="0.08"></label>
+        <label>Spawn / min <input name="spawn_per_min" type="number" step="0.5" min="0" max="120" value="6"></label>
+        <label>Starting budget <input name="starting_budget" type="number" min="0" value="345"></label>
+        <label>Arena
+          <select name="arena">
+            <option value="XS">XS &mdash; 32&times;32</option>
+            <option value="S">S &mdash; 48&times;48</option>
+            <option value="M" selected>M &mdash; 64&times;64</option>
+            <option value="L">L &mdash; 96&times;96</option>
+            <option value="XL">XL &mdash; 128&times;128</option>
+          </select>
+        </label>
+        <p class="meta">A bigger arena is more ground to cover, not more parts per
+        cell: richness is per cell, so the map scales with it.</p>
+        <p class="meta">Budget is component value per colony. Whatever your opening
+        robots do not spend arrives as parts in your base.</p>
+        <p class="meta">The map seed is drawn by the server and shown once the
+        match starts.</p>
+      </details>
+
+      <div class="rule-double"></div>
+
+      <div>
+        <div class="label" style="margin-bottom: 8px">Seat an AI colony</div>
+        <div class="ai" id="ai"></div>
+        <p class="meta" style="margin-top: 6px">Click the chosen rung again to seat
+        no AI at all.</p>
+      </div>
+
+      <div class="grow"></div>
+
+      <div class="field">
+        <div class="label" style="margin-bottom: 6px">Your colony will field</div>
+        <div class="checklist" id="field"></div>
+      </div>
+      <button class="btn primary" type="submit">Create and start</button>
+    </form>
+  </main>
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
@@ -151,88 +259,325 @@ let me = null;
 // Reading /api/blueprints also seeds the starter designs for a new player, so
 // the picker is never empty for somebody who has not opened the editor yet.
 let library = { blueprints: [], programs: [] };
+// Which component variants are weapons, straight from the catalogue rather than
+// from a list of numbers here that the catalogue could append past. Empty when
+// /api/language did not load, and an empty set claims nothing.
+let weapons = new Set();
+// The AI rung the new lobby will seat, or null for none. Nothing is selected by
+// default: an aggressive colony reliably wipes the starter kit, and picking
+// that fight should be a decision, not a default.
+let seatedAI = null;
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+function link(href, text) {
+  const a = document.createElement("a");
+  a.href = href;
+  a.textContent = text;
+  return a;
+}
+
+function button(label, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+// mm:ss. Every duration on this page is a clock, and a clock is the one number
+// a player compares against the one in the match view without doing arithmetic.
+const clock = (sec) => {
+  const s = Math.max(0, Math.round(sec));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
 
 // A library that will not load costs the player the picker, not the page: they
-// can still join and start a match on the built-in kit.
-async function loadLibrary() {
+// can still join and start a match on the built-in kit. Same for the catalogue,
+// which only decides whether the checklist can warn about an unarmed loadout.
+async function loadStatics() {
   try {
     const [b, p] = await Promise.all([api("GET", "/api/blueprints"), api("GET", "/api/programs")]);
     library = { blueprints: (b && b.blueprints) || [], programs: (p && p.programs) || [] };
   } catch (e) { err(e.message); }
+  try {
+    const lang = await api("GET", "/api/language");
+    weapons = new Set((lang.components || []).filter((c) => c.kind === "weapon").map((c) => c.variant));
+  } catch { /* the checklist simply stops claiming a loadout is unarmed */ }
 }
 
-// A lobby leaves the open list the moment it starts, and /match?id=N is the
-// only way back into a running match. Until this list existed, navigating away
-// from one lost it: the link was minted once, by the Start button, and never
-// again.
-function renderRunning(list) {
-  const ul = $("running");
-  ul.replaceChildren();
+// A lobby leaves the open list the moment it starts, and /match?id=N is the only
+// way back into a running match. Until this list existed, navigating away from
+// one lost it: the link was minted once, by the Start button, and never again.
+//
+// The card wants tick, seed and arena size, which the lobby list does not carry
+// — that is GET /api/matches/{id}, one fetch per running match per refresh. It
+// is deliberately not a poll: this page refreshes when you do something, and a
+// running match has its own live page one click away.
+async function renderRunning(list) {
+  $("running-label").textContent = `RUNNING · ${list.length}`;
+  const infos = await Promise.all(list.map((l) =>
+    api("GET", `/api/matches/${l.id}`).catch(() => null)));
+  const box = $("running");
+  box.replaceChildren();
   if (list.length === 0) {
-    const li = document.createElement("li");
-    li.className = "meta";
-    li.textContent = "Nothing running. A match you start appears here until it ends.";
-    ul.append(li);
+    box.append(el("p", "meta", "Nothing running. A match you start appears here until it ends."));
+    return;
+  }
+  list.forEach((l, i) => box.append(matchCard(l, infos[i])));
+}
+
+function matchCard(l, info) {
+  const rate = (info && info.tick_rate) || 10;
+  const total = info ? info.end_tick / rate : l.settings.duration_sec;
+  const now = info ? info.tick / rate : 0;
+  const left = total - now;
+  // A match with under half a minute on it is already a history row; it gets a
+  // hairline, not the raised card and not the stats nobody has time to read.
+  const ending = info !== null && left <= 30;
+
+  const card = el("div", `match ${ending ? "ending" : "live"}`);
+  const who = el("div", "who");
+  const head = el("div", "head");
+  head.append(el("span", "nm", l.name), el("span", "badge dashed", `#${l.id}`));
+  if (!ending) head.append(el("span", "badge solid", "▮ LIVE"));
+  who.append(head);
+
+  let nums;
+  if (!info) {
+    // The match endpoint refused or the match ended between the two calls. The
+    // lobby row still knows enough to keep the door open.
+    nums = `${clock(l.settings.duration_sec)} · ${l.members.map((m) => m.display_name).join(", ")}`;
+  } else if (ending) {
+    nums = `${clock(now)} / ${clock(total)} · ENDS IN ${Math.max(0, Math.round(left))}s`;
+  } else {
+    nums = `${clock(now)} / ${clock(total)} · TICK ${info.tick} · SEED ${info.seed}`
+      + ` · ${info.width}×${info.height}`;
+  }
+  who.append(el("div", "nums", nums));
+  card.append(who);
+
+  if (info && !ending && (info.colonies || []).length) {
+    card.append(stats(info.colonies));
+  }
+
+  const watch = link(`/match?id=${l.id}`, ending ? "WATCH" : "WATCH →");
+  watch.className = ending ? "btn sm" : "btn sm primary";
+  card.append(watch);
+  return card;
+}
+
+// Two numbers: where you stand, and what you are standing against. Any more and
+// the row stops being scannable, which is the whole point of the board.
+function stats(colonies) {
+  const box = el("div", "stats");
+  const mine = me && colonies.find((c) => c.user_id === me.id);
+  const lead = colonies.reduce((a, b) => (b.score > a.score ? b : a));
+  const pair = (cls, name, value) => {
+    const d = el("div", cls);
+    d.append(el("div", "label", name), el("div", "v", value));
+    return d;
+  };
+  if (mine) box.append(pair("", "YOU", `${mine.robots} ROBOTS · ${mine.score}`));
+  box.append(pair("lead", "LEAD", `${lead.display_name} · ${lead.score}`));
+  return box;
+}
+
+const OPEN_COLS = ["Lobby", "Host", "Seats", "Duration", "AI", ""];
+
+function renderOpen(list, profiles) {
+  const body = $("open");
+  body.replaceChildren(headRow(OPEN_COLS));
+  if (list.length === 0) {
+    const tr = document.createElement("tr");
+    const td = el("td", "meta", "Nothing open yet. Write one on the right.");
+    td.colSpan = OPEN_COLS.length;
+    tr.append(td);
+    body.append(tr);
     return;
   }
   for (const l of list) {
-    const li = document.createElement("li");
-    const a = link(`/match?id=${l.id}`, `Watch ${l.name}`);
-    a.className = "watch";
-    const meta = document.createElement("div");
-    meta.className = "meta";
+    const host = l.members.find((m) => m.user_id === l.owner_id);
     const ai = l.settings.ai || [];
-    meta.textContent = l.members.map((m) => m.display_name).join(", ")
-      + (ai.length ? ` · AI: ${ai.join(", ")}` : "")
-      + ` · ${l.settings.duration_sec}s`;
-    li.append(a, meta);
-    ul.append(li);
+    const tr = document.createElement("tr");
+    const name = el("td", null, l.name);
+    name.style.fontWeight = "700";
+    tr.append(name,
+      el("td", null, host ? host.display_name : "—"),
+      el("td", null, `${l.members.length} / ${l.settings.max_players}`),
+      el("td", null, clock(l.settings.duration_sec)),
+      el("td", null, ai.length ? `${ai.length} · ${ai.join(", ")}` : "—"));
+
+    const seat = me && l.members.find((m) => m.user_id === me.id);
+    const act = el("td", "act");
+    if (!seat) act.append(btn("Join", "btn sm", () => post(`/api/lobbies/${l.id}/join`)));
+    else if (l.owner_id !== me.id) act.append(btn("Leave", "btn sm", () => post(`/api/lobbies/${l.id}/leave`)));
+    if (me && l.owner_id === me.id) act.append(btn("Start", "btn sm primary", () => start(l.id)));
+    tr.append(act);
+    body.append(tr);
+
+    // Your seat's own choices — which of your designs the colony approves, and,
+    // if you own the lobby, who else sits at the table. They belong to the row
+    // and nowhere else, so they hang under it rather than in a dialog.
+    if (seat) {
+      const detail = el("tr", "detail");
+      const td = document.createElement("td");
+      td.colSpan = OPEN_COLS.length;
+      td.append(loadoutPicker(l, seat));
+      if (l.owner_id === me.id) td.append(aiPicker(l, profiles));
+      detail.append(td);
+      body.append(detail);
+    }
   }
+}
+
+function headRow(cols) {
+  const tr = document.createElement("tr");
+  for (const c of cols) tr.append(el("th", null, c));
+  return tr;
+}
+
+// A .btn-styled <button>: the design's action buttons are all one shape, and a
+// bare <button> in a table cell is the one that is not.
+function btn(label, cls, onClick) {
+  const b = button(label, onClick);
+  b.className = cls;
+  return b;
+}
+
+const FINISHED_COLS = ["Lobby", "Result", "Score", "Robots left", ""];
+
+// The standing is computed here rather than stored: /api/history hands back the
+// colonies, and the rank is what they say once they are sorted — the same read
+// the history page makes of the same array.
+function renderFinished(list) {
+  const body = $("finished");
+  body.replaceChildren(headRow(FINISHED_COLS));
+  body.rows[0].cells[2].className = "num";
+  body.rows[0].cells[3].className = "num";
+  const recent = list.slice(0, 5);
+  if (recent.length === 0) {
+    const tr = document.createElement("tr");
+    const td = el("td", "meta", "No match has finished yet.");
+    td.colSpan = FINISHED_COLS.length;
+    tr.append(td);
+    body.append(tr);
+    return;
+  }
+  for (const m of recent) {
+    const ranked = [...(m.colonies || [])].sort((a, b) => b.score - a.score);
+    const i = me ? ranked.findIndex((c) => c.user_id === me.id) : -1;
+    const mine = i >= 0 ? ranked[i] : null;
+    const tr = document.createElement("tr");
+    const result = el("td", null, mine ? `${ordinal(i + 1)} of ${ranked.length}` : "—");
+    if (i === 0) result.style.fontWeight = "700";
+    const act = el("td", "act");
+    if (m.replayable) {
+      const a = link(`/match?id=${encodeURIComponent(m.id)}&replay=1`, "Replay");
+      a.className = "btn sm";
+      act.append(a);
+    }
+    tr.append(el("td", null, m.name), result,
+      el("td", "num", mine ? String(mine.score) : "—"),
+      el("td", "num", mine ? String(mine.robots) : "—"), act);
+    body.append(tr);
+  }
+}
+
+const ordinal = (n) => n + (["th", "st", "nd", "rd"][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4)] || "th");
+
+// What the colony you are about to field is actually made of. A new lobby has
+// no loadout yet — approvals are per seat, and there is no seat until the lobby
+// exists — so this reads the seat you already hold in the newest open lobby,
+// and otherwise says the truth about a fresh one: it opens on the starter kit,
+// which is unarmed.
+function renderField(lobbies) {
+  const box = $("field");
+  box.replaceChildren();
+  const seat = me && lobbies.map((l) => l.members.find((m) => m.user_id === me.id)).find(Boolean);
+  const entries = (seat && seat.loadout && seat.loadout.entries) || [];
+  const row = (glyph, node) => box.append(el("span", null, glyph), node);
+
+  for (const e of entries) {
+    const line = el("span", null, e.blueprint_name + " ");
+    line.append(el("span", "meta", `· ${e.program_name}`));
+    row("✓", line);
+  }
+  if (entries.length === 0) {
+    row("!", el("span", "meta", "No approvals yet — the colony opens on the built-in starter kit, which is unarmed."));
+  } else if (weapons.size && !(entries[0].components || []).some((v) => weapons.has(v))) {
+    // The first entry is the one the opening budget is spent on, so an unarmed
+    // one is an unarmed opening however many gunners follow it.
+    row("!", el("span", "meta", "No armed blueprint in the top build slot."));
+  }
+}
+
+const AI_WHY = {
+  tutorial: "Competes for parts. Cannot take a robot off the board.",
+  peaceful: "Carries no weapon in any blueprint. Competes for parts, never for robots.",
+  defensive: "Armed responders. Hurts a colony that blunders into it.",
+  aggressive: "Comes looking for you. Against the starter kit over 16 seeds it left that colony with nothing standing on 10.",
+};
+const AI_UNARMED = new Set(["tutorial", "peaceful"]);
+
+// One card per rung, from the server's own menu, so the ladder cannot drift from
+// the code. The rung says what it will do to you in numbers; that is the whole
+// reason these are cards and not a <select>.
+function renderAI(profiles) {
+  const box = $("ai");
+  box.replaceChildren();
+  for (const p of profiles) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(seatedAI === p));
+    const head = el("div");
+    head.style.cssText = "display:flex;align-items:baseline;gap:9px";
+    head.append(el("span", "nm", p.toUpperCase()));
+    if (AI_UNARMED.has(p)) head.append(el("span", "badge dashed", "unarmed"));
+    if (seatedAI === p) head.append(el("span", "badge solid", "selected"));
+    b.append(head, el("div", "why", AI_WHY[p] || "An AI colony on the ladder's " + p + " rung."));
+    b.addEventListener("click", () => { seatedAI = seatedAI === p ? null : p; renderAI(profiles); });
+    box.append(b);
+  }
+}
+
+// A segmented picker over a few fixed choices, remembering the chosen value on
+// the element itself: the form reads pickers, not inputs, for these two.
+function seg(node, choices, initial) {
+  node.value = initial;
+  const draw = () => {
+    node.replaceChildren();
+    for (const [value, label] of choices) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.setAttribute("aria-pressed", String(node.value === value));
+      b.addEventListener("click", () => { node.value = value; draw(); });
+      node.append(b);
+    }
+  };
+  draw();
 }
 
 async function refresh() {
   const data = await api("GET", "/api/lobbies");
   if (!data) return;
-  renderRunning(data.running || []);
-  const list = $("lobbies");
-  list.replaceChildren();
-  if (data.lobbies.length === 0) {
-    const li = document.createElement("li");
-    li.className = "meta";
-    li.textContent = "Nothing open yet. Create one below.";
-    list.append(li);
-  }
-  for (const l of data.lobbies) {
-    const li = document.createElement("li");
-    const names = l.members.map((m) => m.display_name).join(", ");
-    const head = document.createElement("div");
-    head.textContent = l.name;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const ai = l.settings.ai || [];
-    meta.textContent = `${l.members.length}/${l.settings.max_players} players: ${names}`
-      + (ai.length ? ` · AI: ${ai.join(", ")}` : "")
-      + ` · ${l.settings.duration_sec}s · richness ${l.settings.richness}`
-      // A lobby created before the budget, terrain or arena settings existed
-      // has no field; the server reads the missing value as the default.
-      + ` · budget ${l.settings.starting_budget || "default"}`
-      + ` · barriers ${l.settings.barrier_density || DEFAULT_DENSITY}`
-      + ` · arena ${l.settings.arena || "M"}`;
-    li.append(head, meta);
-
-    const seat = me && l.members.find((m) => m.user_id === me.id);
-    if (!seat) li.append(button("Join", () => act(`/api/lobbies/${l.id}/join`)));
-    else if (l.owner_id !== me.id) li.append(button("Leave", () => act(`/api/lobbies/${l.id}/leave`)));
-    if (seat) li.append(loadoutPicker(l, seat));
-    if (me && l.owner_id === me.id) {
-      // A colony you can play against without finding another human. The server
-      // gates this on ownership and an open lobby; this control only avoids
-      // offering an action that would be refused.
-      li.append(aiPicker(l, data.ai_profiles || []));
-      li.append(button("Start match", () => start(l.id)));
-    }
-    list.append(li);
-  }
+  const lobbies = data.lobbies || [];
+  renderOpen(lobbies, data.ai_profiles || []);
+  renderField(lobbies);
+  if (!$("ai").children.length) renderAI(data.ai_profiles || []);
+  // History is a small list and this page has no timer; fetching it with the
+  // rest keeps a match that just ended from lingering in RUNNING and nowhere.
+  const [, history] = await Promise.all([
+    renderRunning(data.running || []),
+    api("GET", "/api/history").catch(() => []),
+  ]);
+  renderFinished(history || []);
 }
 
 // loadoutPicker is design §2.1 step 3: which of *your own* blueprints your
@@ -246,11 +591,9 @@ function loadoutPicker(l, seat) {
   const wrap = document.createElement("div");
   const entries = (seat.loadout && seat.loadout.entries) || [];
 
-  const line = document.createElement("div");
-  line.className = "meta";
-  line.textContent = entries.length
+  const line = el("div", "meta", entries.length
     ? "Your colony builds: " + entries.map((e) => `${e.blueprint_name} running ${e.program_name}`).join(", ")
-    : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.";
+    : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.");
   wrap.append(line);
 
   // An approval is stored as a frozen snapshot and re-sent as ids: PUT /loadout
@@ -269,17 +612,14 @@ function loadoutPicker(l, seat) {
     && library.programs.some((p) => p.id === e.program_id);
   const dropped = entries.filter((e) => !inLibrary(e));
   if (dropped.length) {
-    const gone = document.createElement("div");
-    gone.className = "meta";
-    gone.textContent = `${dropped.length} approval(s) point at designs you have since deleted `
+    wrap.append(el("div", "meta",
+      `${dropped.length} approval(s) point at designs you have since deleted `
       + `(${dropped.map((e) => `${e.blueprint_name} running ${e.program_name}`).join(", ")})`
-      + " — approving anything now drops them.";
-    wrap.append(gone);
+      + " — approving anything now drops them."));
   }
 
   if (!library.blueprints.length || !library.programs.length) {
-    const hint = document.createElement("div");
-    hint.className = "meta";
+    const hint = el("div", "meta");
     hint.append("Design a robot in the ", link("/blueprints", "blueprint configurator"),
       " and write it a program in the ", link("/editor", "editor"), " to choose your own.");
     wrap.append(hint);
@@ -303,14 +643,11 @@ function loadoutPicker(l, seat) {
     put(kept.concat({ blueprint_id: Number(bp.value), program_id: Number(pr.value) }))));
   if (entries.length) wrap.append(button("Use the starter kit", () => put([])));
 
-  const note = document.createElement("div");
-  note.className = "meta";
   // The equal-budget half of §2.1 step 4. Say it here rather than let a player
   // wonder why approving a gunner opened with two robots instead of three.
-  note.textContent = "The colony starts with the first approved design, as many"
-    + " as the starting budget buys — every colony gets the same budget, so an"
-    + " armed body means fewer robots. The rest are for the base to build.";
-  wrap.append(note);
+  wrap.append(el("div", "meta", "The colony starts with the first approved design,"
+    + " as many as the starting budget buys — every colony gets the same budget,"
+    + " so an armed body means fewer robots. The rest are for the base to build."));
   return wrap;
 }
 
@@ -329,46 +666,26 @@ function picker(label, items, of) {
   return sel;
 }
 
-function link(href, text) {
-  const a = document.createElement("a");
-  a.href = href;
-  a.textContent = text;
-  return a;
-}
-
-// aiPicker seats one more AI colony of the chosen profile. Profiles come from
-// the server's ai_profiles menu, so the ladder cannot drift from the code.
+// aiPicker seats one more AI colony of the chosen profile in a lobby that
+// already exists. The rail's cards do this for a lobby being created; this is
+// the same act on one already open, which only its owner may perform.
 function aiPicker(l, profiles) {
-  const wrap = document.createElement("span");
-  wrap.className = "ai-picker";
+  const wrap = el("div", "ai-picker");
   // ai_profiles is a plain array of profile names; the ladder runs
   // tutorial -> peaceful -> defensive -> aggressive, so server order is the
   // order to show. Only aggressive reliably wipes a default starter kit.
   const sel = picker("AI opponent profile", profiles, (p) => [p, p]);
-  wrap.append(sel, button("Add AI opponent", async () => {
-    const next = (l.settings.ai || []).concat(sel.value);
+  const put = async (profs) => {
     err("");
-    try { await api("PUT", `/api/lobbies/${l.id}/ai`, { profiles: next }); await refresh(); }
+    try { await api("PUT", `/api/lobbies/${l.id}/ai`, { profiles: profs }); await refresh(); }
     catch (e) { err(e.message); }
-  }));
-  if ((l.settings.ai || []).length) {
-    wrap.append(button("Clear AI", async () => {
-      err("");
-      try { await api("PUT", `/api/lobbies/${l.id}/ai`, { profiles: [] }); await refresh(); }
-      catch (e) { err(e.message); }
-    }));
-  }
+  };
+  wrap.append(sel, button("Add AI opponent", () => put((l.settings.ai || []).concat(sel.value))));
+  if ((l.settings.ai || []).length) wrap.append(button("Clear AI", () => put([])));
   return wrap;
 }
 
-function button(label, onClick) {
-  const b = document.createElement("button");
-  b.textContent = label;
-  b.addEventListener("click", onClick);
-  return b;
-}
-
-async function act(path) {
+async function post(path) {
   err("");
   try { await api("POST", path); await refresh(); }
   catch (e) { err(e.message); }
@@ -378,7 +695,7 @@ async function act(path) {
 // inline and leave the player looking at a list of lobbies while the simulation
 // they had just started ran somewhere else, with the arena as one more link to
 // notice. The summary went with it: /match is the same information, live, and
-// "Matches in progress" above is how you get back after navigating away.
+// RUNNING above is how you get back after navigating away.
 async function start(id) {
   err("");
   try {
@@ -387,30 +704,42 @@ async function start(id) {
   } catch (e) { err(e.message); }
 }
 
+// Create and start: three calls, and the match on screen. Each step that fails
+// leaves the lobby standing and open in the list below, which is exactly what
+// the old two-step flow left behind — so a failure is a slower path to the same
+// place, never a lost lobby.
 $("create").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   err("");
   const f = new FormData(ev.target);
   const num = (k) => Number(f.get(k));
+  let lobby;
   try {
-    await api("POST", "/api/lobbies", {
+    lobby = await api("POST", "/api/lobbies", {
       name: f.get("name"),
       settings: {
-        duration_sec: num("duration_sec"),
+        duration_sec: Number($("duration").value),
+        max_players: Number($("seats").value),
         richness: num("richness"),
         barrier_density: num("barrier_density"),
         spawn_per_min: num("spawn_per_min"),
-        max_players: num("max_players"),
         starting_budget: num("starting_budget"),
         arena: f.get("arena"),
       },
     });
-    await refresh();
-  } catch (e) { err(e.message); }
+    if (seatedAI) await api("PUT", `/api/lobbies/${lobby.id}/ai`, { profiles: [seatedAI] });
+  } catch (e) { err(e.message); await refresh(); return; }
+  await start(lobby.id);
+  // start() navigates on success; reaching here means it did not, and the
+  // lobby is open below with the reason on screen.
+  await refresh();
 });
 
+seg($("duration"), [[300, "05"], [600, "10"], [900, "15"], [1800, "30"]], 600);
+seg($("seats"), [[2, "2"], [3, "3"], [4, "4"], [8, "8"]], 4);
+
 me = await api("GET", "/api/me");
-await loadLibrary();
+await loadStatics();
 await refresh();
 </script>
 </body>
