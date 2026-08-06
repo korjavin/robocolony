@@ -468,6 +468,16 @@
   .rule .idx { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .rule .act { font-weight: 700; }
   .rule .why { font-size: 12px; color: var(--fg-1); }
+  /* The WHEN list (design 1a 291-294): the winning rule's conditions, each with
+     what it was actually worth on the tick the robot decided. Wrapped rather
+     than truncated — a rule may AND four conditions together, and the one that
+     is cut off is the one being looked for. */
+  .rule .when { display: flex; flex-wrap: wrap; gap: .1rem .4rem;
+                align-items: baseline; font-size: 12px; margin-top: .25rem; }
+  .rule .when code { font-size: 11px; }
+  .rule .when .op, .rule .when .kw { font-size: 10px; color: var(--fg-2); }
+  .rule .when .no { color: var(--fg-3); }
+  .rule .tested { font-size: 11px; color: var(--fg-2); margin-top: .3rem; }
   dl { margin: .2rem 0; display: grid; grid-template-columns: auto 1fr;
        gap: 3px .8rem; font-size: 12px; }
   dt { color: var(--fg-2); }
@@ -519,6 +529,30 @@
   .hist .evt { font-size: 11px; }
   .hist .evt.mem::before { content: "✎ "; }
   .hist .evt.sig::before { content: "📡 "; }
+
+  /* Sensor truth table (design 1b 450-488): every condition in the language,
+     grouped as the server's catalogue groups them, with what each was worth on
+     the tick this robot last decided. Rows are written in place, never rebuilt
+     — see renderMind in match.js. A row the blueprint can never satisfy is
+     greyed with the hardware it wants, not marked false: "no radar" and "radar
+     sees nothing right now" are different answers. */
+  .sensors { display: grid; align-content: start; }
+  .sensors .sgroup { margin: .55rem 0 .2rem; }
+  .sensors .sgroup:first-child { margin-top: .2rem; }
+  .sensors .srow { display: grid; grid-template-columns: 12px 1fr auto;
+                   gap: 0 .55rem; font-size: 12px; align-items: baseline; }
+  .sensors .srow code { font-size: 11px; overflow-wrap: anywhere; }
+  .sensors .srow .sv { font-size: 10px; color: var(--fg-2);
+                       font-variant-numeric: tabular-nums; }
+  /* ✗ and · are the quiet states: what is true is what the eye should find. */
+  .sensors .srow.no { color: var(--fg-3); }
+  .sensors .srow.no code { color: var(--fg-1); }
+  .sensors .srow.off, .sensors .srow.off code, .sensors .srow.off .sv { color: var(--fg-3); }
+
+  /* First match wins (design 1b 489-496): the rules that also matched and never
+     ran. The panel foot, because it is the conclusion the table leads to. */
+  .fmw { border-top: 1px solid var(--line-1); margin-top: .6rem; padding-top: .5rem;
+         display: grid; gap: .35rem; justify-items: start; }
 
   /* Event log (design 1c 576-616), replay only. Every row is a <button>: a
      click seeks the replay to that event's tick, which is why this is a panel
@@ -970,6 +1004,27 @@
           <summary>Selected robot</summary>
           <div id="inspector"><p class="meta">No robot selected.</p></div>
           <div id="command" hidden></div>
+        </details>
+
+        <!-- The sensor truth table (design 1b 450-488) and what it leads to:
+             every condition in the language against this robot, and the rules
+             that also matched and never ran.
+
+             Its own panel and not a section of #inspector, which is
+             replaceChildren()-ed ten times a second: this table is written
+             cell by cell instead, and the link in its foot has to survive
+             being clicked. It rides the same /trace poll the decisions list
+             does, so opening both costs one of the server's eight recording
+             slots, not two. -->
+        <details class="fold" id="p-mind" open>
+          <summary>Sensor state</summary>
+          <div class="sensors" id="sensors"></div>
+          <p class="meta" id="sensors-note">Select a robot to read what its rules can test.</p>
+          <div class="fmw" id="fmw" hidden>
+            <span class="label">First match wins</span>
+            <p class="meta" id="fmw-note" style="margin:0"></p>
+            <a class="btn sm" id="fmw-edit" hidden href="/editor">Reorder in editor &nearr;</a>
+          </div>
         </details>
 
         <!-- Design §10.10's trace history. Its own panel rather than a section
