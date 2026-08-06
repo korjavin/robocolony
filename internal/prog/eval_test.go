@@ -856,3 +856,35 @@ func TestDepositReflexNeedsAllThreeConditions(t *testing.T) {
 		})
 	}
 }
+
+// TestScavengerReachesTargetOnImpassableTerrain is the regression for the
+// freeze players reported as "robots stuck on move_to_radar_target": radar sees
+// through terrain, so a tracked scavenger locked onto a component lying on
+// rubble it cannot enter. The move resolved fine, sim found no exact path, the
+// tick idled, and the identical view re-matched the same rule for the rest of
+// the match. sim now closes on the nearest cell it can stand on, which is
+// inside interactRange, so the component gets collected.
+func TestScavengerReachesTargetOnImpassableTerrain(t *testing.T) {
+	w := flatWorld(t, 7, 16)
+	w.Loose = nil
+	base := w.Bases[0]
+	c := sim.Coord{X: (base.Coord.X + 5) % 16, Y: (base.Coord.Y + 5) % 16}
+	w.SetTerrain(c, sim.Rubble) // tracks cannot enter rubble (design §3.1)
+	w.Loose = append(w.Loose, &sim.LooseComponent{ID: w.NextID(), Coord: c, Variant: sim.Manipulator})
+
+	bp := scavengerBlueprint() // tracks
+	prog := scavengerProgram()
+	mustValidate(t, prog, bp)
+	rt := NewRuntime()
+	rt.Install(bp.ProgramID, prog)
+	w.Control = rt.Control
+	r := addRobot(w, base.Coord, sim.North, bp)
+
+	for i := 0; i < 500 && base.Inventory[sim.Manipulator] == 0; i++ {
+		w.Step()
+	}
+	if base.Inventory[sim.Manipulator] != 1 {
+		tr, _ := rt.Trace(r.ID)
+		t.Fatalf("component on rubble never collected: robot at %v, cargo %v, trace %+v", r.Coord, r.Cargo, tr)
+	}
+}

@@ -241,8 +241,13 @@ func TestMoveToUnreachable(t *testing.T) {
 	r := w.addRobot(0, Coord{2, 2}, North, scavengerBlueprint())
 	w.driveAll(funcController(func(RobotView) Action { return Action{Kind: ActMoveTo, Coord: Coord{8, 2}} }))
 
-	w.Step()
-	if !r.TargetUnreachable || r.Coord != (Coord{2, 2}) {
+	// A walled-off target is approached as closely as the wall allows and only
+	// then reported unreachable: the robot closes on the near side and stops,
+	// never crossing x=5.
+	for i := 0; i < 50 && !r.TargetUnreachable; i++ {
+		w.Step()
+	}
+	if !r.TargetUnreachable || r.Coord.X >= 5 {
 		t.Fatalf("walled-off target: unreachable=%v at %v", r.TargetUnreachable, r.Coord)
 	}
 	// Opening the wall must be enough; nothing may have cached the old answer.
@@ -955,8 +960,10 @@ func TestPathIsAShortestRoute(t *testing.T) {
 		t.Fatalf("path to self = %v, want nil", p)
 	}
 	w.SetTerrain(Coord{5, 5}, Barrier)
-	if p := w.path(Coord{1, 1}, Coord{5, 5}, Tracks); p != nil {
-		t.Fatalf("path into a barrier = %v, want nil", p)
+	// A barrier destination is approached, not entered: the route stops on a
+	// cell touching it.
+	if p := w.path(Coord{1, 1}, Coord{5, 5}, Tracks); len(p) == 0 || p[len(p)-1].Chebyshev(Coord{5, 5}) != 1 {
+		t.Fatalf("path into a barrier = %v, want an approach ending beside it", p)
 	}
 	if p := w.path(Coord{1, 1}, Coord{20, 20}, Tracks); p != nil {
 		t.Fatalf("path off the map = %v, want nil", p)
