@@ -755,9 +755,16 @@ const botName = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String
 
 // Only robots running the program that is open: a verdict about a robot running
 // something else would be a verdict about another program's ordering.
+//
+// Two ids mean this library row, and the common one is the first: everything a
+// colony produces runs the loadout's "lib-<program>" (internal/lobby/loadout.go)
+// until somebody reprograms one robot, which installs "lib-<program>-r<robot>"
+// (internal/server's installID).
+const runsThisProgram = (b) =>
+  b.program === `lib-${current.id}` || b.program === `lib-${current.id}-r${b.id}`;
+
 const shadowCandidates = () =>
-  (current && current.id > 0 ? liveRobots : [])
-    .filter((b) => b.program === `lib-${current.id}-r${b.id}`);
+  (current && current.id > 0 ? liveRobots : []).filter(runsThisProgram);
 
 const shadowTarget = () =>
   shadowCandidates().find((b) => botKey(b) === $("shadowbot").value) || null;

@@ -1781,13 +1781,16 @@ function renderMind() {
 // Rule numbers are 1-based and padded everywhere a player reads them.
 const ruleNo = (i) => String(i + 1).padStart(2, "0");
 
-// The library row a robot's installed program came from. internal/server's
-// installID stamps it as lib-<program>-r<robot>; the number is an id in the
-// *installer's* library, so it is only this viewer's to open on this viewer's
-// own robots.
+// The library row a robot's installed program came from. There are two ways it
+// got there and both stamp the id with the library row's number: the loadout a
+// colony started with installs "lib-<program>" on everything it produces
+// (internal/lobby/loadout.go), and a reprogram from this page installs
+// "lib-<program>-r<robot>" on the one robot (internal/server's installID). The
+// number is an id in the *installer's* library, so it means nothing on another
+// colony's robot — hence the seat check first.
 function libraryProgram(r) {
   if (!r || r.colony !== myColony()) return null;
-  const m = /^lib-(\d+)-r\d+$/.exec(r.program || "");
+  const m = /^lib-(\d+)(?:-r\d+)?$/.exec(r.program || "");
   if (!m) return null;
   return (programs || []).find((p) => String(p.id) === m[1]) || null;
 }
