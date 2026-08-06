@@ -914,11 +914,13 @@
             <span class="grow"></span>
             <span class="kbd">&larr;</span><span class="kbd">&rarr;</span>
             <span class="hint">&plusmn; 1 tick</span>
-            <!-- Design 551: the same two keys with shift jump between the
-                 things that actually happened, over the list the event log is
-                 showing — so MY COLONY ONLY is one question and not two. -->
-            <span class="kbd">&#8679;&larr;</span><span class="kbd">&#8679;&rarr;</span>
-            <span class="hint">prev / next event</span>
+            <!-- Design 551. Back only, and that is not an omission: the replay
+                 stream rebuilds to the tick it is standing on and sends the
+                 feed forward from there, so an event ahead of the playhead is
+                 not something this page has been told about. The list it steps
+                 through is the event log's, filter and all. -->
+            <span class="kbd">&#8679;&larr;</span>
+            <span class="hint">prev event</span>
           </div>
           <div class="scrub">
             <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"

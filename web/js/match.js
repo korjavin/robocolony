@@ -2209,16 +2209,23 @@ function renderEvents(end) {
   renderEventLog();
 }
 
-// ⇧← / ⇧→, design 551: jump to the previous or next thing that actually
-// happened. Over the list the log is showing, so MY COLONY ONLY is one question
-// and not two — and like every other replay control it is one reconnect.
-function stepEvent(dir) {
+// ⇧←, design 551: jump back to the last thing that actually happened. Over the
+// list the log is showing, so MY COLONY ONLY is one question and not two — and
+// like every other replay control it is one reconnect.
+//
+// There is deliberately no ⇧→. A replay is rebuilt up to the tick it is
+// standing on and streams the feed forward from there, so the client holds the
+// events of the match *so far* and no others: an event ahead of the playhead is
+// not something this page knows about yet, and a key that silently does nothing
+// is worse than a key that is not offered. Putting the finished match's whole
+// feed on the replay init frame is what would make a forward jump real — and
+// would fill the marks in ahead of the head too — and that is a change to
+// internal/server/replay.go rather than to this file.
+function prevEvent() {
   const mine = mineOnly ? myColony() : null;
   const list = mine === null ? feed : feed.filter((e) => e.colony === mine);
   const cur = at();
-  const target = dir > 0
-    ? list.find((e) => Number(e.tick) > cur)
-    : list.findLast((e) => Number(e.tick) < cur);
+  const target = list.findLast((e) => Number(e.tick) < cur);
   if (target) reopen(Number(target.tick));
 }
 
@@ -2281,9 +2288,9 @@ document.addEventListener("keydown", (ev) => {
   if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
   if (ev.target instanceof Element && ev.target.closest("input, select, textarea")) return;
 
-  if (replay && ev.shiftKey && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+  if (replay && ev.shiftKey && ev.key === "ArrowLeft") {
     ev.preventDefault();
-    stepEvent(ev.key === "ArrowRight" ? 1 : -1);
+    prevEvent();
     return;
   }
   // Shift is the browser's everywhere else on this page.
