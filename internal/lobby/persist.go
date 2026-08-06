@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"maps"
-	"slices"
 	"strconv"
 	"sync"
 
@@ -204,14 +202,6 @@ var fingerprint = sync.OnceValue(func() string {
 			m.step()
 		}
 		_, _ = fmt.Fprintf(h, "state:%d", m.world.StateHash())
-	}
-	// The arena presets, for the same reason Profiles() is in the mini-match: a
-	// settings row records the preset *name*, so resizing a preset resizes the
-	// world every in-flight match created on it replays into, and the
-	// mini-match itself only ever exercises the default. Sorted, because a
-	// map's range order is not a fingerprint.
-	for _, name := range slices.Sorted(maps.Keys(arenaPresets)) {
-		_, _ = fmt.Fprintf(h, "arena:%s=%d", name, arenaPresets[name])
 	}
 	cat, err := json.Marshal(sim.Catalogue())
 	if err != nil {
