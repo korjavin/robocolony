@@ -391,14 +391,25 @@ function inCone(heading, dx, dy) {
   return dot * dot * 2 >= (dx * dx + dy * dy) * (hx * hx + hy * hy);
 }
 
-// sees is design §7.1 asked about a thing rather than about a cell: inside the
-// 90° wedge and within Chebyshev VISION_RANGE. The overlay card's count, the
-// camera's bands and the contacts list all go through it, so none of them can
-// describe a different shape from the one drawVision paints below.
+// sees is sim.inCone asked about a thing rather than about a cell: inside the
+// 90° wedge, within Chebyshev VISION_RANGE, and not the robot's own cell —
+// sim.inCone refuses distance 0, and a component underfoot is reported by the
+// pickup rule rather than by sight. The overlay card's count, the camera's
+// bands and the contacts list all go through it, so none of them can describe a
+// different shape from the one drawVision paints below.
 function sees(r, o) {
   const dx = o.x - r.x, dy = o.y - r.y;
-  return Math.max(Math.abs(dx), Math.abs(dy)) <= VISION_RANGE && inCone(r.heading, dx, dy);
+  const d = Math.max(Math.abs(dx), Math.abs(dy));
+  return d > 0 && d <= VISION_RANGE && inCone(r.heading, dx, dy);
 }
+
+// seesRobot is the rest of sim.World.look, and the reason it exists as its own
+// name: forward vision reports loose components and robots *of other colonies*,
+// and nothing else at all. A robot's own colony is invisible to it in every
+// direction, and no base is ever a sighting — only the base radar reports one.
+// Drawing either as something the robot perceives would teach the player that a
+// rule can test it, which is the exact lie this whole screen exists to kill.
+const seesRobot = (r, o) => o.colony !== r.colony && sees(r, o);
 
 // drawVision paints the exact cells sim.inCone reports, not an approximate arc:
 // the wedge is Chebyshev-ranged, so an arc would lie at the corners.
@@ -520,9 +531,13 @@ function radarList(kind) {
   return null;
 }
 
-const radarSees = (r, o, kind, range) =>
-  (kind === "parts-radar" || o.colony !== r.colony)
-  && Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y)) <= range;
+// Distance 0 is not a contact: sim.radar tests `d > 0 && d <= rng`, so a
+// component the robot is standing on is not something its radar reports.
+const radarSees = (r, o, kind, range) => {
+  if (kind !== "parts-radar" && o.colony === r.colony) return false;
+  const d = Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
+  return d > 0 && d <= range;
+};
 
 function radarContacts(r, kind, range) {
   const list = radarList(kind);
@@ -677,7 +692,11 @@ function drawPOV(r) {
     pctx.fillText(POV_LABELS[band - 1], 6, POV_TOP + (VISION_RANGE - band + .5) * POV_BAND);
   }
 
-  // Loose parts, then bases, then robots: the thing that can shoot goes on top.
+  // Only what sim.World.look reports: loose components, then enemy robots. No
+  // base is drawn here however close it is — vision never reports one — and
+  // neither is a robot of this robot's own colony. Both would be a mark for
+  // something no condition in the language can test, on the one screen whose
+  // whole job is to draw the difference.
   for (const l of snap.loose) {
     if (!povPlace(h, l.x - r.x, l.y - r.y)) continue;
     const cx = povAt.x + POV_CELL / 2, cy = povAt.y + POV_BAND / 2;
@@ -692,19 +711,8 @@ function drawPOV(r) {
     pctx.fill();
     pctx.stroke();
   }
-  for (const b of snap.bases) {
-    if (!povPlace(h, b.x - r.x, b.y - r.y)) continue;
-    const cx = povAt.x + POV_CELL / 2, cy = povAt.y + POV_BAND / 2;
-    const s = Math.min(POV_CELL, POV_BAND) * .5;
-    pctx.fillStyle = colonyColor(b.colony);
-    pctx.fillRect(cx - s / 2, cy - s / 2, s, s);
-    pctx.strokeStyle = "#000";
-    pctx.lineWidth = 1;
-    pctx.strokeRect(cx - s / 2, cy - s / 2, s, s);
-    povLabel("B", cx, cy);
-  }
   for (const o of snap.robots) {
-    if (o.id === r.id || !povPlace(h, o.x - r.x, o.y - r.y)) continue;
+    if (o.colony === r.colony || !povPlace(h, o.x - r.x, o.y - r.y)) continue;
     const st = robotStyle(o);
     const cx = povAt.x + POV_CELL / 2, cy = povAt.y + POV_BAND / 2;
     const rad = Math.min(POV_CELL, POV_BAND) * .3;
@@ -846,20 +854,28 @@ function renderContacts(r) {
       }
       n++;
     }
+    // Enemies only, because that is all forward vision reports: a friendly in
+    // the cone is not a contact, and listing it would say a rule could act on
+    // it. The blind-spot note beside this list is where that fact is said out
+    // loud rather than left as an absence.
     for (const o of snap.robots) {
-      if (o.id === r.id || !sees(r, o)) continue;
+      if (!seesRobot(r, o)) continue;
       if (n < CONTACT_ROWS) {
         contactPut(n, "▮", `var(${colonyVar(o.colony)})`, `${shortID(o)} ${o.archetype || ""}`,
-          rangeDir(r, o), o.colony === r.colony ? "your own colony — in the cone"
-            : `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
+          rangeDir(r, o), `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
       }
       n++;
     }
     // Radar last, and only what sight did not already report: one contact
-    // listed twice would read as two of them.
+    // listed twice would read as two of them. The de-duplication is per radar,
+    // because it is per *kind* — sight reports components and enemy robots, so
+    // those two can repeat, but it never reports a base, and a base radar's
+    // contact in front of the robot must still be listed.
     if (st.radar) {
       for (const o of radarList(st.radarOf) || []) {
-        if (!radarSees(r, o, st.radarOf, st.radar) || sees(r, o)) continue;
+        if (!radarSees(r, o, st.radarOf, st.radar)) continue;
+        if (st.radarOf === "parts-radar" ? sees(r, o)
+          : st.radarOf === "enemy-robot-radar" && seesRobot(r, o)) continue;
         if (n < CONTACT_ROWS) {
           const who = st.radarOf === "parts-radar" ? compName(o.variant)
             : st.radarOf === "enemy-robot-radar" ? shortID(o)
@@ -883,25 +899,37 @@ function renderContacts(r) {
   if (!more.hidden) setText(more, `and ${n - CONTACT_ROWS} more`);
 }
 
+// Within sight's reach but not necessarily in its wedge: the range half of
+// sees(), which is what "a turn away" means.
+const nearby = (r, o) => {
+  const d = Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
+  return d > 0 && d <= VISION_RANGE;
+};
+
 // The blind spot, counted rather than asserted (design 1b 416-419). The static
 // copy in match.html says what the 270° is; this says what is standing in it
 // right now, which is the sentence that makes it land.
 function blindNote(r) {
   if (!r) return "";
-  let n = 0;
+  // Two different silences, and they are worth telling apart. Behind: things
+  // sight *would* report if the robot turned — a turn is a rule away, so these
+  // are recoverable. Own colony: things sight never reports at any range or
+  // facing (World.look filters them), so no facing recovers them at all.
+  let behind = 0, mine = 0;
+  for (const l of snap.loose) if (nearby(r, l) && !sees(r, l)) behind++;
   for (const o of snap.robots) {
-    if (o.id === r.id || o.colony !== r.colony) continue;
-    const dx = o.x - r.x, dy = o.y - r.y;
-    if (Math.max(Math.abs(dx), Math.abs(dy)) <= VISION_RANGE && !inCone(r.heading, dx, dy)) n++;
+    if (o.colony === r.colony) { if (nearby(r, o)) mine++; continue; }
+    if (nearby(r, o) && !sees(r, o)) behind++;
   }
-  if (n === 0) {
-    return `Nothing of ${shortID(r)}'s own colony is within ${VISION_RANGE} cells of it`
-      + " this tick, so the blind spot happens to be empty.";
-  }
-  return `${plural(n, "robot")} of its own colony ${n === 1 ? "is" : "are"} within `
-    + `${VISION_RANGE} cells and outside the wedge right now. `
-    + `${n === 1 ? "It" : "They"} cannot be helped: no condition can see `
-    + `${n === 1 ? "it" : "them"}.`;
+  const first = behind === 0
+    ? `Nothing within ${VISION_RANGE} cells is hidden behind the nose this tick.`
+    : `${plural(behind, "thing")} within ${VISION_RANGE} cells ${behind === 1 ? "is" : "are"}`
+      + ` outside the wedge right now — a turn would reveal ${behind === 1 ? "it" : "them"},`
+      + " and until then no condition can test it.";
+  if (mine === 0) return first;
+  return `${first} ${plural(mine, "robot")} of its own colony ${mine === 1 ? "is" : "are"}`
+    + " within range too, and no facing would help: vision reports loose parts and"
+    + " enemies, never your own.";
 }
 
 function renderCamera(r) {
