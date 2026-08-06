@@ -672,10 +672,10 @@ func TestProgramRef(t *testing.T) {
 		{ProgramRuntimeID(7, 3), 7, 3, true},
 		{ProgramRuntimeID(7, 3) + "-r12", 7, 3, true}, // one robot reprogrammed
 		{ProgramRuntimeID(1024, 1), 1024, 1, true},
-		{ProgramRuntimeID(4, 0), 4, 0, true}, // a loadout stored before versions
-		{DefaultProgramID, 0, 0, false},      // the built-in kit
-		{foragerProgramID, 0, 0, false},      // an AI profile
-		{"lib-7", 0, 0, false},               // the pre-version id, no longer written
+		{"lib-4", 4, 0, true},           // a loadout approved before versions existed
+		{"lib-4-r9", 4, 0, true},        // and an install replayed from an old log
+		{DefaultProgramID, 0, 0, false}, // the built-in kit
+		{foragerProgramID, 0, 0, false}, // an AI profile
 		{"lib-x-v1", 0, 0, false},
 		{"", 0, 0, false},
 	} {
@@ -691,6 +691,21 @@ func TestProgramRef(t *testing.T) {
 				t.Errorf("ProgramRef(%q) = program %d v%d, want %d v%d", tc.id, prog, ver, tc.wantProg, tc.wantVer)
 			}
 		})
+	}
+}
+
+// TestVersionlessRuntimeIDIsUnchanged guards the replay fingerprint against
+// this file.
+//
+// A robot's program id is hashed into sim.World.StateHash and from there into
+// the fingerprint (persist.go), and the fingerprint mini-match's loadout has no
+// version. Give version zero a new spelling and the fingerprint of a build that
+// simulates identically moves — which finishes every match in flight across the
+// deploy and retires every stored one. The failure is silent, it is not
+// recoverable, and this one line is what stands in front of it.
+func TestVersionlessRuntimeIDIsUnchanged(t *testing.T) {
+	if got := ProgramRuntimeID(1, 0); got != "lib-1" {
+		t.Errorf("ProgramRuntimeID(1, 0) = %q, want %q — see this test's comment before changing it", got, "lib-1")
 	}
 }
 

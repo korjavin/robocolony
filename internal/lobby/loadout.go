@@ -107,18 +107,37 @@ func (e LoadoutEntry) blueprint() sim.Blueprint {
 // internal/server's reprogram command appends "-r<robot>" to it, so a one-robot
 // install is still recognisably the same program and version. ProgramRef reads
 // either form back.
+//
+// Version zero keeps the id this project wrote before versions existed, and
+// that is load-bearing rather than tidy. A robot's program id is hashed into
+// sim.World.StateHash, which is hashed into the replay fingerprint (persist.go)
+// — and the fingerprint mini-match's loadout has no version. Relabelling it
+// would move the fingerprint of a build that simulates identically, and a moved
+// fingerprint finishes every match in flight across the deploy and retires
+// every stored one. The label is not allowed to be the thing that does that.
 func ProgramRuntimeID(programID int64, version int) string {
+	if version == 0 {
+		return fmt.Sprintf("lib-%d", programID)
+	}
 	return fmt.Sprintf("lib-%d-v%d", programID, version)
 }
 
 // ProgramRef splits a runtime program id back into the library program and
 // version it was installed from. ok is false for anything that did not come out
 // of a library — the built-in kit's ids, and the AI profiles'.
+//
+// The versionless form reads back as version zero, which is what a loadout
+// approved before this feature fielded and what an old command log replays. It
+// matches no row in program_versions, so such robots count towards "is this
+// program in the field at all" without claiming to be a version of it.
 func ProgramRef(runtimeID string) (programID int64, version int, ok bool) {
 	// Sscanf stops at the first character %d cannot use, so the "-r<robot>" a
 	// per-robot install appends is left unread rather than misparsed.
-	n, err := fmt.Sscanf(runtimeID, "lib-%d-v%d", &programID, &version)
-	return programID, version, err == nil && n == 2
+	if n, err := fmt.Sscanf(runtimeID, "lib-%d-v%d", &programID, &version); err == nil && n == 2 {
+		return programID, version, true
+	}
+	n, err := fmt.Sscanf(runtimeID, "lib-%d", &programID)
+	return programID, 0, err == nil && n == 1
 }
 
 // toVariants converts stored component numbers. An out-of-range number becomes

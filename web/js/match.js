@@ -1790,12 +1790,14 @@ const ruleNo = (i) => String(i + 1).padStart(2, "0");
 // number is an id in the *installer's* library, so it means nothing on another
 // colony's robot — hence the seat check first.
 //
-// Which version the robot is on is not used here: the link opens the library
-// row in the editor, and the editor opens the head of it. Reading an old
-// version back is the VERSIONS panel's job, not this link's.
+// The version part is optional and unread: optional because a loadout approved
+// before versions existed, or a command replayed from a log recorded then,
+// carries the bare "lib-<program>"; unread because the link opens the library
+// row and the editor opens the head of it. Reading an old version back is the
+// VERSIONS panel's job, not this link's.
 function libraryProgram(r) {
   if (!r || r.colony !== myColony()) return null;
-  const m = /^lib-(\d+)-v\d+(?:-r\d+)?$/.exec(r.program || "");
+  const m = /^lib-(\d+)(?:-v\d+)?(?:-r\d+)?$/.exec(r.program || "");
   if (!m) return null;
   return (programs || []).find((p) => String(p.id) === m[1]) || null;
 }

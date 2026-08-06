@@ -778,12 +778,14 @@ const botName = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String
 // (internal/lobby's ProgramRuntimeID) until somebody reprograms one robot,
 // which installs that with "-r<robot>" on the end (internal/server's installID).
 //
-// Any version counts. The shadow test is a verdict about the ordering of the
-// rules on screen, and a robot running an older version of the same program is
-// still a robot these rules were written for.
+// Any version counts, and the version part is optional — a loadout approved
+// before versions existed carries the bare "lib-<program>". The shadow test is
+// a verdict about the ordering of the rules on screen, and a robot running an
+// older version of the same program is still a robot these rules were written
+// for.
 const runsThisProgram = (b) => {
-  const m = /^lib-(\d+)-v(\d+)(?:-r(\d+))?$/.exec(b.program || "");
-  return !!m && Number(m[1]) === current.id && (m[3] === undefined || Number(m[3]) === b.id);
+  const m = /^lib-(\d+)(?:-v\d+)?(?:-r(\d+))?$/.exec(b.program || "");
+  return !!m && Number(m[1]) === current.id && (m[2] === undefined || Number(m[2]) === b.id);
 };
 
 const shadowCandidates = () =>
@@ -1081,6 +1083,9 @@ function open(p) {
   findings = { errors: [], warnings: [], notes: [] };
   picked = -1;
   status("");
+  // Whatever was unsaved belonged to the program being closed. Without this the
+  // next one opens reading DRAFT over rules nobody has touched.
+  dirty = false;
   changed(false);
   loadMeta();
 }
@@ -1135,14 +1140,14 @@ function renderVersions() {
   // APPROVE only when there is something to approve. SAVE keeps its meaning and
   // its place either way — a two-step save would be a tax on everybody to serve
   // the one case where a program is already in the field.
-  const pending = meta && meta.version > meta.approved_version;
-  $("approve").hidden = !pending;
-  $("approve").textContent = pending ? `APPROVE v${meta.version}` : "";
-  $("approve").title = pending
+  const ahead = !!meta && meta.version > meta.approved_version;
+  $("approve").hidden = !ahead;
+  $("approve").textContent = ahead ? `APPROVE v${meta.version}` : "";
+  $("approve").title = ahead
     ? `hand v${meta.version} to robots from the next install on; v${meta.approved_version} is what they get now`
     : "";
   // One primary action at a time: whichever button is the next thing to press.
-  $("save").classList.toggle("primary", !pending);
+  $("save").classList.toggle("primary", !ahead);
 
   const host = $("versions");
   host.replaceChildren();
@@ -1152,11 +1157,16 @@ function renderVersions() {
     return;
   }
   for (const v of meta.versions) {
+    // Going back to an older version is the reason for keeping them, and the
+    // topbar's APPROVE only ever offers the newest. Each row is the way back.
     host.append(el("div", { className: "vrow" },
       el("b", { textContent: `v${v.version}` }),
       el("span", { className: "meta", textContent: versionNote(v) }),
       el("span", { className: "grow", style: "flex:1 1 auto" }),
-      v.approved ? el("span", { className: "badge", textContent: "LIVE" }) : null));
+      v.approved
+        ? el("span", { className: "badge", textContent: "LIVE" })
+        : iconButton("approve", `hand v${v.version} to robots from the next install on`,
+          () => approveVersion(v.version))));
   }
 }
 
@@ -1170,10 +1180,10 @@ function versionNote(v) {
   return new Date(v.created_at).toLocaleString();
 }
 
-async function approve() {
+async function approveVersion(version) {
   err(""); status("");
   try {
-    const p = await api("POST", `/api/programs/${current.id}/approve`, { version: meta.version });
+    const p = await api("POST", `/api/programs/${current.id}/approve`, { version });
     if (!p) return;
     meta = p;
     status(`approved v${p.approved_version}`);
@@ -1387,7 +1397,7 @@ $("import").addEventListener("change", async (ev) => {
 });
 
 $("save").addEventListener("click", () => save(false));
-$("approve").addEventListener("click", approve);
+$("approve").addEventListener("click", () => approveVersion(meta.version));
 $("dup").addEventListener("click", () => save(true));
 $("tryit").addEventListener("click", tryIt);
 $("v-cards").addEventListener("click", () => setView("cards"));

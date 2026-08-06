@@ -220,6 +220,11 @@ type ProgramVersionInfo struct {
 }
 
 // ListProgramVersions returns a program's versions, newest first.
+//
+// ponytail: no cap, on the row count or the list. A version is a few KB of
+// rules and one save makes one of them, so a program would need thousands of
+// saves to be worth pruning. Add a retention rule — never dropping the approved
+// one — if a library ever gets there.
 func (d *DB) ListProgramVersions(ctx context.Context, userID, id int64) ([]ProgramVersionInfo, error) {
 	rows, err := d.QueryContext(ctx, `
 		SELECT v.version, v.created_at FROM program_versions v JOIN programs p ON p.id = v.program_id
