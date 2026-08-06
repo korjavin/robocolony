@@ -321,6 +321,13 @@
           <span class="label">Rules &middot; <span id="rulecount">0</span></span>
           <span class="meta">Evaluated top to bottom &middot; first match takes the tick</span>
           <span class="grow"></span>
+          <!-- The live shadow test (design 1d 696-758). The picker holds the
+               robots of your own colonies that are running this program right
+               now; picking one replaces the dry run's badges with what the
+               server says these rules would decide against that robot's senses
+               this tick. It installs nothing. -->
+          <select id="shadowbot" title="try these rules against a live robot's senses — nothing is installed"></select>
+          <span class="meta" id="shadowhead"></span>
           <a href="/help" target="_blank" class="meta">Rule language guide &nearr;</a>
         </header>
         <div class="scroll">
@@ -364,13 +371,18 @@
       </section>
 
       <aside class="side" id="codeside" hidden>
+        <!-- One legend for two sources. The marks mean what the shadow test
+             says while a live robot is picked, and what the last dry run said
+             otherwise (design 1e 878-882) — the wording covers both rather than
+             changing under the reader. -->
         <div class="blk">
           <h2>Gutter</h2>
           <div class="legend">
-            <span>&#10003;</span><span>fired in the last dry run</span>
-            <span>&#10007;</span><span>never fired: an earlier rule took every tick it wanted</span>
+            <span>&#10003;</span><span>took this tick in the shadow test &mdash; or fired in the last dry run</span>
+            <span>~</span><span>would match, but a rule above it took the tick first</span>
+            <span>&#10007;</span><span>conditions not met &mdash; or never fired in the dry run</span>
             <span>!</span><span>a check has something to say about this rule</span>
-            <span>&middot;</span><span>no dry run yet</span>
+            <span>&middot;</span><span>no shadow test and no dry run yet</span>
           </div>
         </div>
         <div class="blk">

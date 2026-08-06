@@ -1266,6 +1266,19 @@ function ruleBox(r) {
   div.append(el("div", "idx", ruleName(t)));
   div.append(el("div", "act", t.action ? t.action : "idle"));
   div.append(el("div", "why", t.reason || ""));
+  // The condition-level part of the card (design 1a 291-297) comes from the
+  // trace poll rather than the tick frame, so it exists only for a robot that
+  // is being watched, and it describes the decision it was recorded on. Nothing
+  // in it is interactive: the link out to the editor lives in the sensor panel,
+  // which is not replaceChildren()-ed ten times a second.
+  const ex = explainRobot === r.id ? explain : null;
+  if (ex) {
+    const p = libraryProgram(r);
+    const rule = ex.rule >= 0 ? p?.program?.rules?.[ex.rule] : null;
+    if (rule) div.append(whenList(rule.when, ex));
+    div.append(el("div", "tested", testedLine(ex)
+      + (ex.tick === t.tick ? "" : ` Read on tick ${ex.tick}.`)));
+  }
   if (snap && t.tick !== snap.tick) {
     div.append(el("div", "meta", `decided on tick ${t.tick}, ${snap.tick - t.tick} ticks ago`));
   }
@@ -1568,6 +1581,11 @@ function histReset() {
   histSince = 0;
   histRun = null;
   histRows = 0;
+  // Another robot's truth table is not this one's, and the next poll is up to
+  // half a second away.
+  explain = null;
+  explainRobot = null;
+  renderMind();
   setText($("history-note"), replay
     ? "Decisions are recorded while a match runs, and only for a selected robot,"
     + " so a replay has none to show."
@@ -1590,7 +1608,11 @@ async function pollHistory() {
   // has open must not hold one of them. Unfolding resumes from histSince, so it
   // needs no re-selection; the decisions taken while it was shut are simply not
   // recorded, which is the point.
-  if (!$("p-history").open) return;
+  //
+  // Two panels read this one poll: the decisions list and the sensor state
+  // below it. Either one open is a reason to ask, and both open still cost one
+  // watch of the eight.
+  if (!$("p-history").open && !$("p-mind").open) return;
   histBusy = true;
   let data = null;
   try {
@@ -1602,6 +1624,12 @@ async function pollHistory() {
   // A selection changed mid-flight would append another robot's decisions to
   // this one's list.
   if (!data || robot !== selected) return;
+  // The condition-level trace of the robot's *current* mind rides the same
+  // response (internal/server/trace.go). It is not part of the list — it is one
+  // table that replaces itself — so it is kept aside and drawn below.
+  explain = data.explain || null;
+  explainRobot = robot;
+  renderMind();
   const fresh = data.events.filter((e) => e.tick > histSince);
   if (fresh.length) {
     histSince = fresh[fresh.length - 1].tick;
@@ -1622,6 +1650,236 @@ async function pollHistory() {
 }
 
 setInterval(() => { if (!over) pollHistory(); }, HISTORY_POLL_MS);
+
+// ------------------------------------------------------------------- mind
+//
+// What the robot could see and what it made of it: the sensor truth table
+// (design 1b 450-488), the WHEN list on the active-rule card (1a 291-294) and
+// the FIRST MATCH WINS foot (1b 489-496).
+//
+// One section, because all three read one thing — the explain block the trace
+// poll already carries (internal/server/explain.go): every condition in the
+// language with what it was worth, and every rule with its verdict.
+//
+// Nothing here knows the language. The rows, their order and their grouping are
+// whatever the server sent, so a predicate added to internal/prog/catalogue.go
+// shows up here with no edit to this file. The catalogue is fetched for one
+// thing the truth table says *about* a row rather than in it: which hardware a
+// greyed row wants, and whether a value is a percentage or a count.
+//
+// The table is written cell by cell and rebuilt only when the set of rows
+// changes — which happens when the robot's program changes, since a predicate
+// that takes an argument gets one row per argument the program asks about.
+
+const predSpecs = new Map(); // predicate id -> catalogue spec
+
+let explain = null;      // last explain block from the trace poll, or null
+let explainRobot = null; // the robot it describes
+let sensorRows = new Map(); // condition key -> {row, mark, val}
+let sensorSig = "";         // the row set those nodes were built for
+
+api("GET", "/api/language")
+  .then((l) => {
+    for (const s of l.catalogue.predicates) predSpecs.set(s.id, s);
+    renderMind();
+  })
+  .catch(() => { /* the table still reads; only its right-hand column loses detail */ });
+
+// A row is a predicate at one argument: health_below 25 and health_below 40 are
+// two rows, and the same key is how a rule's WHEN list finds its truth value.
+const condKey = (c) => `${c.pred}#${c.arg || 0}`;
+
+// The predicate as the wire spells it, with its argument when it takes one. The
+// catalogue answers whether it does; without the catalogue, a non-zero argument
+// is the only evidence there is.
+function condText(c) {
+  const spec = predSpecs.get(c.pred);
+  const takes = spec ? spec.arg !== "none" : c.arg > 0;
+  return takes && !c.unknown ? `${c.pred} ${c.arg || 0}` : c.pred;
+}
+
+const condMark = (c) => (c.impossible || c.unknown ? "·" : c.true ? "✓" : "✗");
+
+// The hardware a greyed row wants, from the catalogue's own Needs — never a
+// list of predicates kept over here. A predicate with no Needs cannot be
+// impossible, so the fallback is only reached when the catalogue never loaded.
+function needsOf(pred) {
+  const needs = predSpecs.get(pred)?.needs || [];
+  return needs.length ? `NO ${needs.join(" + ").toUpperCase()}` : "NOT ON THIS BLUEPRINT";
+}
+
+// The right-hand column: why the row cannot be true, or the number behind the
+// truth value. The wire carries the number without a unit — a percentage, a
+// count, a distance — and the catalogue is what says which: the predicates
+// whose argument is a percentage are the ones whose value is one.
+function condValue(c) {
+  if (c.impossible) return needsOf(c.pred);
+  if (c.unknown) return "not asked";
+  if (c.value === undefined || c.value === null) return "—";
+  return predSpecs.get(c.pred)?.arg === "percent" ? `${c.value}%` : String(c.value);
+}
+
+// Why there is no table, said in the terms of whichever thing is missing.
+function mindNote() {
+  if (replay) {
+    return "The truth table is evaluated as the robot decides, so a replay —"
+      + " which decides nothing — has none to show.";
+  }
+  if (selected === null) return "Select a robot to read what its rules can test.";
+  return `Waiting for robot #${selected} to decide — the table is recorded from the`
+    + " first decision after you select it.";
+}
+
+function renderMind() {
+  const host = $("sensors");
+  const note = $("sensors-note");
+  const ex = explainRobot === selected ? explain : null;
+  if (!ex) {
+    if (sensorSig) { host.replaceChildren(); sensorRows.clear(); sensorSig = ""; }
+    setText(note, mindNote());
+    $("fmw").hidden = true;
+    return;
+  }
+  const sig = ex.conditions.map(condKey).join(",");
+  if (sig !== sensorSig) {
+    sensorSig = sig;
+    sensorRows.clear();
+    host.replaceChildren();
+    let group = null;
+    for (const c of ex.conditions) {
+      if (c.group !== group) {
+        group = c.group;
+        host.append(el("div", "sgroup label", group.toUpperCase()));
+      }
+      const mark = el("span");
+      const name = el("code", null, condText(c));
+      const val = el("span", "sv");
+      const row = el("div", "srow");
+      row.append(mark, name, val);
+      const spec = predSpecs.get(c.pred);
+      if (spec) row.title = `${spec.label} — ${spec.desc}`;
+      host.append(row);
+      sensorRows.set(condKey(c), { row, mark, val });
+    }
+  }
+  // In place from here: this runs twice a second, and a table rebuilt under the
+  // pointer loses the row being read and any text selected on it.
+  for (const c of ex.conditions) {
+    const cell = sensorRows.get(condKey(c));
+    if (!cell) continue;
+    setText(cell.mark, condMark(c));
+    setText(cell.val, condValue(c));
+    const cls = "srow" + (c.impossible || c.unknown ? " off" : c.true ? "" : " no");
+    if (cell.row.className !== cls) cell.row.className = cls;
+  }
+  const behind = snap && snap.tick > ex.tick ? `, ${snap.tick - ex.tick} ticks ago` : "";
+  setText(note, `Evaluated on tick ${ex.tick}${behind}. Grey rows can never be true`
+    + " on this blueprint; a dot is a condition no rule asks about.");
+  renderFirstMatch(ex);
+}
+
+// Rule numbers are 1-based and padded everywhere a player reads them.
+const ruleNo = (i) => String(i + 1).padStart(2, "0");
+
+// The library row a robot's installed program came from. internal/server's
+// installID stamps it as lib-<program>-r<robot>; the number is an id in the
+// *installer's* library, so it is only this viewer's to open on this viewer's
+// own robots.
+function libraryProgram(r) {
+  if (!r || r.colony !== myColony()) return null;
+  const m = /^lib-(\d+)-r\d+$/.exec(r.program || "");
+  if (!m) return null;
+  return (programs || []).find((p) => String(p.id) === m[1]) || null;
+}
+
+// FIRST MATCH WINS (design 1b 489-496): the rules that would have matched and
+// never ran. It is the one thing the arena cannot show — a rule that loses
+// every tick looks exactly like a rule that is never true — and the way out of
+// it is a reorder, which is why the panel ends in a link to the editor.
+function renderFirstMatch(ex) {
+  const shadowed = ex.rules.filter((v) => v.verdict === "shadowed").map((v) => v.rule);
+  const ran = ex.rules.filter((v) => v.verdict === "ran").map((v) => v.rule);
+  const said = [ex.rule >= 0 ? `Rule ${ruleNo(ex.rule)} took this tick.` : "No rule took this tick."];
+  if (shadowed.length) {
+    said.push(`${shadowed.length === 1 ? "Rule" : "Rules"} ${shadowed.map(ruleNo).join(", ")}`
+      + ` also matched and never ran — ${shadowed.length === 1 ? "it is" : "they are"} below it.`);
+  } else if (ex.rule >= 0) {
+    said.push("Nothing below it would have matched.");
+  }
+  if (ran.length) {
+    said.push(`${ran.length === 1 ? "Rule" : "Rules"} ${ran.map(ruleNo).join(", ")} ran side effects`
+      + " and let evaluation carry on down the list.");
+  }
+  setText($("fmw-note"), said.join(" "));
+
+  const r = snap?.robots.find((x) => x.id === selected);
+  const p = libraryProgram(r);
+  const edit = $("fmw-edit");
+  edit.hidden = !p;
+  if (p) {
+    // The robot travels with the link: the editor opens this program and offers
+    // to shadow-test it against this very robot.
+    edit.href = `/editor?program=${encodeURIComponent(p.id)}`
+      + `&match=${encodeURIComponent(matchID)}&robot=${encodeURIComponent(r.id)}`;
+    edit.title = `open “${p.name}” in the editor and test it against ${shortID(r)}`;
+  }
+  $("fmw").hidden = false;
+}
+
+// The winning rule's own conditions, each with what it was worth (design 1a
+// 291-294). Flattened: the card gives it one line, and the exact bracketing is
+// what the editor's code view is for. A leaf under a NOT is written as the
+// negation and carries the negation's truth value, never the predicate's —
+// otherwise a matched rule reads as full of ✗.
+function whenLeaves(node, negate = false, out = [], depth = 0) {
+  if (!node || depth > 8) return out;
+  if (node.op === "not") return whenLeaves((node.of || [])[0], !negate, out, depth + 1);
+  if (node.op === "and" || node.op === "or") {
+    (node.of || []).forEach((k, i) => {
+      // De Morgan: under a NOT, an AND of conditions reads as an OR of their
+      // negations, and the negations are what is printed.
+      if (i > 0) out.push({ op: negate ? (node.op === "and" ? "or" : "and") : node.op });
+      whenLeaves(k, negate, out, depth + 1);
+    });
+    return out;
+  }
+  if (node.pred) out.push({ pred: node.pred, arg: node.arg || 0, negate });
+  return out;
+}
+
+function whenList(when, ex) {
+  const truth = new Map(ex.conditions.map((c) => [condKey(c), c]));
+  const row = el("div", "when");
+  row.append(el("span", "kw", "WHEN"));
+  for (const item of whenLeaves(when)) {
+    if (item.op) { row.append(el("span", "op", item.op.toUpperCase())); continue; }
+    const c = truth.get(`${item.pred}#${item.arg}`);
+    // No row, or a row nothing was asked of: neither ✓ nor ✗ is honest.
+    const val = c && !c.unknown && !c.impossible ? (item.negate ? !c.true : c.true) : null;
+    const leaf = el("span", val === true ? null : "no");
+    leaf.append(el("span", null, `${val === null ? "·" : val ? "✓" : "✗"} `),
+      el("code", null, (item.negate ? "not " : "") + condText(item)));
+    row.append(leaf);
+  }
+  // The conditions are read out of the viewer's own library, and a library row
+  // can be edited after it was installed. Said here rather than left implied.
+  row.title = "the rule as your library holds it now, checked against this tick";
+  return row;
+}
+
+// "Rules 01, 02 were tested and did not match" (design 1a 297). The rules above
+// the winner are what make the winner the winner, and a player looking at rule
+// 03 wants to know that 01 and 02 were asked at all.
+function testedLine(ex) {
+  if (!ex.rules.length) return "This program has no rules.";
+  if (ex.rule < 0) return `All ${plural(ex.rules.length, "rule")} were tested and none matched.`;
+  const above = ex.rules
+    .filter((v) => v.rule < ex.rule && v.verdict === "not_met")
+    .map((v) => v.rule);
+  if (!above.length) return "The first rule matched.";
+  return `${above.length === 1 ? "Rule" : "Rules"} ${above.map(ruleNo).join(", ")} `
+    + `${above.length === 1 ? "was" : "were"} tested and did not match.`;
+}
 
 // ---------------------------------------------------------------- commands
 //

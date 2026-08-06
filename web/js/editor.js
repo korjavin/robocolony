@@ -313,7 +313,12 @@ function topRule() {
 
 function renderRule(rule, i, total) {
   const dead = dryrun && dryrun.never_fired.includes(i);
-  const card = el("div", { className: `rule${topRule() === i ? " wins" : ""}${dead ? " dead" : ""}` });
+  // Raised off the paper: the rule taking the tick against a live robot if one
+  // is being shadow-tested, and otherwise the one the last dry run spent its
+  // decisions in. Both answer "which rule is running this robot"; the live one
+  // answers it about a robot that exists.
+  const wins = shadow ? shadow.rule === i : topRule() === i;
+  const card = el("div", { className: `rule${wins ? " wins" : ""}${dead ? " dead" : ""}` });
 
   const body = el("div", { className: "body" },
     el("div", { className: "kw", textContent: "WHEN" }),
@@ -335,7 +340,11 @@ function renderRule(rule, i, total) {
       iconButton("▲", "raise priority", () => move(i, -1), i === 0),
       iconButton("▼", "lower priority", () => move(i, 1), i === total - 1),
       iconButton("✕", "delete this rule", () => { current.program.rules.splice(i, 1); changed(); })));
-  for (const b of dryRunBadges(i)) verdict.append(b);
+  // A live verdict is about this robot, this tick; the dry run's badges are the
+  // fallback for a program no robot is running yet.
+  const live = shadowVerdict(i);
+  if (live) verdict.append(live);
+  else for (const b of dryRunBadges(i)) verdict.append(b);
 
   card.append(el("div", { className: "gutter" },
     // Padded, so the column stays one width down a list of ten or more and the
@@ -560,8 +569,11 @@ let timer = null;
 function changed() {
   // Any edit invalidates the last dry run: it was measured on a program that no
   // longer exists, and after a reorder its rule numbers point at other rules.
-  // The same goes for whatever the last refusal said about it.
+  // The same goes for whatever the last refusal said about it, and for the
+  // shadow test — which validate() re-runs a moment later, since asking again
+  // is one walk down a rule list rather than a simulation.
   dryrun = null;
+  shadow = null;
   err("");
   render();
   clearTimeout(timer);
@@ -576,9 +588,15 @@ async function validate() {
     });
     if (!res || seq !== pending) return;
     findings = res;
+    // The shadow test rides the same debounce: it is the verdict column of the
+    // cards about to be drawn, and drawing them twice would flicker every
+    // verdict on every keystroke.
+    await runShadow();
+    if (seq !== pending) return;
     renderRules();
     renderIssues();
     renderCode();
+    renderShadowHead();
   } catch (e) { err(e.message); }
 }
 
@@ -697,6 +715,186 @@ async function tryIt() {
 }
 
 // ---------------------------------------------------------------------------
+// Live shadow test (design 1d 696-758).
+//
+// The dry run asks "does this program do anything at all", in a generated
+// practice arena. The shadow test asks a different question — "what would these
+// rules decide about the situation one of my robots is in right now" — and the
+// server answers it against that robot's own perception this tick
+// (POST .../robots/{id}/shadow, internal/server/explain.go).
+//
+// Nothing is installed and nothing is changed. The endpoint takes the match's
+// read lock, evaluates the draft against a copy of the robot's view and returns
+// the verdicts; the robot goes on running whatever was installed on it, and the
+// only way to change that is still design §4.2's recall-and-install from the
+// match page. The picker says "test", never "apply", for that reason.
+//
+// Finding a robot to ask about is two reads, once, at load: the running matches
+// from the lobby list, and the first tick frame of each of the ones this player
+// is seated in — the only place a robot's installed program is named. A robot
+// is a candidate when what is installed on it is this library row, which
+// internal/server's installID spells lib-<program>-r<robot>.
+//
+// The dry run is not replaced. It stays exactly as it was and its badges are
+// what the cards carry whenever no live robot is running these rules — which is
+// every program being written for the first time.
+// ---------------------------------------------------------------------------
+
+let shadow = null;    // last ShadowResult, or null
+let shadowNote = "";  // why there is none, when the reason is worth saying
+let liveRobots = [];  // {match, id, name, program} — this viewer's own robots
+
+const params = new URLSearchParams(location.search);
+// The match page's "reorder in editor" link names the robot it was read on.
+const fromMatch = params.get("match") && params.get("robot")
+  ? `${params.get("match")}:${params.get("robot")}` : "";
+
+const botKey = (b) => `${b.match}:${b.id}`;
+const ruleNo = (i) => String(i + 1).padStart(2, "0");
+const botName = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String(r.id).padStart(2, "0")}`;
+
+// Only robots running the program that is open: a verdict about a robot running
+// something else would be a verdict about another program's ordering.
+const shadowCandidates = () =>
+  (current && current.id > 0 ? liveRobots : [])
+    .filter((b) => b.program === `lib-${current.id}-r${b.id}`);
+
+const shadowTarget = () =>
+  shadowCandidates().find((b) => botKey(b) === $("shadowbot").value) || null;
+
+// firstFrame opens a match stream, keeps the init frame's colony seats and the
+// first tick frame, and closes it. It is the only live world this page wants,
+// and holding the stream open would cost the server a subscriber for nothing.
+function firstFrame(match) {
+  return new Promise((resolve) => {
+    let es;
+    const timer = setTimeout(() => done(null), 5000);
+    const done = (v) => { clearTimeout(timer); es?.close(); resolve(v); };
+    try { es = new EventSource(`/api/matches/${match}/stream`); } catch { done(null); return; }
+    let colonies = [];
+    const read = (ev) => { try { return JSON.parse(ev.data); } catch { return null; } };
+    es.addEventListener("init", (ev) => { colonies = read(ev)?.colonies || []; });
+    es.addEventListener("tick", (ev) => done({ match, colonies, robots: read(ev)?.robots || [] }));
+    es.addEventListener("error", () => done(null));
+  });
+}
+
+async function findLiveRobots() {
+  const [lobbies, me] = await Promise.all([
+    api("GET", "/api/lobbies").catch(() => null),
+    api("GET", "/api/me").catch(() => null),
+  ]);
+  if (!me) return;
+  // Matches this player is seated in. A match they are only watching has no
+  // robot of theirs in it, and opening its stream to find that out would be a
+  // subscriber spent on a certainty.
+  const mine = (lobbies?.running || []).filter((l) => (l.members || []).some((m) => m.user_id === me.id));
+  const frames = await Promise.all(mine.map((l) => firstFrame(l.id)));
+  liveRobots = frames.filter(Boolean).flatMap((f) => {
+    const seats = new Set(f.colonies.filter((c) => c.user_id === me.id).map((c) => c.id));
+    return f.robots.filter((r) => seats.has(r.colony))
+      .map((r) => ({ match: f.match, id: r.id, name: botName(r), program: r.program || "" }));
+  });
+}
+
+function renderShadowPicker() {
+  const sel = $("shadowbot");
+  const cands = shadowCandidates();
+  const keep = sel.value;
+  sel.replaceChildren();
+  sel.disabled = cands.length === 0;
+  if (!cands.length) {
+    sel.append(el("option", { value: "", textContent: "no live robot" }));
+    return;
+  }
+  sel.append(el("option", { value: "", textContent: "shadow test off" }));
+  for (const b of cands) {
+    sel.append(el("option", { value: botKey(b), textContent: `${b.name} · match ${b.match}` }));
+  }
+  // A robot the player already picked stays picked; otherwise the one they came
+  // here from, and failing that the first — a shadow test nobody has to find is
+  // the whole point of the panel.
+  const pick = [keep, fromMatch].find((k) => cands.some((b) => botKey(b) === k));
+  sel.value = pick || botKey(cands[0]);
+}
+
+async function runShadow() {
+  shadow = null;
+  shadowNote = "";
+  const t = shadowTarget();
+  if (!t) {
+    if (!shadowCandidates().length) {
+      shadowNote = current && current.id > 0
+        ? "no live robot is running this program"
+        : "save these rules and install them to shadow-test them";
+    }
+    return;
+  }
+  try {
+    shadow = await api("POST", `/api/matches/${t.match}/robots/${t.id}/shadow`,
+      { program: current.program });
+  } catch (e) {
+    // 422: the draft does not fit that robot's blueprint, which is the same
+    // refusal an install would give. 404: the robot has been destroyed since
+    // the picker was built.
+    shadowNote = e.status === 422
+      ? `these rules do not fit ${t.name}'s blueprint`
+      : `${t.name}: ${e.message}`;
+  }
+}
+
+function renderShadowHead() {
+  const head = $("shadowhead");
+  const t = shadowTarget();
+  if (!shadow || !t) { head.textContent = shadowNote; head.title = ""; return; }
+  // Design's "SHADOW TEST: S-04 @ TICK 3720", plus the one thing evaluating
+  // from outside a tick cannot know (ShadowResult.SignalsAssumedAbsent): a
+  // tick's signals are delivered and consumed inside sim's Step, so there is no
+  // inbox out here and the communication conditions are answered as if none
+  // arrived.
+  head.textContent = `shadow test · ${t.name} @ tick ${shadow.tick}`
+    + (shadow.signals_assumed_absent ? " · signals assumed absent" : "");
+  head.title = "what these rules would decide against this robot's senses this tick."
+    + " Nothing is installed: the robot goes on running the program it has.";
+}
+
+// The four verdicts of design 1d, in the server's own words
+// (internal/prog/explain.go): the conditions did not hold, the rule took the
+// tick, it would have matched but a rule above it had already taken the tick,
+// or it matched and holds only side effects, so it ran and evaluation carried
+// on down the list.
+function shadowVerdict(i) {
+  if (!shadow) return null;
+  const v = (shadow.rules || []).find((r) => r.rule === i);
+  if (!v) return null;
+  if (v.verdict === "shadowed") {
+    return el("span", {
+      className: "badge dashed",
+      textContent: `✓ WOULD MATCH · SHADOWED BY ${ruleNo(v.shadowed_by)}`,
+      title: `its conditions hold, but rule ${ruleNo(v.shadowed_by)} took the tick before this rule`
+        + " was reached. Raise it above that rule to let it run.",
+    });
+  }
+  if (v.verdict === "won") {
+    return el("span", {
+      className: "badge solid", textContent: "✓ WINS",
+      title: "the first rule whose conditions hold, so it takes this tick",
+    });
+  }
+  if (v.verdict === "ran") {
+    return el("span", {
+      className: "badge dashed", textContent: "✓ WOULD MATCH",
+      title: "its conditions hold and it holds only side effects, so it runs and"
+        + " evaluation carries on down the list",
+    });
+  }
+  return el("span", {
+    className: "meta", textContent: "✗ NOT MET",
+    title: "its conditions did not hold against this robot's senses this tick",
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Code view (UX pass 1e). The program written out as text, one row per line,
 // with the same per-rule verdict in the gutter that the cards carry.
 //
@@ -726,8 +924,17 @@ const condRefs = (node, out = []) => {
 };
 
 // mark is the gutter verdict, and it is the card's verdict said in one glyph.
+// The shadow test speaks first when there is one: it is about a robot that
+// exists. "~" is the mark the dry run has no equivalent of — a rule whose
+// conditions hold and which never ran anyway (design 1e 848, 878-882).
 function mark(i) {
   if (issuesFor(i).some((s) => s.severity !== "note")) return "!";
+  if (shadow) {
+    const v = (shadow.rules || []).find((r) => r.rule === i);
+    if (!v) return "·";
+    if (v.verdict === "shadowed") return "~";
+    return v.verdict === "not_met" ? "✗" : "✓";
+  }
   if (!dryrun) return "·";
   const row = (dryrun.rules || []).find((r) => r.rule === i);
   return row && row.fired > 0 ? "✓" : "✗";
@@ -838,6 +1045,10 @@ function render() {
   renderIssues();
   renderDryRun();
   renderCode();
+  // Which robots are candidates depends on which program is open, so the picker
+  // is rebuilt with everything else.
+  renderShadowPicker();
+  renderShadowHead();
 }
 
 async function reloadLibrary() {
@@ -1055,6 +1266,13 @@ document.addEventListener("keydown", (ev) => {
   move(line.rule, -1);
 });
 
+$("shadowbot").addEventListener("change", async () => {
+  await runShadow();
+  renderRules();
+  renderCode();
+  renderShadowHead();
+});
+
 $("library").addEventListener("change", () => {
   const p = programs.find((x) => String(x.id) === $("library").value);
   if (p) open(p); else renderLibrary();
@@ -1116,5 +1334,19 @@ if (lang) {
   current = blank();
   $("name").value = current.name;
   await reloadLibrary();
-  changed();
+  // /editor?program=N opens that library row. It is the link the match page's
+  // sensor panel hands over, so "reorder in editor" lands on the rules the
+  // robot being watched is actually running rather than on a blank program.
+  const wanted = programs.find((p) => String(p.id) === params.get("program"));
+  if (wanted) open(wanted); else changed(); // open() validates too
+
+  // Last, and never awaited by anything above: the editor is usable before the
+  // answer lands, and a player with no match running pays one lobby read.
+  findLiveRobots().then(async () => {
+    renderShadowPicker();
+    await runShadow();
+    renderRules();
+    renderCode();
+    renderShadowHead();
+  });
 }
