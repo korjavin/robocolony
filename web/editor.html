@@ -87,10 +87,14 @@
      dropping it at the end of the list starts a new rule. */
   .cat { flex: 1 1 0; overflow-y: auto; padding-bottom: 1rem; }
   .cat .label { display: block; padding: 12px 0 5px; }
+  /* This .chip predates app.css's, which is the design system's 9px colour
+     square; the width and height below pin the box against it. a later
+     editor pass reconciles the two names. */
   .chip {
     border: 1px solid var(--line-2); background: var(--bg-elev);
     padding: .25rem .5rem; margin: .15rem 0; font-size: 12px; cursor: grab;
     display: flex; gap: .5rem; align-items: baseline;
+    width: auto; height: auto;
   }
   .chip:hover { background: var(--bg-2); }
   .chip:active { cursor: grabbing; }
