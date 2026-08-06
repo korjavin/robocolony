@@ -152,6 +152,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	library.Routes(mux, a.RequireAuth)
 	server.NewDryRunner(library).Routes(mux, a.RequireAuth)
 	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry(), stopping)))
+	mux.Handle("GET /api/matches/{id}/replay", a.RequireAuth(server.Replay(lobbies, stopping)))
 	server.NewRobots(lobbies.Registry(), database).Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))

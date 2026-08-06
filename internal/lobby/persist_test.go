@@ -3,6 +3,7 @@ package lobby
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -154,6 +155,137 @@ func testReplayPreservesStateHash(t *testing.T, set Settings) {
 	}
 }
 
+// TestReplayFinishedMatchToItsEnd is the E9 half of the assertion above: a
+// finished match's stored log replays to its *final* tick — the tick the old
+// guard rejected outright — and lands on the same world.
+func TestReplayFinishedMatchToItsEnd(t *testing.T) {
+	svc, database := newService(t)
+	set := shortSettings(60)
+	lobby, members := seatedLobby(t, svc, database, set)
+	set.Seed = mustSettings(t, lobby).Seed
+
+	rec, m := finishedMatch(t, svc, database, lobby, set, members)
+
+	restored, err := replay(lobby, set, members, rec)
+	if err != nil {
+		t.Fatalf("replay() of a finished match = %v", err)
+	}
+	if got, want := restored.world.Tick, m.world.Tick; got != want {
+		t.Fatalf("replayed to tick %d, want the final tick %d", got, want)
+	}
+	if got, want := restored.world.StateHash(), m.world.StateHash(); got != want {
+		t.Fatalf("the replayed final world hashes %#x, the original %#x", got, want)
+	}
+	if !restored.Finished() {
+		t.Error("a match replayed to its end does not report itself finished")
+	}
+
+	// The guard stays strict for the Restore path: the same record without
+	// finished_at is a *running* match claiming to stand at its own end, which
+	// is corrupt.
+	rec.FinishedAt = time.Time{}
+	if _, err := replay(lobby, set, members, rec); err == nil {
+		t.Error("replay() accepted a running match recorded at its end tick")
+	}
+}
+
+// TestFinishedMatchRefusesCommands: the finishing save is the last write of the
+// record, so a command that lands after it would be lost from the log for good
+// and leave the stored match replaying into a world nobody saw. The pre-check
+// in internal/server cannot hold on its own — the finished flag is set under the
+// match lock — so the refusal has to be in Apply.
+func TestFinishedMatchRefusesCommands(t *testing.T) {
+	set := shortSettings(60)
+	m := testMatch(t, set, 1)
+	for m.step() { //nolint:revive // run it to its end
+	}
+	var robot int
+	m.Read(func(w *sim.World, _ *prog.Runtime) { robot = w.Robots[0].ID })
+
+	before := len(m.log)
+	err := m.Apply(Command{Kind: CmdRecall, Robot: robot}, func(w *sim.World, _ *prog.Runtime) error {
+		w.RobotByID(robot).Recalled = true
+		return nil
+	})
+	if !errors.Is(err, ErrMatchOver) {
+		t.Fatalf("Apply() on a finished match = %v, want ErrMatchOver", err)
+	}
+	if len(m.log) != before {
+		t.Errorf("the refused command was recorded anyway: log has %d entries, want %d", len(m.log), before)
+	}
+	if m.world.RobotByID(robot).Recalled {
+		t.Error("the refused command was applied to the final world")
+	}
+}
+
+// TestRebuildCost measures what a replay connection costs, because the client
+// design makes every control (pause, scrub, speed) a reconnect and therefore a
+// rebuild. It logs rather than asserts: the number is hardware, and a threshold
+// here would only flake on CI.
+//
+// Default settings, the default four colonies, replayed from tick 0 to the end
+// of a 600-second match: 0.23-0.32s when a core is free, 0.59s median over
+// seven runs on a four-core box carrying other builds, and several seconds when
+// that box is oversubscribed — which is scheduling, not simulation. That is
+// what settled the design at "rebuild per connection" and left the
+// warm-session cache unbuilt (see Service.Replay).
+//
+// It scales with the target tick, and rc-8hu left match duration with no
+// ceiling, so a much longer match costs proportionally more.
+func TestRebuildCost(t *testing.T) {
+	if testing.Short() {
+		t.Skip("6000 ticks of simulation")
+	}
+	svc, database := newService(t)
+	set := DefaultSettings()
+	set.Seed = 42
+	set.AI = Profiles()[:3] // one human seat plus three AI: the default colony count
+	lobby, members := seatedLobby(t, svc, database, set)
+	set.Seed = mustSettings(t, lobby).Seed
+
+	end := set.durationTicks()
+	// An empty command log: the rebuild is newMatch plus the ticks, and a
+	// handful of recalls is not measurable next to 6000 steps.
+	rec := db.MatchLog{
+		LobbyID: lobby.ID, Fingerprint: fingerprint(), Tick: int64(end),
+		StartedAt: time.Now().UTC(), Commands: "[]", FinishedAt: time.Now().UTC(),
+	}
+	started := time.Now()
+	m, err := replay(lobby, set, members, rec)
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatalf("replay() = %v", err)
+	}
+	t.Logf("rebuild to the end tick: %v for %d ticks, %d colonies, default settings",
+		elapsed.Round(time.Millisecond), end, len(m.Colonies))
+}
+
+// finishedMatch runs a match to its end with a command in the middle and saves
+// the finishing record, the way the tick driver does.
+func finishedMatch(t *testing.T, svc *Service, database *db.DB, lobby db.Lobby, set Settings, members []db.Member) (db.MatchLog, *Match) {
+	t.Helper()
+	m, err := newMatch(lobby, set, members)
+	if err != nil {
+		t.Fatalf("newMatch() = %v", err)
+	}
+	for range 37 {
+		m.step()
+	}
+	recall(t, m, m.world.Robots[0].ID)
+	for m.step() { //nolint:revive // run it to its end
+	}
+	svc.save(m)
+	// What matchEnded does on the driver goroutine.
+	if err := database.SetLobbyState(t.Context(), lobby.ID, db.LobbyFinished); err != nil {
+		t.Fatalf("SetLobbyState() = %v", err)
+	}
+	rec, err := database.MatchLogByID(t.Context(), lobby.ID)
+	if err != nil {
+		t.Fatalf("MatchLogByID() = %v", err)
+	}
+	return rec, m
+}
+
 // TestRestoreResumesRunningMatch is the same thing end to end: a second service
 // over the same database brings the match back and starts ticking it again.
 func TestRestoreResumesRunningMatch(t *testing.T) {
@@ -270,9 +402,10 @@ func TestRestoreAbandonsUnusableRecords(t *testing.T) {
 	}
 }
 
-// TestFinishedMatchDropsItsRecord: a match that reaches its duration must leave
-// nothing behind for a restart to replay.
-func TestFinishedMatchDropsItsRecord(t *testing.T) {
+// TestFinishedMatchKeepsItsRecord: a match that reaches its duration keeps its
+// record (E9), marked finished and carrying the standing, at the exact final
+// tick — and a restart must not resurrect it from that record.
+func TestFinishedMatchKeepsItsRecord(t *testing.T) {
 	svc, database := newService(t)
 	set := shortSettings(60)
 	lobby, members := seatedLobby(t, svc, database, set)
@@ -286,20 +419,58 @@ func TestFinishedMatchDropsItsRecord(t *testing.T) {
 		m.step()
 	}
 	svc.save(m)
-	if _, err := database.MatchLogByID(t.Context(), lobby.ID); err != nil {
+	rec, err := database.MatchLogByID(t.Context(), lobby.ID)
+	if err != nil {
 		t.Fatalf("MatchLogByID() = %v, want a saved record", err)
+	}
+	if !rec.FinishedAt.IsZero() {
+		t.Error("a running match's record is marked finished")
 	}
 
 	for m.step() { //nolint:revive // run it to its end
 	}
-	svc.forget(m)
-	if _, err := database.MatchLogByID(t.Context(), lobby.ID); err == nil {
-		t.Error("a finished match left its replay record behind")
+	svc.save(m) // the finishing save the tick driver makes
+
+	rec, err = database.MatchLogByID(t.Context(), lobby.ID)
+	if err != nil {
+		t.Fatalf("MatchLogByID() = %v, want the finished match's record kept", err)
 	}
-	// And a save after the end must not put one back.
-	svc.save(m)
-	if _, err := database.MatchLogByID(t.Context(), lobby.ID); err == nil {
-		t.Error("saving a finished match wrote a record a restart could replay")
+	if rec.FinishedAt.IsZero() {
+		t.Error("the record of a finished match has no finished_at")
+	}
+	if want := int64(set.durationTicks()); rec.Tick != want {
+		t.Errorf("the record stops at tick %d, want the final tick %d", rec.Tick, want)
+	}
+	var sum Summary
+	if err := json.Unmarshal([]byte(rec.Summary), &sum); err != nil {
+		t.Fatalf("stored summary does not decode: %v", err)
+	}
+	if len(sum.Info.Colonies) != len(m.Colonies) {
+		t.Errorf("the summary holds %d colonies, want %d", len(sum.Info.Colonies), len(m.Colonies))
+	}
+	if len(sum.History.Ticks) == 0 {
+		t.Error("the summary holds no score series: the history graph would be empty")
+	}
+
+	// A restart must not put a tick driver back behind it, and must not delete
+	// the history to do so. The lobby row still says running here, which is the
+	// crash window between the finishing save and matchEnded.
+	next := New(database)
+	if err := next.Restore(t.Context()); err != nil {
+		t.Fatalf("Restore() = %v", err)
+	}
+	if _, ok := next.reg.Get(lobby.ID); ok {
+		t.Error("Restore() resurrected a match that had already finished")
+	}
+	if _, err := database.MatchLogByID(t.Context(), lobby.ID); err != nil {
+		t.Errorf("Restore() destroyed a finished match's history: %v", err)
+	}
+	after, err := database.LobbyByID(t.Context(), lobby.ID)
+	if err != nil {
+		t.Fatalf("LobbyByID() = %v", err)
+	}
+	if after.State != db.LobbyFinished {
+		t.Errorf("lobby state is %q, want finished", after.State)
 	}
 }
 

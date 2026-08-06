@@ -37,7 +37,7 @@ type Service struct {
 // starts, and nothing is restored until Restore runs.
 func New(database *db.DB) *Service {
 	s := &Service{db: database}
-	s.reg = NewRegistry(s.save, s.forget)
+	s.reg = NewRegistry(s.save)
 	return s
 }
 
@@ -70,6 +70,16 @@ func (s *Service) Restore(ctx context.Context) error {
 		if rerr == nil {
 			continue
 		}
+		if errors.Is(rerr, errMatchIsHistory) {
+			// The match reached its end and the process died between the
+			// finishing save and matchEnded. Settle the lobby and keep the
+			// record: it is this match's history now (archive.go).
+			slog.Info("a match that ended just before shutdown is now settled", "lobby_id", l.ID)
+			if err := s.db.SetLobbyState(ctx, l.ID, db.LobbyFinished); err != nil {
+				return err
+			}
+			continue
+		}
 		slog.Warn("could not restore a running match, finishing it", "lobby_id", l.ID, "err", rerr)
 		if err := s.db.SetLobbyState(ctx, l.ID, db.LobbyFinished); err != nil {
 			return err
@@ -81,6 +91,10 @@ func (s *Service) Restore(ctx context.Context) error {
 	return nil
 }
 
+// errMatchIsHistory: the record is of a match that is already over, so there is
+// nothing to restore and nothing to delete.
+var errMatchIsHistory = errors.New("lobby: the match had already finished")
+
 // restore replays one match and puts a tick driver back behind it.
 func (s *Service) restore(ctx context.Context, lobby db.Lobby) error {
 	rec, err := s.db.MatchLogByID(ctx, lobby.ID)
@@ -89,6 +103,11 @@ func (s *Service) restore(ctx context.Context, lobby db.Lobby) error {
 			return errors.New("no replay record: the match predates match persistence")
 		}
 		return err
+	}
+	// Belt and braces on top of the lobby-state filter above: a finished record
+	// is history, never something to put a tick driver back behind.
+	if !rec.FinishedAt.IsZero() {
+		return errMatchIsHistory
 	}
 	if rec.Fingerprint != fingerprint() {
 		return fmt.Errorf("recorded by a build that simulates differently (%s, this build is %s)", rec.Fingerprint, fingerprint())
@@ -118,37 +137,43 @@ func (s *Service) restore(ctx context.Context, lobby db.Lobby) error {
 // with no lock held: Match.record copies under the match lock and this writes
 // afterwards, so the simulation never waits on the disk.
 //
+// The save of a finished match is the one that matters most (E9): it is at the
+// exact final tick, it marks the record as history so Restore leaves it alone,
+// and it carries the summary the history page reads when the fingerprint has
+// moved on and the log can no longer be replayed.
+//
 // A failed save is logged, not propagated: the match keeps running, and the
 // worst it costs is the rewind of a restart that never happens.
 func (s *Service) save(m *Match) {
 	tick, log, finished := m.record()
-	if finished {
-		return // forget removes the record instead
-	}
 	commands, err := json.Marshal(log)
 	if err != nil {
 		slog.Error("could not encode a match command log", "match_id", m.ID, "err", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := s.db.SaveMatchLog(ctx, db.MatchLog{
+	rec := db.MatchLog{
 		LobbyID:     m.ID,
 		Fingerprint: fingerprint(),
 		Tick:        int64(tick),
 		StartedAt:   m.Started,
 		Commands:    string(commands),
-	}); err != nil {
-		slog.Error("could not save a match replay record", "match_id", m.ID, "err", err)
 	}
-}
-
-// forget drops the replay record of a match that has ended.
-func (s *Service) forget(m *Match) {
+	if finished {
+		// Info and History take the match lock themselves, which is why they
+		// are outside record() rather than in it. The world is frozen by now,
+		// so the three reads cannot disagree.
+		summary, err := json.Marshal(Summary{Info: m.Info(), History: m.History()})
+		if err != nil {
+			slog.Error("could not encode a finished match's summary", "match_id", m.ID, "err", err)
+			return
+		}
+		rec.FinishedAt = time.Now().UTC()
+		rec.Summary = string(summary)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.db.DeleteMatchLog(ctx, m.ID); err != nil {
-		slog.Error("could not delete a finished match's replay record", "match_id", m.ID, "err", err)
+	if err := s.db.SaveMatchLog(ctx, rec); err != nil {
+		slog.Error("could not save a match replay record", "match_id", m.ID, "err", err)
 	}
 }
 
@@ -566,6 +591,11 @@ func (s *Service) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("PUT /api/lobbies/{id}/loadout", s.handleSetLoadout)
 	handle("POST /api/lobbies/{id}/start", s.handleStart)
 	handle("GET /api/matches/{id}", s.handleMatch)
+	// The history of finished matches (E9, archive.go). The replay *stream*
+	// lives in internal/server with the live one, and is registered in
+	// cmd/server/main.go alongside it.
+	handle("GET /api/history", s.handleHistory)
+	handle("GET /api/history/{id}", s.handleHistoryOf)
 }
 
 func (s *Service) handleList(w http.ResponseWriter, r *http.Request) {

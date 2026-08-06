@@ -85,7 +85,9 @@ func (c Command) apply(w *sim.World, rt *prog.Runtime) error {
 	return nil
 }
 
-// replay rebuilds a match from its lobby and its recorded input log.
+// replay rebuilds a *running* match from its lobby and its recorded input log,
+// at the tick the record was written at. It is Restore's half of the job; a
+// finished match's replay stops at a tick the caller chooses (Service.Replay).
 //
 // It is the live path exactly: newMatch generates the same arena from the same
 // seat list and seed, and Match.step advances it, so the resource spawns and
@@ -95,6 +97,31 @@ func (c Command) apply(w *sim.World, rt *prog.Runtime) error {
 // Every failure here is a corrupt or foreign record, and the caller abandons
 // the match rather than serving a world that is not the one the players left.
 func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) (*Match, error) {
+	m, err := newReplay(lobby, set, members, rec)
+	if err != nil {
+		return nil, err
+	}
+	target := uint64(rec.Tick)
+	// A match still marked running cannot legitimately stand at or past its
+	// end: the driver finishes it at that tick. A *finished* record at exactly
+	// its end is the normal case, and newReplay has already rejected one past
+	// it, so the extra condition here is what keeps this path strict.
+	if end := set.durationTicks(); target >= end && rec.FinishedAt.IsZero() {
+		return nil, fmt.Errorf("lobby: match %d: recorded at tick %d, past its end at %d", lobby.ID, target, end)
+	}
+	if err := m.ReplayTo(target); err != nil {
+		return nil, err
+	}
+	if m.replayed < len(m.log) {
+		return nil, fmt.Errorf("lobby: match %d: %d commands recorded past tick %d",
+			lobby.ID, len(m.log)-m.replayed, target)
+	}
+	return m, nil
+}
+
+// newReplay decodes a record into a freshly generated match standing at tick 0,
+// with the log loaded and nothing of it applied yet. ReplayTo advances it.
+func newReplay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) (*Match, error) {
 	var cmds []Command
 	if err := json.Unmarshal([]byte(rec.Commands), &cmds); err != nil {
 		return nil, fmt.Errorf("lobby: match %d: decode command log: %w", lobby.ID, err)
@@ -102,43 +129,67 @@ func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) 
 	if rec.Tick < 0 {
 		return nil, fmt.Errorf("lobby: match %d: negative tick %d", lobby.ID, rec.Tick)
 	}
-	target := uint64(rec.Tick)
-	if end := set.durationTicks(); target >= end {
-		return nil, fmt.Errorf("lobby: match %d: recorded at tick %d, past its end at %d", lobby.ID, target, end)
+	if end := set.durationTicks(); uint64(rec.Tick) > end {
+		return nil, fmt.Errorf("lobby: match %d: recorded at tick %d, past its end at %d", lobby.ID, rec.Tick, end)
 	}
-
 	m, err := newMatch(lobby, set, members)
 	if err != nil {
 		return nil, err
 	}
 	m.Started = rec.StartedAt
 	m.log = cmds
+	return m, nil
+}
 
-	// A command recorded at tick t applied while the world stood at t, before
-	// the step that left it — so commands go in before the check, and the ones
-	// at the target tick still apply.
-	i := 0
+// ReplayTo steps a replayed match forward to target, re-applying the recorded
+// commands as it passes their ticks. It is incremental: calling it with
+// target+1 advances one tick, which is how the replay stream (internal/server)
+// plays a finished match back frame by frame without a second protocol.
+//
+// Only for a match built from a stored record. On a live one it would re-apply
+// commands the players have already made.
+func (m *Match) ReplayTo(target uint64) error {
+	stalled := false
 	for {
-		for i < len(cmds) && cmds[i].Tick <= m.world.Tick {
-			if cmds[i].Tick < m.world.Tick {
-				return nil, fmt.Errorf("lobby: match %d: command log is out of order at tick %d", lobby.ID, cmds[i].Tick)
-			}
-			if err := cmds[i].apply(m.world, m.runtime); err != nil {
-				return nil, fmt.Errorf("lobby: match %d: replay command %d: %w", lobby.ID, i, err)
-			}
-			i++
+		tick, err := m.applyDue()
+		if err != nil {
+			return err
 		}
-		if m.world.Tick >= target {
+		if tick >= target {
+			return nil
+		}
+		if stalled {
+			// Either the match ended before the target — a record that claims
+			// more ticks than its settings allow — or it was already over.
+			return fmt.Errorf("lobby: match %d: ended at tick %d while replaying to %d", m.ID, tick, target)
+		}
+		stalled = !m.step()
+	}
+}
+
+// applyDue re-applies every recorded command due at the tick the world is
+// standing on, and reports that tick.
+//
+// A command recorded at tick t applied while the world stood at t, before the
+// step that left it — so this runs before the target check in ReplayTo, and the
+// commands at the target tick still apply.
+func (m *Match) applyDue() (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for m.replayed < len(m.log) {
+		c := m.log[m.replayed]
+		if c.Tick > m.world.Tick {
 			break
 		}
-		if !m.step() {
-			return nil, fmt.Errorf("lobby: match %d: ended at tick %d while replaying to %d", lobby.ID, m.world.Tick, target)
+		if c.Tick < m.world.Tick {
+			return 0, fmt.Errorf("lobby: match %d: command log is out of order at tick %d", m.ID, c.Tick)
 		}
+		if err := c.apply(m.world, m.runtime); err != nil {
+			return 0, fmt.Errorf("lobby: match %d: replay command %d: %w", m.ID, m.replayed, err)
+		}
+		m.replayed++
 	}
-	if i < len(cmds) {
-		return nil, fmt.Errorf("lobby: match %d: %d commands recorded past tick %d", lobby.ID, len(cmds)-i, target)
-	}
-	return m, nil
+	return m.world.Tick, nil
 }
 
 // fingerprint identifies this binary's simulation behaviour.
