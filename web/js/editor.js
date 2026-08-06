@@ -740,9 +740,10 @@ async function tryIt() {
 // every program being written for the first time.
 // ---------------------------------------------------------------------------
 
-let shadow = null;    // last ShadowResult, or null
-let shadowNote = "";  // why there is none, when the reason is worth saying
-let liveRobots = [];  // {match, id, name, program} — this viewer's own robots
+let shadow = null;      // last ShadowResult, or null
+let shadowNote = "";    // why there is none, when the reason is worth saying
+let liveRobots = [];    // {match, id, name, program} — this viewer's own robots
+let shadowPick = null;  // the robot the player chose; "" is off, null is never asked
 
 const params = new URLSearchParams(location.search);
 // The match page's "reorder in editor" link names the robot it was read on.
@@ -807,7 +808,6 @@ async function findLiveRobots() {
 function renderShadowPicker() {
   const sel = $("shadowbot");
   const cands = shadowCandidates();
-  const keep = sel.value;
   sel.replaceChildren();
   sel.disabled = cands.length === 0;
   if (!cands.length) {
@@ -818,11 +818,17 @@ function renderShadowPicker() {
   for (const b of cands) {
     sel.append(el("option", { value: botKey(b), textContent: `${b.name} · match ${b.match}` }));
   }
-  // A robot the player already picked stays picked; otherwise the one they came
-  // here from, and failing that the first — a shadow test nobody has to find is
-  // the whole point of the panel.
-  const pick = [keep, fromMatch].find((k) => cands.some((b) => botKey(b) === k));
-  sel.value = pick || botKey(cands[0]);
+  // Whatever the player chose stays chosen, and "off" is a choice: this runs on
+  // every edit, and re-picking a robot here would quietly turn the test back on
+  // for someone who had switched it off. Only when they have chosen nothing at
+  // all does the picker choose — the robot they came here from, else the first,
+  // because a shadow test nobody has to go and find is the point of the panel.
+  const want = shadowPick === null
+    ? (cands.some((b) => botKey(b) === fromMatch) ? fromMatch : botKey(cands[0]))
+    : shadowPick;
+  // A robot that has been destroyed since it was picked is not a choice any
+  // more; "off" always is.
+  sel.value = want === "" || cands.some((b) => botKey(b) === want) ? want : botKey(cands[0]);
 }
 
 async function runShadow() {
@@ -1274,6 +1280,7 @@ document.addEventListener("keydown", (ev) => {
 });
 
 $("shadowbot").addEventListener("change", async () => {
+  shadowPick = $("shadowbot").value;
   await runShadow();
   renderRules();
   renderCode();
