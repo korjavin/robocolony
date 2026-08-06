@@ -118,12 +118,14 @@ func TestStreamDeliversEveryEventOnce(t *testing.T) {
 			if err := json.Unmarshal(f.data, &in); err != nil {
 				t.Fatalf("init frame does not decode: %v", err)
 			}
+			checkPhase(t, in.Tick, in.Events)
 			got = append(got, in.Events...)
 		case "tick":
 			var snap Snapshot
 			if err := json.Unmarshal(f.data, &snap); err != nil {
 				t.Fatalf("tick frame does not decode: %v", err)
 			}
+			checkPhase(t, snap.Tick, snap.Events)
 			got = append(got, snap.Events...)
 		default:
 			t.Fatalf("frame %d is %q, want init or tick", i, f.name)
@@ -152,5 +154,19 @@ func TestStreamDeliversEveryEventOnce(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("the stream delivered %d events up to tick %d, the match holds %d:\ngot  %+v\nwant %+v",
 			len(got), last, len(want), got, want)
+	}
+}
+
+// checkPhase: an event is stamped with the tick it happened *during*, so a
+// frame may only carry events from ticks it has already advanced past. One that
+// rode a frame too early would mark the timeline against a board that does not
+// show the loss yet — and would then be missing from the frame that does.
+func checkPhase(t *testing.T, frameTick uint64, evs []Event) {
+	t.Helper()
+	for _, e := range evs {
+		if e.Tick >= frameTick {
+			t.Fatalf("a frame at tick %d carries a %s event stamped tick %d, which it does not show yet",
+				frameTick, e.Kind, e.Tick)
+		}
 	}
 }

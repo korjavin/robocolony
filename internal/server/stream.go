@@ -145,28 +145,19 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 			initFrame = NewInit(info, m.Colonies, world, hist, feed)
 			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
-		// The cursor comes off the feed that was actually sent, never off
-		// board.Tick: the tick driver can advance the world between the two
-		// reads above, and a cursor at board.Tick would then declare the events
-		// of the ticks in between already delivered and drop them. An empty
-		// feed means an empty buffer, so a zero cursor owes the client nothing
-		// it has already had.
+		// The cursor starts after the backlog the init frame just took, never at
+		// board.Tick (see takeEvents).
 		var sentEvents uint64
 		if n := len(feed); n > 0 {
 			sentEvents = feed[n-1].Tick + 1
 		}
-		// Anything the world produced between those two reads rides this first
+		// Whatever the world produced between those two reads rides this first
 		// board frame rather than waiting for the next fresh tick. Usually
 		// nothing — but if that advance was the match's *final* tick there is no
-		// next fresh tick: the loop below sees world.Tick == last and goes
+		// next fresh tick: the loop below finds world.Tick == last and goes
 		// straight to the end frame, and a spectator who connected in that
-		// window would lose the last thing that happened in the match. After
-		// this drain the world is either frozen and fully drained, or still
-		// running and the loop delivers the rest.
-		if evs := m.Events(sentEvents); len(evs) > 0 {
-			sentEvents = evs[len(evs)-1].Tick + 1
-			board.Events = newEvents(evs)
-		}
+		// window would lose the last thing that happened in the match.
+		board.Events, sentEvents = takeEvents(m, sentEvents, board.Tick)
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return
@@ -223,17 +214,7 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 				})
 				if fresh {
 					last = snap.Tick
-					// Outside Read, so the world may already have moved on and
-					// handed us an event from a tick past this frame's.
-					// Advancing the cursor off the events themselves rather
-					// than off snap.Tick is what makes that harmless: nothing
-					// is sent twice and nothing is skipped, and one tick's
-					// events are appended in a single critical section, so a
-					// cut can never split a tick.
-					if evs := m.Events(sentEvents); len(evs) > 0 {
-						sentEvents = evs[len(evs)-1].Tick + 1
-						snap.Events = newEvents(evs)
-					}
+					snap.Events, sentEvents = takeEvents(m, sentEvents, snap.Tick)
 					if _, err := send(w, flusher, "tick", snap); err != nil {
 						return
 					}
@@ -246,6 +227,36 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// takeEvents is what a frame at tick still owes the client from the match event
+// feed, and the cursor that follows it. Both stream handlers drain through here,
+// so the live stream and the replay stream deliver on identical terms — a
+// client renders one code path.
+//
+// Two rules, and both are about a race with the tick driver: the feed and the
+// board are separate reads of the match lock, so the world can move between
+// them.
+//
+//   - only events from ticks the frame has already advanced past. An event is
+//     stamped with the tick it happened *during*, so one stamped at or after
+//     the frame's tick describes something the frame does not show yet; it
+//     waits for the frame that does.
+//   - the cursor comes off the events actually taken, never off the frame's
+//     tick. A cursor set from the tick would declare a straddled tick's events
+//     delivered when they were not, and drop them silently.
+func takeEvents(m *lobby.Match, since, tick uint64) ([]Event, uint64) {
+	var owed []sim.Event
+	for _, e := range m.Events(since) {
+		if e.Tick >= tick {
+			break
+		}
+		owed = append(owed, e)
+	}
+	if len(owed) == 0 {
+		return nil, since
+	}
+	return newEvents(owed), owed[len(owed)-1].Tick + 1
 }
 
 // send marshals and writes one SSE event, then flushes, and reports the payload

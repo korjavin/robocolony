@@ -106,7 +106,7 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
 		// Off the feed that was sent, not off board.Tick — the same rule as the
-		// live stream, where the difference is load-bearing (stream.go).
+		// live stream, where the difference is load-bearing (takeEvents).
 		var sentEvents uint64
 		if n := len(feed); n > 0 {
 			sentEvents = feed[n-1].Tick + 1
@@ -158,13 +158,11 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 					snap = NewSnapshot(world, rt, info.EndTick, nil)
 				})
 				tick = snap.Tick
-				// Nothing else drives this match, so the cursor is exact here;
-				// it is advanced off the events for the same reason as the live
-				// stream, which is the one code path a client sees.
-				if evs := m.Events(sentEvents); len(evs) > 0 {
-					sentEvents = evs[len(evs)-1].Tick + 1
-					snap.Events = newEvents(evs)
-				}
+				// Nothing else drives this match, so neither of takeEvents'
+				// races can happen here. It is used anyway: a replay must
+				// deliver the feed on exactly the terms the live stream does,
+				// or the client grows a second code path.
+				snap.Events, sentEvents = takeEvents(m, sentEvents, snap.Tick)
 				if _, err := send(w, flusher, "tick", snap); err != nil {
 					return
 				}
