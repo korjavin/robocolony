@@ -748,8 +748,8 @@ async function tryIt() {
 // Finding a robot to ask about is two reads, once, at load: the running matches
 // from the lobby list, and the first tick frame of each of the ones this player
 // is seated in — the only place a robot's installed program is named. A robot
-// is a candidate when what is installed on it is this library row, which
-// internal/server's installID spells lib-<program>-r<robot>.
+// is a candidate when what is installed on it is this library row, whatever
+// version of it (runsThisProgram).
 //
 // The dry run is not replaced. It stays exactly as it was and its badges are
 // what the cards carry whenever no live robot is running these rules — which is
