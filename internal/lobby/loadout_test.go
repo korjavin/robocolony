@@ -131,7 +131,7 @@ func TestLoadoutSurvivesRestart(t *testing.T) {
 	// The library moves on under the running match: a replay that resolved ids
 	// would rebuild the colony from these rules instead of the ones it started
 	// with.
-	if _, err := database.UpdateProgram(ctx, owner.ID, p.ID, "hunter", string(mustEncode(t, foragerProgram()))); err != nil {
+	if _, err := database.UpdateProgram(ctx, owner.ID, p.ID, "hunter", string(mustEncode(t, foragerProgram())), true); err != nil {
 		t.Fatalf("UpdateProgram() = %v", err)
 	}
 
@@ -655,6 +655,42 @@ func TestStartingBudgetIsSpentInFull(t *testing.T) {
 	if minStartingBudget < DefaultBlueprint().Value() {
 		t.Fatalf("minStartingBudget %d is below the built-in scavenger's %d, so a legal lobby could not be started",
 			minStartingBudget, DefaultBlueprint().Value())
+	}
+}
+
+// TestProgramRef pins the round trip both halves of "in use by N robots" rest
+// on: the runtime id is the only record of which version a live robot was
+// given, and reading it back wrong would count the wrong robots — or, for the
+// built-in kits, count robots that came from no library at all.
+func TestProgramRef(t *testing.T) {
+	for _, tc := range []struct {
+		id        string
+		wantProg  int64
+		wantVer   int
+		wantIsLib bool
+	}{
+		{ProgramRuntimeID(7, 3), 7, 3, true},
+		{ProgramRuntimeID(7, 3) + "-r12", 7, 3, true}, // one robot reprogrammed
+		{ProgramRuntimeID(1024, 1), 1024, 1, true},
+		{ProgramRuntimeID(4, 0), 4, 0, true}, // a loadout stored before versions
+		{DefaultProgramID, 0, 0, false},      // the built-in kit
+		{foragerProgramID, 0, 0, false},      // an AI profile
+		{"lib-7", 0, 0, false},               // the pre-version id, no longer written
+		{"lib-x-v1", 0, 0, false},
+		{"", 0, 0, false},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			prog, ver, ok := ProgramRef(tc.id)
+			if ok != tc.wantIsLib {
+				t.Fatalf("ProgramRef(%q) recognised = %v, want %v", tc.id, ok, tc.wantIsLib)
+			}
+			if !ok {
+				return
+			}
+			if prog != tc.wantProg || ver != tc.wantVer {
+				t.Errorf("ProgramRef(%q) = program %d v%d, want %d v%d", tc.id, prog, ver, tc.wantProg, tc.wantVer)
+			}
+		})
 	}
 }
 

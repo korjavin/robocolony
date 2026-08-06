@@ -29,10 +29,20 @@ import (
 //
 // Ownership is not checked here either: every query is scoped by (user_id, id)
 // in internal/db, so an id belonging to somebody else reads as "not found".
-type Library struct{ db *db.DB }
+type Library struct {
+	db *db.DB
+	// reg is the live matches, read-only: it answers "how many of my robots are
+	// running this program right now?", which is what decides whether a save is
+	// safe to approve on the spot. Nil is allowed and means "no match is
+	// running as far as this library knows", which is the answer a test without
+	// a registry wants.
+	reg *lobby.Registry
+}
 
-// NewLibrary wires the library to the database.
-func NewLibrary(database *db.DB) *Library { return &Library{db: database} }
+// NewLibrary wires the library to the database and the live match registry.
+func NewLibrary(database *db.DB, reg *lobby.Registry) *Library {
+	return &Library{db: database, reg: reg}
+}
 
 // maxNameLen bounds a library entry's name, matching the lobby name limit.
 const maxNameLen = 64
@@ -40,11 +50,41 @@ const maxNameLen = 64
 // ProgramView is a library entry on the wire. Program is passed through
 // verbatim: it was validated and re-encoded on the way in, so re-marshalling it
 // here would only risk drifting from what is stored.
+//
+// Program is the *head* — the version the editor last saved, which is Version.
+// ApprovedVersion is what a robot is handed on install; the two differ only
+// while a draft is waiting to be approved, which is the design's "v8 · DRAFT"
+// over a live v7.
+//
+// Versions, InUse and InUseMatch are the rest of that topbar and the VERSIONS
+// panel. They cost a query and a walk of the live matches, so only GetProgram
+// fills them in — a list of twenty programs does not need twenty of each.
 type ProgramView struct {
-	ID        int64           `json:"id"`
-	Name      string          `json:"name"`
-	Program   json.RawMessage `json:"program"`
-	UpdatedAt string          `json:"updated_at"`
+	ID              int64           `json:"id"`
+	Name            string          `json:"name"`
+	Program         json.RawMessage `json:"program"`
+	Version         int             `json:"version"`
+	ApprovedVersion int             `json:"approved_version"`
+	UpdatedAt       string          `json:"updated_at"`
+
+	Versions []VersionView `json:"versions,omitempty"`
+	// InUse is how many of the caller's live robots are running the approved
+	// version right now, and InUseMatch which match they are in — 0 when they
+	// are spread over more than one.
+	InUse      int   `json:"in_use,omitempty"`
+	InUseMatch int64 `json:"in_use_match,omitempty"`
+}
+
+// VersionView is one row of the VERSIONS panel: which version, when it was
+// saved, and where it is running. No outcome statistics — those need per-program
+// match aggregates, which do not exist yet (rc-pt6.11 defers them).
+type VersionView struct {
+	Version   int    `json:"version"`
+	CreatedAt string `json:"created_at"`
+	Approved  bool   `json:"approved"`
+	// Robots and Match are lobby.ProgramUsage for this version.
+	Robots int   `json:"robots,omitempty"`
+	Match  int64 `json:"match,omitempty"`
 }
 
 // BlueprintView is a saved physical configuration on the wire.
@@ -318,17 +358,81 @@ func (l *Library) ListPrograms(ctx context.Context, userID int64) ([]ProgramView
 	return out, nil
 }
 
-// GetProgram returns one of the caller's own programs.
+// GetProgram returns one of the caller's own programs, with its version history
+// and where each version is running: everything the editor's topbar and its
+// VERSIONS panel say about a program that is open.
 func (l *Library) GetProgram(ctx context.Context, userID, id int64) (ProgramView, error) {
 	p, err := l.db.ProgramByID(ctx, userID, id)
 	if err != nil {
 		return ProgramView{}, notFound(err, "program")
 	}
-	return programView(p), nil
+	versions, err := l.db.ListProgramVersions(ctx, userID, id)
+	if err != nil {
+		return ProgramView{}, err
+	}
+	view := programView(p)
+	usage := l.usage(userID, id)
+	for _, v := range versions {
+		u := usage[v.Version]
+		view.Versions = append(view.Versions, VersionView{
+			Version: v.Version, CreatedAt: v.CreatedAt.Format(time.RFC3339),
+			Approved: v.Version == p.ApprovedVersion, Robots: u.Robots, Match: u.Match,
+		})
+	}
+	// The headline fact is about the approved version: it is the one robots are
+	// being handed, and the one an APPROVE would replace.
+	live := usage[p.ApprovedVersion]
+	view.InUse, view.InUseMatch = live.Robots, live.Match
+	return view, nil
 }
 
-// SaveProgram validates a program against a blueprint and stores it. id == 0
-// creates, anything else rewrites the caller's own row of that id.
+// usage is Registry.ProgramUsage with the nil registry handled once: a library
+// with no registry behind it has no live matches to report.
+func (l *Library) usage(userID, programID int64) map[int]lobby.ProgramUsage {
+	if l.reg == nil {
+		return nil
+	}
+	return l.reg.ProgramUsage(userID, programID)
+}
+
+// ApproveProgram marks a version of the caller's own program as the one robots
+// are given from now on (design 1d's "APPROVE v8").
+//
+// It changes nothing that is already running. Design §4.2's contract is that
+// rules reach a robot only through an install — recall, then reprogram, taking
+// effect on the next tick with the memory points wiped — and approving a
+// version is a decision about the *next* install, not a way to rewrite a robot
+// in the field.
+func (l *Library) ApproveProgram(ctx context.Context, userID, id int64, version int) (ProgramView, error) {
+	if version <= 0 {
+		return ProgramView{}, libErrf(http.StatusBadRequest, "version is required")
+	}
+	if _, err := l.db.ApproveProgram(ctx, userID, id, version); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ProgramView{}, libErrf(http.StatusNotFound, "no version %d of that program", version)
+		}
+		return ProgramView{}, err
+	}
+	return l.GetProgram(ctx, userID, id)
+}
+
+// SaveProgram validates a program against a blueprint and stores it as a new
+// version. id == 0 creates the program at v1, anything else appends a version
+// to the caller's own row of that id.
+//
+// Whether the new version is approved on the spot is decided here, and it is
+// the one rule that makes versions worth having without making anybody use
+// them: a save approves itself unless the program is currently installed in
+// live robots of the caller's own matches.
+//
+//   - Nobody fielding it: approve. Save behaves exactly as it always did —
+//     press SAVE, the rules are what a robot would be given — and a player who
+//     never reads the word "version" is never asked to press a second button.
+//   - Robots fielding it: leave the approval where it is and keep the new
+//     version as a draft. This is design 1d's topbar: "v8 · DRAFT" above "IN USE
+//     BY 6 ROBOTS IN MATCH #4193", with APPROVE v8 as the primary action. A save
+//     mid-match is a player thinking out loud; deciding for them that the next
+//     robot to walk home gets it is a decision worth one click.
 //
 // Errors block the save, warnings never do (design §10.10): a caller that gets
 // a view back can still have warnings waiting for it on the validate endpoint.
@@ -363,7 +467,7 @@ func (l *Library) SaveProgram(ctx context.Context, userID, id int64, name string
 	if id == 0 {
 		row, err = l.db.CreateProgram(ctx, userID, name, string(encoded))
 	} else {
-		row, err = l.db.UpdateProgram(ctx, userID, id, name, string(encoded))
+		row, err = l.db.UpdateProgram(ctx, userID, id, name, string(encoded), !l.fielded(userID, id))
 	}
 	switch {
 	case db.IsDuplicateName(err):
@@ -374,6 +478,17 @@ func (l *Library) SaveProgram(ctx context.Context, userID, id int64, name string
 		return ProgramView{}, err
 	}
 	return programView(row), nil
+}
+
+// fielded reports whether any of the caller's live robots is running any
+// version of this program. See SaveProgram for what it decides.
+func (l *Library) fielded(userID, id int64) bool {
+	for _, u := range l.usage(userID, id) {
+		if u.Robots > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // DeleteProgram removes one of the caller's own programs.
@@ -597,6 +712,7 @@ func blueprintView(row db.Blueprint, bp sim.Blueprint) BlueprintView {
 func programView(p db.Program) ProgramView {
 	return ProgramView{
 		ID: p.ID, Name: p.Name, Program: json.RawMessage(p.JSON),
+		Version: p.Version, ApprovedVersion: p.ApprovedVersion,
 		UpdatedAt: p.UpdatedAt.Format(time.RFC3339),
 	}
 }
@@ -661,6 +777,7 @@ func (l *Library) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http
 	handle("POST /api/programs/validate", l.handleValidate)
 	handle("GET /api/programs/{id}", l.handleGetProgram)
 	handle("PUT /api/programs/{id}", l.handleUpdateProgram)
+	handle("POST /api/programs/{id}/approve", l.handleApprove)
 	handle("DELETE /api/programs/{id}", l.handleDeleteProgram)
 	handle("GET /api/blueprints", l.handleListBlueprints)
 	handle("POST /api/blueprints", l.handleCreateBlueprint)
@@ -735,6 +852,28 @@ func (l *Library) save(w http.ResponseWriter, r *http.Request, id int64) {
 		code = http.StatusCreated
 	}
 	writeJSON(w, code, view)
+}
+
+func (l *Library) handleApprove(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var body struct {
+		Version int `json:"version"`
+	}
+	if err := decodeBody(w, r, &body); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	user, _ := auth.UserFrom(r.Context())
+	view, err := l.ApproveProgram(r.Context(), user.ID, id, body.Version)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (l *Library) handleDeleteProgram(w http.ResponseWriter, r *http.Request) {

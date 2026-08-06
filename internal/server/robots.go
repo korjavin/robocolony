@@ -114,7 +114,16 @@ func (h *Robots) InstallProgram(ctx context.Context, userID, matchID int64, robo
 		}
 		return RobotState{}, err
 	}
-	p, err := prog.Decode([]byte(row.JSON))
+	// The approved version, not the head. A robot is given the rules the player
+	// signed off; a draft saved since then is theirs to APPROVE first.
+	body, err := h.db.ProgramVersion(ctx, userID, programID, row.ApprovedVersion)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RobotState{}, errf(http.StatusNotFound, "program not found in your library")
+		}
+		return RobotState{}, err
+	}
+	p, err := prog.Decode([]byte(body))
 	if err != nil {
 		return RobotState{}, errf(http.StatusBadRequest, "program %d does not load: %s", programID, err)
 	}
@@ -122,12 +131,12 @@ func (h *Robots) InstallProgram(ctx context.Context, userID, matchID int64, robo
 	// The program travels in the log by value, not as a library id: the player
 	// may edit that library row later, and a replay must install the rules the
 	// robot actually ran.
-	id := installID(programID, robotID)
+	id := installID(programID, row.ApprovedVersion, robotID)
 	cmd := lobby.Command{
 		Kind:      lobby.CmdProgram,
 		Robot:     robotID,
 		ProgramID: id,
-		Program:   json.RawMessage(row.JSON),
+		Program:   json.RawMessage(body),
 	}
 	var out RobotState
 	err = m.Apply(cmd, func(w *sim.World, rt *prog.Runtime) error {
@@ -160,11 +169,15 @@ func (h *Robots) InstallProgram(ctx context.Context, userID, matchID int64, robo
 // program and reprogram them where they stand — the exact instant reprogramming
 // design §4.2 forbids.
 //
+// It is built on lobby.ProgramRuntimeID so that the version stays legible in
+// it: the editor's "in use by N robots" counts a version, and this string is
+// the only record of which one a robot was given (lobby.ProgramRef).
+//
 // ponytail: one runtime entry per install, never collected. A match is minutes
 // long and an install needs a robot to walk home first, so the map cannot grow
 // far. Collect on Forget if that ever stops being true.
-func installID(programID int64, robotID int) string {
-	return fmt.Sprintf("lib-%d-r%d", programID, robotID)
+func installID(programID int64, version, robotID int) string {
+	return fmt.Sprintf("%s-r%d", lobby.ProgramRuntimeID(programID, version), robotID)
 }
 
 // own resolves the match and the caller's colony in it. A player with no seat

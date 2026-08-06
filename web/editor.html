@@ -186,6 +186,12 @@
   .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .filebtn:focus-within { outline: 2px solid var(--fg-0); outline-offset: 1px; }
 
+  /* One saved version per line: the number, what became of it, and a LIVE mark
+     on the one robots are given. */
+  .vrow { display: flex; align-items: baseline; gap: .5rem; padding: .15rem 0;
+          font-size: 12px; font-variant-numeric: tabular-nums; }
+  .vrow b { font-weight: 700; }
+
   /* The selected blueprint's one-line summary. Every number in it is derived
      server-side; designing the robot itself lives on /blueprints. */
   .stats { display: flex; flex-wrap: wrap; gap: .1rem .9rem; margin: .3rem 0; }
@@ -264,6 +270,11 @@
       <select id="library" title="open a saved program"></select>
       <input type="text" id="name" maxlength="64" placeholder="program name" size="22"
              title="the program's name — this is what a robot is given in a match">
+      <!-- Which version is on screen, and whether it is ahead of the one robots
+           are given (design 1d 645-647). DRAFT means exactly that: unsaved
+           edits, or a saved version nobody has approved yet. -->
+      <span class="badge dashed" id="version" hidden></span>
+      <span class="meta" id="inuse"></span>
       <span class="badge dashed" id="ruleinfo">0 rules</span>
       <span class="err" id="err"></span>
       <span class="meta" id="status"></span>
@@ -274,6 +285,10 @@
       </div>
       <button id="tryit" class="btn sm" title="run this program for a few hundred ticks in a practice arena (Ctrl/&#8984;+Enter)">DRY RUN</button>
       <button id="save" class="btn sm primary">SAVE</button>
+      <!-- Only when a saved version is ahead of the approved one. Saving is
+           still one button on the common path: a save with nothing of yours in
+           the field approves itself, and this never appears. -->
+      <button id="approve" class="btn sm primary" hidden></button>
     </div>
 
     <div class="panes">
@@ -350,6 +365,13 @@
             anything carries this into a match. A rule that never fired is marked
             on its own card.</p>
             <div id="dryrun"></div>
+          </div>
+          <!-- Every version this program has had, newest first (design 1e
+               810-818). LIVE marks the one a robot is given when it is
+               installed; a version with robots in the field says where. -->
+          <div class="blk">
+            <h2>Versions</h2>
+            <div id="versions"></div>
           </div>
         </div>
       </aside>
