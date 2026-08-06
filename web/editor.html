@@ -38,7 +38,7 @@
   .toggle button + button { border-left: 1px solid var(--line-1); }
   .toggle button[aria-pressed="true"] { background: var(--fg-0); color: var(--bg-0); font-weight: 700; }
 
-  .panes { display: grid; grid-template-columns: 20rem minmax(0, 1fr) 23rem; min-height: 0; }
+  .panes { display: grid; grid-template-columns: 300px minmax(0, 1fr) 372px; min-height: 0; }
   .panes > * { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .rail { border-right: 1px solid var(--line-1); }
   .side { border-left: 1px solid var(--line-1); }
@@ -128,6 +128,12 @@
   .kw { font-size: 10px; letter-spacing: .1em; color: var(--fg-2); margin: .35rem 0 .1rem; }
   .row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .2rem 0; }
   .row select { font-size: 12px; padding: .1rem .35rem; }
+  /* The card's summary line: what this rule does besides taking the tick, and
+     what the last dry run measured it doing. Under WHEN/THEN because it is
+     about the whole rule, not about one action in it. */
+  .sfx { display: flex; gap: 8px; align-items: center; margin-top: .35rem;
+         font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-2); }
+  .sfx .grow { flex: 1 1 auto; }
 
   /* Explicit nesting: every AND/OR/NOT group is a labelled box, so precedence
      is read off the indentation and never guessed (design §10.10). */
@@ -161,6 +167,16 @@
   .issue.warning { border-left-color: var(--warn); }
   .issue.note { color: var(--fg-2); }
   .side .issue { margin: 0; padding: .5rem .9rem; border-bottom: 1px solid var(--line-3); border-left-width: 3px; }
+  /* The claim in bold, the reason under it in grey: a check is read at a
+     glance and only then read properly. */
+  .issue .head { font-weight: 700; }
+  .issue .detail { color: var(--fg-2); font-weight: 400; margin-top: 2px; }
+  /* A check that names a rule is a way to get to it. */
+  .issue.jump { cursor: pointer; }
+  .issue.jump:hover { background: var(--bg-2); }
+  .rule.flash { animation: flash 1.2s var(--ease); }
+  @keyframes flash { 0%, 55% { outline: 2px solid var(--fg-0); outline-offset: -2px; } }
+  @media (prefers-reduced-motion: reduce) { .rule.flash { animation: none; outline: 2px solid var(--fg-0); outline-offset: -2px; } }
 
   /* Import is a file input wearing its own label as the button, so the
      browser's "no file chosen" text stays out of the toolbar. The input is
@@ -193,7 +209,7 @@
 
   /* Drag and drop. The insertion slot is drawn as a bar on the edge the rule
      would land on, so where the drop goes is never a guess. */
-  .handle { cursor: grab; color: var(--fg-3); font-size: 1.1rem; user-select: none; }
+  .handle { cursor: grab; color: var(--fg-3); font-size: 12px; user-select: none; }
   .handle:active { cursor: grabbing; }
   .rule.dragging { opacity: .4; }
   .rule.over-above { box-shadow: 0 -4px 0 -1px var(--fg-0); }
@@ -208,9 +224,13 @@
   /* Code view. Same program, same checks, same verdicts — one row per line,
      line number and gutter mark in their own columns. */
   .code { font-size: 13px; line-height: 1.85; padding: 12px 0; }
-  .code .cl { display: grid; grid-template-columns: 3.2rem 3.6rem minmax(0, 1fr); cursor: default; }
+  .code .cl { display: grid; grid-template-columns: 46px 60px minmax(0, 1fr); cursor: default; }
   .code .cl.pick { cursor: pointer; }
   .code .cl.pick:hover, .code .cl.on { background: var(--bg-2); }
+  /* The rule the dry run says took the ticks is banded in the text too, not
+     only marked in the gutter: the cards give it a border, the code gives it
+     the same weight without one. */
+  .code .cl.win { background: var(--bg-2); }
   .code .no { text-align: right; padding-right: .8rem; color: var(--fg-3);
               font-variant-numeric: tabular-nums; border-right: 1px solid var(--line-2); }
   .code .mk { text-align: right; padding-right: .8rem; font-size: 11px; color: var(--fg-2);
@@ -252,7 +272,7 @@
         <button id="v-cards" aria-pressed="true" title="edit the rules as cards">CARDS</button>
         <button id="v-code" aria-pressed="false" title="read the whole program as text">CODE</button>
       </div>
-      <button id="tryit" title="run this program for a few hundred ticks in a practice arena">DRY RUN</button>
+      <button id="tryit" class="btn sm" title="run this program for a few hundred ticks in a practice arena (Ctrl/&#8984;+Enter)">DRY RUN</button>
       <button id="save" class="btn sm primary">SAVE</button>
     </div>
 
@@ -318,7 +338,7 @@
         <div class="scroll">
           <div id="issues"></div>
           <div class="blk">
-            <h2>Dry run</h2>
+            <h2 id="dryhead">Dry run</h2>
             <p class="meta">A few hundred ticks in a practice arena before
             anything carries this into a match. A rule that never fired is marked
             on its own card.</p>
@@ -331,10 +351,15 @@
            rules, never parsed back: toggling views cannot rewrite the file. -->
       <section class="mid" id="codeview" hidden>
         <div class="scroll"><div class="code" id="code"></div></div>
+        <!-- No LN/COL: the pane is read-only, so there is no caret to report.
+             What the bar says instead is what the program is and what the two
+             keys do to it. -->
         <footer class="statusbar">
-          <span id="codestatus"></span>
-          <span class="grow" style="flex:1 1 auto"></span>
+          <span class="badge dashed" id="codestatus"></span>
           <span>Read-only &mdash; the cards are the editor</span>
+          <span class="grow" style="flex:1 1 auto"></span>
+          <span class="kbd">Ctrl/&#8984;+&crarr;</span><span>Dry run</span>
+          <span class="kbd">Alt+&uarr;</span><span>Raise priority</span>
         </footer>
       </section>
 
@@ -349,8 +374,10 @@
           </div>
         </div>
         <div class="blk">
-          <h2>Selection</h2>
+          <h2 id="selhead">Selection</h2>
           <div id="codedoc" class="meta">Pick a line to read what it means.</div>
+          <p class="meta" style="margin:.6rem 0 0">Documentation comes from the
+          server catalogue, so it cannot drift from the evaluator.</p>
         </div>
         <div class="blk">
           <h2>Nothing matched</h2>

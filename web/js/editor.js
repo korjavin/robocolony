@@ -246,7 +246,8 @@ function chip(kind, spec, have) {
     title: `${spec.label} — ${spec.desc}`
       + (unmet ? `\n\nNeeds ${spec.needs.join(" + ")}; this blueprint carries none.` : "")
       + "\n\nClick to add it as a new rule, or drag it onto one.",
-  }, el("span", { className: "id", textContent: spec.id }));
+  }, el("span", { className: "handle", textContent: "⣿" }),
+     el("span", { className: "id", textContent: spec.id }));
   c.addEventListener("dragstart", (ev) => {
     drag = { kind, spec };
     ev.dataTransfer.setData("text/plain", spec.id);
@@ -322,6 +323,8 @@ function renderRule(rule, i, total) {
   body.append(iconButton("+ action", "add an action to this rule",
     () => { rule.then.push({ do: lang.catalogue.actions[0].id }); changed(); },
     rule.then.length >= lang.limits.max_actions_per_rule));
+  const sfx = summaryRow(rule, i);
+  if (sfx) body.append(sfx);
   for (const is of issuesFor(i)) body.append(issueLine(is));
 
   // The verdict column: what you can do to this rule, and what the server and
@@ -335,10 +338,33 @@ function renderRule(rule, i, total) {
   for (const b of dryRunBadges(i)) verdict.append(b);
 
   card.append(el("div", { className: "gutter" },
-    el("span", { className: "prio", textContent: String(i + 1), title: `priority ${i + 1}` }),
+    // Padded, so the column stays one width down a list of ten or more and the
+    // numbers read as the priorities they are rather than as a count.
+    el("span", { className: "prio", textContent: String(i + 1).padStart(2, "0"), title: `priority ${i + 1}` }),
     dragHandle(card, i)), body, verdict);
   makeDropTarget(card, i);
   return card;
+}
+
+// summaryRow is the card's line about the whole rule: what it does besides
+// taking the tick, and how often the last dry run ran it. The fired count lives
+// here rather than in the verdict column because it is a measurement of the
+// rule, not a verdict on it (design 1d).
+function summaryRow(rule, i) {
+  const sfx = rule.then.filter((a) => acts.get(a.do) && !acts.get(a.do).primary);
+  const row = dryrun ? (dryrun.rules || []).find((r) => r.rule === i) : null;
+  const fired = row && row.fired > 0 ? row : null;
+  if (!sfx.length && !fired) return null;
+  return el("div", { className: "sfx" },
+    sfx.length ? el("span", {
+      textContent: `side effect · ${sfx.map((a) => a.do).join(", ")}`,
+      title: "these run and evaluation continues down the rule list",
+    }) : null,
+    el("span", { className: "grow" }),
+    fired ? el("span", {
+      textContent: `fired ${fired.fired}× in the last dry run`,
+      title: `first at tick ${fired.first_tick}`,
+    }) : null);
 }
 
 function renderAction(rule, action, j) {
@@ -390,7 +416,7 @@ let drag = null; // { kind: "rule", i } | { kind: "pred" | "act", spec }
 
 function dragHandle(card, i) {
   const h = el("span", {
-    className: "handle", textContent: "⠿", draggable: true,
+    className: "handle", textContent: "⣿", draggable: true,
     title: "drag to reorder — or use ▲ ▼, which the keyboard can reach",
   });
   h.addEventListener("dragstart", (ev) => {
@@ -477,8 +503,36 @@ const issuesFor = (rule) => allIssues().filter((e) => e.rule === rule);
 
 // The server's messages name the rule they are about ("rule 3: ..."), so
 // nothing here prefixes them with a number they already carry.
+//
+// Every one of them is written as a claim followed by the reason for it, split
+// by a comma, a semicolon or a dash — so the first clause is the headline and
+// the rest is the detail, and a panel of checks can be read down at a glance
+// before any single one is read properly. A finding that names a rule is also
+// the way to get to that rule.
 function issueLine(is) {
-  return el("div", { className: `issue ${is.severity}`, textContent: is.message });
+  const at = is.message.search(/,\s|;\s|\s—\s/);
+  const row = el("div", { className: `issue ${is.severity}` },
+    el("div", { className: "head", textContent: at < 0 ? is.message : is.message.slice(0, at) }),
+    at < 0 ? null : el("div", { className: "detail", textContent: is.message.slice(at).replace(/^\W+/, "") }));
+  if (is.rule >= 0) {
+    row.classList.add("jump");
+    row.title = `go to rule ${is.rule + 1}`;
+    row.addEventListener("click", () => revealRule(is.rule));
+  }
+  return row;
+}
+
+// revealRule brings a rule's card into view and flashes it. The cards are
+// rebuilt on every render, so the card is looked up by position at click time
+// and never held onto.
+function revealRule(i) {
+  if (view !== "cards") setView("cards");
+  const card = $("rules").children[i];
+  if (!card) return;
+  card.scrollIntoView({ block: "nearest" });
+  card.classList.remove("flash");
+  void card.offsetWidth; // restart the animation when the same rule is clicked twice
+  card.classList.add("flash");
 }
 
 function renderIssues() {
@@ -538,21 +592,15 @@ async function validate() {
 // dryRunBadges is what turns the report into an edit: a rule that never fired is
 // called out on its own card, not buried in a summary. never_fired is top-level
 // and exhaustive — the trace records every rule that matched, not only the one
-// that took the tick — so a side-effect-only rule that ran counts as fired.
+// that took the tick — so a side-effect-only rule that ran counts as fired. The
+// count for a rule that *did* fire is a measurement, and it reads on the card's
+// summary row (summaryRow), not in the verdict column.
 function dryRunBadges(i) {
-  if (!dryrun) return [];
-  const out = [];
-  if (dryrun.never_fired.includes(i)) {
-    out.push(el("span", {
-      className: "badge solid", textContent: "never fired",
-      title: "in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held",
-    }));
-  }
-  const row = (dryrun.rules || []).find((r) => r.rule === i);
-  if (row && row.fired > 0) {
-    out.push(badge(`fired ${row.fired}×`, `first at tick ${row.first_tick}`));
-  }
-  return out;
+  if (!dryrun || !dryrun.never_fired.includes(i)) return [];
+  return [el("span", {
+    className: "badge solid", textContent: "never fired",
+    title: "in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held",
+  })];
 }
 
 const when = (ev) => (ev.count > 0 ? `${ev.count}×, first at tick ${ev.first_tick}` : "never");
@@ -563,21 +611,25 @@ function renderDryRun() {
   const host = $("dryrun");
   host.replaceChildren();
   if (!dryrun) {
+    $("dryhead").textContent = "Dry run";
     host.append(el("p", { className: "meta", textContent: "Not run yet." }));
     return;
   }
   const d = dryrun;
+  // The heading says which robot the numbers are about and on which seed, so a
+  // report read on its own is never a report about the wrong blueprint.
+  const bp = blueprints.find((x) => x.id === blueprintID());
+  $("dryhead").textContent = `Dry run · ${bp ? bp.name : "blueprint"} · seed ${d.seed}`;
+  // Four figures: what it was given, what it produced, what it wasted, whether
+  // it lived. Everything else the report knows is said in the notes below,
+  // where it can be said in a sentence instead of as a number without a unit.
   const figs = el("div", { className: "figs" });
   const fig = (k, v, title) => figs.append(
     el("span", { className: "k", textContent: k, title: title || "" }),
     el("span", { textContent: String(v) }));
   fig("ticks simulated", d.ticks);
-  fig("decisions", d.decisions, "ticks on which the rule list was evaluated");
-  fig("acted", d.acted.count, "decisions that produced a primary action");
-  fig("idle", d.idle.count, "decisions in which no rule took the tick");
-  fig("picked up", d.picked_up.count);
-  fig("deposited", d.deposited.count);
-  if (d.attacked.count > 0) fig("damage dealt", d.damage_dealt);
+  fig("parts deposited", d.deposited.count);
+  fig("ticks idle", d.idle.count, "decisions in which no rule took the tick");
   fig("survived", d.survived ? `✓ ${d.health}/${d.max_health} hp` : `✗ tick ${d.destroyed_tick}`);
   host.append(figs);
 
@@ -605,7 +657,7 @@ function renderDryRun() {
 
   host.append(el("p", {
     className: "meta", style: "margin:.6rem 0 0",
-    textContent: `${d.width}×${d.height} practice arena, seed ${d.seed}. One unarmed scout `
+    textContent: `${d.width}×${d.height} practice arena. One unarmed scout `
       + "that calls out enemies it sees, against one hostile sparring partner that hunts you on "
       + "radar — so combat, defensive and signal rules all have something to match. "
       + "Two runs of the same program are always comparable; this is a smoke test, not a match.",
@@ -705,7 +757,11 @@ function renderCode() {
     // the same rule continued, and repeating the mark would read as two.
     const first = line.rule !== undefined && (n === 0 || lines[n - 1].rule !== line.rule);
     const m = line.rule === undefined ? "" : (first ? `${String(line.rule + 1).padStart(2, "0")} ${mark(line.rule)}` : "");
-    const row = el("div", { className: `cl${line.refs && line.refs.length ? " pick" : ""}${picked === n ? " on" : ""}` },
+    // A rule that took ticks is banded across both its lines, not only marked
+    // on the first: which rule is running this robot is the question the pane
+    // is read for, and a band answers it without being looked for.
+    const win = line.rule !== undefined && mark(line.rule) === "✓";
+    const row = el("div", { className: `cl${line.refs && line.refs.length ? " pick" : ""}${win ? " win" : ""}${picked === n ? " on" : ""}` },
       el("span", { className: "no", textContent: String(n + 1) }),
       el("span", { className: `mk${m.endsWith("✓") ? " fired" : ""}`, textContent: m }),
       el("span", { className: "tx", textContent: line.text }));
@@ -715,8 +771,8 @@ function renderCode() {
     host.append(row);
   });
   const n = findings.errors.length;
-  $("codestatus").textContent = `schema v${lang.schema_version} · ${current.program.rules.length} rules · `
-    + (n ? `${n} errors` : "valid");
+  $("codestatus").textContent = `schema v${lang.schema_version} · ${n ? `${n} errors` : "valid"}`;
+  $("selhead").textContent = picked < 0 ? "Selection" : `Selection · line ${picked + 1}`;
 }
 
 // The documentation is the catalogue's own Desc, served by the server beside the
@@ -975,6 +1031,29 @@ $("tryit").addEventListener("click", tryIt);
 $("v-cards").addEventListener("click", () => setView("cards"));
 $("v-code").addEventListener("click", () => setView("code"));
 $("filter").addEventListener("input", renderCatalogue);
+
+// The two keys the code view's status bar names. Ctrl/⌘+Enter is the dry run
+// from anywhere on the page — it is the one action worth a chord. Alt+↑ raises
+// the rule the picked line belongs to, through the same move() the ▲ button
+// calls; the selection follows the rule it is on, so holding the chord walks a
+// rule up the list.
+document.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+    ev.preventDefault();
+    if (!$("tryit").disabled) tryIt();
+    return;
+  }
+  // Only in the code view: the picked line is a code-view selection, and moving
+  // a rule the player cannot see it happen to is not a shortcut, it is a bug.
+  if (!ev.altKey || ev.key !== "ArrowUp" || view !== "code") return;
+  const lines = codeLines();
+  const line = lines[picked];
+  if (!line || !line.rule) return; // no selection, not a rule line, or already first
+  ev.preventDefault();
+  const first = (r) => lines.findIndex((l) => l.rule === r);
+  picked = first(line.rule - 1) + (picked - first(line.rule));
+  move(line.rule, -1);
+});
 
 $("library").addEventListener("change", () => {
   const p = programs.find((x) => String(x.id) === $("library").value);
