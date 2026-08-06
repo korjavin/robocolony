@@ -1,9 +1,15 @@
 # UX pass source
 
-`robocolony-ux.dc.html` is the design pass every screen is measured against —
-open it in a browser, each block is one screen at its real size. It is
-committed verbatim and is not edited to match what we shipped; when the two
-disagree, the gap is a bead (epic `rc-pt6`), not a doc fix.
+`robocolony-ux.dc.html` is the design pass every screen is measured against.
+It is committed verbatim and is not edited to match what we shipped; when the
+two disagree, the gap is a bead (epic `rc-pt6`), not a doc fix.
+
+Read it as source, not as a page. It was exported against an external
+design-system stylesheet that is not vendored here, so opening the file raw
+gives unstyled markup — every screen is still fully specified in it, because
+the export writes its sizes, spacing and colours inline, and the tokens it
+names (`--fg-0`, `--line-1`, `--mono`) are the same ones `web/css/app.css`
+defines. Grep it for a screen id and read the measurements off the markup.
 
 | Screen | Page |
 |---|---|
