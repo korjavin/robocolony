@@ -164,11 +164,23 @@ func sortSightings(s []Sighting) []Sighting {
 }
 
 // path is a BFS shortest route from `from` to `to` over cells the locomotion
-// can enter, excluding `from` and including `to`. It returns nil when there is
-// no route. Neighbours are visited in heading order, so of several equally
-// short routes the same one always wins.
+// can enter, excluding `from` and including `to`.
+//
+// When `to` itself cannot be entered or is walled off, the route runs to the
+// reachable cell nearest it instead of giving up. Exact-or-nothing froze
+// robots: a rule holding a primary action ends the tick (design §10.5), so
+// move_to_radar_target aimed at a component sitting on sand the tracks cannot
+// cross idled, re-matched on the identical view next tick, and stood there for
+// the rest of the match. Closing to the edge instead puts the target inside
+// interactRange and weapon range, which is what the rule meant. nil now says
+// only "there is nowhere better to stand than here".
+//
+// Neighbours are visited in heading order, so of several equally short routes
+// the same one always wins.
 func (w *World) path(from, to Coord, locomotion Variant) []Coord {
-	if !w.In(from) || !w.Passable(to, locomotion) || from == to {
+	// An off-map destination is bad input, not unreachable terrain: there is no
+	// sensible cell to approach, so it stays nil.
+	if !w.In(from) || !w.In(to) || from == to {
 		return nil
 	}
 	prev := make([]int, len(w.Cells))
@@ -178,6 +190,7 @@ func (w *World) path(from, to Coord, locomotion Variant) []Coord {
 	start := w.index(from)
 	prev[start] = start
 	queue := []Coord{from}
+	best, bestDist := -1, from.Chebyshev(to)
 	for len(queue) > 0 {
 		c := queue[0]
 		queue = queue[1:]
@@ -190,10 +203,20 @@ func (w *World) path(from, to Coord, locomotion Variant) []Coord {
 			if n == to {
 				return unwind(prev, w.Width, start, w.index(n))
 			}
+			// ponytail: nearest as the crow flies, not by path cost — the
+			// first cell BFS reaches at a new best distance wins, which is
+			// deterministic but not always the cheapest to walk to. Compare
+			// real costs only if approach routes start looking silly.
+			if d := n.Chebyshev(to); d < bestDist {
+				best, bestDist = w.index(n), d
+			}
 			queue = append(queue, n)
 		}
 	}
-	return nil
+	if best < 0 {
+		return nil
+	}
+	return unwind(prev, w.Width, start, best)
 }
 
 func unwind(prev []int, width, start, end int) []Coord {

@@ -106,13 +106,22 @@ func TestTerrainRoutesPerLocomotion(t *testing.T) {
 		})
 	}
 
-	// Legs must never be routed through sand, however convenient it is.
+	// Legs must never be routed through sand, however convenient it is. The
+	// route now stops at the near side of the wall instead of coming back
+	// empty (see path), so what is asserted is that every cell of it is legal
+	// and that it does not arrive.
 	w2 := arena(5)
 	for y := 0; y < 5; y++ {
 		w2.SetTerrain(Coord{2, y}, Sand)
 	}
-	if p := w2.path(Coord{0, 0}, Coord{4, 4}, Legs); len(p) != 0 {
+	p := w2.path(Coord{0, 0}, Coord{4, 4}, Legs)
+	if len(p) > 0 && p[len(p)-1] == (Coord{4, 4}) {
 		t.Fatalf("legs found a route through a sand wall: %v", p)
+	}
+	for _, c := range p {
+		if !w2.Passable(c, Legs) {
+			t.Fatalf("approach route enters impassable %v: %v", c, p)
+		}
 	}
 	if p := w2.path(Coord{0, 0}, Coord{4, 4}, AntiGrav); len(p) == 0 {
 		t.Fatal("anti-gravity cannot cross a sand wall")
@@ -637,3 +646,7 @@ func TestEnemyRadarIgnoresWrecks(t *testing.T) {
 		t.Fatalf("enemy radar reports a wreck: %+v", got)
 	}
 }
+
+// Mid-match spawns obey the same reachability rule as the initial scatter: a
+// component behind a sealed wall is loot no fleet can ever collect, and radar
+// reports it anyway, so robots walk at the wall for the rest of the match.

@@ -308,6 +308,10 @@ func (m *Match) spawnResources() {
 	// terrainSpecs), so this is the test "not a hard barrier" without naming a
 	// terrain class: a rubble massif is a legs colony's supply, and filtering on
 	// one locomotion left whole regions barren for the match.
+	//
+	// Reachability needs no test here: Generate ends with repairPockets, which
+	// carves until every non-Barrier cell is AntiGrav-reachable from base 0, and
+	// terrain never changes after generation. A drop that passes is reachable.
 	if !w.Passable(c, sim.AntiGrav) {
 		return
 	}
