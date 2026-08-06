@@ -98,6 +98,23 @@
   }
   .field-bar .toggle:hover { background: var(--fg-0); color: var(--bg-0); }
 
+  /* A segmented control: one border, one divider per seam, the live segment
+     inverted (design 1b 368-372). MAP/POV/SPLIT is one, and so is the replay
+     speed set down in the timeline — both are marked up as .seg, and this is
+     the one rule that draws them. [aria-pressed] is the whole state, as it is
+     on the sense toggles above: what a screen reader announces cannot drift
+     from the segment that is drawn, because they are the same attribute. */
+  .seg { display: flex; border: 1px solid var(--line-1); }
+  .seg button {
+    font: inherit; font-size: 12px; padding: 3px 12px;
+    border: 0; box-shadow: none; color: var(--fg-1); background: var(--bg-0);
+  }
+  .seg button + button { border-left: 1px solid var(--line-1); }
+  .seg button:hover { background: var(--bg-2); color: var(--fg-0); }
+  .seg button[aria-pressed="true"] {
+    background: var(--fg-0); color: var(--bg-0); font-weight: 700;
+  }
+
   /* The canvas is sized by its own drawing surface and two clamps, and by
      nothing else. width/height stay auto, so the box starts at the baked
      pixels — that is "never upscale", for free — and max-width/max-height
@@ -154,6 +171,77 @@
   #minimap { cursor: default; }
   .overlay.tr { padding: 8px; }
   .overlay.tr .label { display: block; font-size: 10px; margin-bottom: 6px; }
+
+  /* Camera ---------------------------------------------------------------
+     Design 1b: the same world, told from inside one robot. The stage holds the
+     map and the camera side by side; MAP and POV hide one of the two, SPLIT
+     shows both, and nothing else about the page changes — the stream, the
+     selection and every panel are untouched by which of the three is live. */
+
+  .stage { flex: 1 1 0; display: flex; min-height: 0; min-width: 0; }
+  .stage > * { flex: 1 1 0; min-width: 0; }
+  .stage.split .pov-wrap { border-left: 1px solid var(--line-1); }
+
+  /* The camera canvas is sized exactly like the arena: auto/auto so it never
+     upscales past its baked surface, and the two clamps keep it inside the
+     pane. The 1fr grid track is what gives max-height something definite to
+     resolve against — the note on .arena-wrap is the long version. */
+  .pov-wrap {
+    position: relative; min-height: 0;
+    display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center; padding: 12px; background: var(--bg-1);
+  }
+  /* Nothing is clicked in the camera: it is a view of the selected robot, and
+     the selection is made on the map, in the roster, or with the arrow keys. */
+  #pov { cursor: default; }
+  /* Centred over the empty bands rather than placed by the grid: the canvas
+     owns the one grid cell, and a second item in it would stack under the map
+     and squash it. */
+  #pov-empty {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    margin: 0; max-width: 24rem; text-align: center;
+    font-size: 12px; color: var(--fg-2);
+  }
+
+  /* Under the camera: what the wedge cannot say. The blind spot in prose, the
+     radar as its own dial, and every contact this tick as a list (design 1b
+     416-444). Three columns, because they are three separate answers. */
+  .pov-foot {
+    border-top: 1px solid var(--line-1); padding: 12px 14px;
+    display: flex; gap: 24px; align-items: flex-start;
+    overflow-x: auto;
+  }
+  .pov-foot > section { min-width: 0; }
+  .pov-foot > section + section { border-left: 1px solid var(--line-2); padding-left: 24px; }
+  .pov-foot .blind { flex: 0 1 26rem; }
+  .pov-foot .sense { flex: 0 1 20rem; display: flex; gap: 12px; align-items: flex-start; }
+  .pov-foot .list { flex: 1 1 20rem; }
+  .pov-foot p { margin: .25rem 0 0; font-size: 11px; color: var(--fg-1); }
+  .pov-foot p.blind-note { color: var(--fg-0); }
+
+  /* The dial is a second sense drawn as a second instrument: omnidirectional
+     rings, the sight wedge as the tinted quadrant, and one mark per contact.
+     Facing-locked like the camera beside it — up is the nose — so a mark below
+     the hub is behind the robot and only a radar rule can reach it. */
+  .dial { width: 96px; height: 96px; flex: none;
+          border: 1px solid var(--line-1); background: var(--bg-elev); }
+  .dial .ring { fill: none; stroke: var(--fg-3); stroke-dasharray: 1 4; }
+  .dial .wedge { fill: var(--fg-2); opacity: .16; }
+  .dial .wedge-line { fill: none; stroke: var(--fg-2); stroke-dasharray: 3 2; opacity: .5; }
+  .dial .hub { fill: var(--fg-0); }
+  .dial .mark { stroke: #000; stroke-width: .5; }
+
+  /* One line per contact, four columns, tabular: this is read at a glance
+     against a moving map (design 1b 437-444). The rows are a fixed pool that
+     match.js writes text into — the panel is rewritten ten times a second. */
+  .contacts { display: grid; gap: 2px 0; margin-top: .25rem; }
+  .contacts .crow {
+    display: grid; grid-template-columns: 1rem 10rem 4rem 1fr; gap: 0 12px;
+    font-size: 11px; font-variant-numeric: tabular-nums; align-items: baseline;
+  }
+  .contacts .crow > span { min-width: 0; overflow: hidden;
+                           text-overflow: ellipsis; white-space: nowrap; }
+  .contacts .cnote { color: var(--fg-2); }
 
   /* Timeline. Live there is no scrubbing: the server keeps no per-tick history
      to seek into, so this says where in the match you are and nothing it cannot
@@ -421,7 +509,13 @@
     main.mgrid { display: block; overflow: visible; }
     .pane, .field { display: block; border: 0; border-top: 1px solid var(--line-1); }
     .pane-body { overflow: visible; }
-    .arena-wrap { padding: 0; }
+    /* Side by side is what SPLIT means, and there is no side by side left at
+       this width: the two views stack, in the order the markup has them. */
+    .stage, .pov-wrap { display: block; }
+    .stage.split .pov-wrap { border-left: 0; border-top: 1px solid var(--line-1); }
+    .pov-foot { display: block; }
+    .pov-foot > section + section { border-left: 0; padding-left: 0; margin-top: 12px; }
+    .arena-wrap, .pov-wrap { padding: 0; }
     canvas { max-height: none; }
     .roster .row { padding-left: 1rem; padding-right: 1rem; }
   }
@@ -480,9 +574,12 @@
         <div class="roster" id="roster"></div>
         <p class="meta" id="roster-empty" style="padding:10px 14px">No robots yet.</p>
       </div>
-      <!-- Design 177-180. FOLLOW is the POV bead's (rc-pt6.7); the arrow keys
-           are here because a list you can only click is a list you cannot walk
-           down while watching the map. -->
+      <!-- Design 177-180. The arrow keys are here because a list you can only
+           click is a list you cannot walk down while watching the map — and in
+           POV they are how you change robots, since the camera has no board to
+           click on. There is no FOLLOW toggle because there is nothing to
+           follow with: the arena draws the whole world, and the camera is
+           already locked to whatever is selected. -->
       <div class="pane-foot">
         <span class="kbd">&uarr;&darr;</span>
         <span class="meta">Step robot &mdash; or click a row, or the arena</span>
@@ -490,21 +587,38 @@
     </section>
 
     <section class="field">
-      <!-- The two toggles are outside #inspector for the reason the whole file
+      <!-- The controls are outside #inspector for the reason the whole file
            keeps repeating: that panel is replaceChildren()-ed ten times a
-           second. MAP/POV/SPLIT, FOLLOW and zoom belong to the POV bead
-           (rc-pt6.7) and are deliberately not stubbed here. -->
+           second. Zoom and FOLLOW (design 1a 196-201) are still not here: the
+           arena has no camera to zoom or follow with — it always draws the
+           whole world — and giving it one is a change to the hit test, the
+           minimap and the terrain blit rather than a stepper. The camera below
+           needs neither: POV is already locked to the robot you picked. -->
       <div class="field-bar">
         <span class="badge solid">Field</span>
+        <!-- Which of the two views is live (design 1b 368-372). Nothing about
+             the stream depends on it: both draw the same snapshot. -->
+        <div class="seg" id="view-mode" role="group" aria-label="Field view">
+          <button type="button" data-mode="map" aria-pressed="true"
+                  title="The whole world, from above">Map</button>
+          <button type="button" data-mode="pov" aria-pressed="false"
+                  title="What the selected robot can see, and nothing else">POV</button>
+          <button type="button" data-mode="split" aria-pressed="false"
+                  title="Both at once: the world, and the robot's share of it">Split</button>
+        </div>
         <button class="badge toggle" type="button" id="t-sight" aria-pressed="true"
                 title="The 90° forward wedge the selected robot can see (design §7.1)">Sight &#10003;</button>
         <button class="badge toggle" type="button" id="t-radar" aria-pressed="true"
                 title="The square reach of the selected robot's radar, if it carries one (design §7.2)">Radar &#10003;</button>
         <span class="grow"></span>
-        <span class="meta">Overlays are drawn for the selected robot only</span>
+        <!-- The reach of the two senses, written by match.js out of the same
+             constants the renderer draws from, so it cannot state a range
+             nothing paints. -->
+        <span class="meta" id="reach-note">Overlays are drawn for the selected robot only</span>
       </div>
 
-      <div class="arena-wrap">
+      <div class="stage" id="stage">
+      <div class="arena-wrap" id="arena-wrap">
         <canvas id="arena" width="256" height="256"></canvas>
 
         <!-- The selected robot, said over the map it is standing on (design
@@ -522,8 +636,9 @@
         <!-- The whole arena at a glance (design 215-226). The terrain is the
              baked offscreen canvas blitted down, so nothing is re-rasterised;
              robots and bases are one fillRect each. There is no viewport rect
-             because there is no camera to draw one for — panning and zoom are
-             the POV bead's. -->
+             because there is no camera to draw one for: the arena always shows
+             the whole world, and POV is a second view rather than a crop of
+             this one. A rectangle would need panning and zoom first. -->
         <div class="overlay tr" id="minimap-card" hidden>
           <span class="label" id="minimap-label"></span>
           <canvas id="minimap" width="0" height="0"></canvas>
@@ -633,6 +748,63 @@
             </li>
           </ul>
         </details>
+      </div>
+
+      <!-- The robot camera (design 1b 379-413). One canvas, drawn from the
+           same snapshot the map is: the wedge sim.inCone reports, stacked as
+           range bands with the nearest at the bottom, the robot at the foot of
+           it and the world past range 6 replaced by the one sentence that is
+           actually true about it. Its surface is baked once and never resized;
+           the canvas rule above fits it to the pane. -->
+      <div class="pov-wrap" id="pov-wrap" hidden>
+        <canvas id="pov" width="640" height="480"></canvas>
+        <p id="pov-empty" hidden>Pick a robot &mdash; in the roster, on the map,
+        or with &uarr;&darr; &mdash; to see the match from inside it.</p>
+      </div>
+      </div>
+
+      <!-- What the wedge above cannot say: the 270° that does not exist, radar
+           as a sense of its own, and every contact this tick. Shown with the
+           camera and hidden with it. Outside #inspector, like everything else
+           on this page that is not rebuilt from scratch every frame. -->
+      <div class="pov-foot" id="pov-foot" hidden>
+        <section class="blind">
+          <span class="label">Blind spot</span>
+          <p>The 270&deg; behind the nose is not dark &mdash; it does not exist.
+          No condition in the language can test it, so no rule can react to
+          anything standing there.</p>
+          <p class="blind-note" id="blind-note"></p>
+        </section>
+
+        <section class="sense">
+          <div>
+            <span class="label">Radar &middot; separate sense</span>
+            <p>Radar answers in every direction and ignores the nose. The tinted
+            quadrant is the sight wedge: a mark outside it is a contact only a
+            radar rule can use.</p>
+            <p id="dial-note"></p>
+          </div>
+          <!-- Facing-locked, like the camera: up is the nose, the tinted
+               quadrant is the sight wedge, and a mark outside it is something
+               only a radar rule can use. The marks are a pool match.js moves;
+               nothing here is rebuilt per frame. -->
+          <svg class="dial" id="dial" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="ring" cx="50" cy="50" r="42"/>
+            <circle class="ring" cx="50" cy="50" r="28"/>
+            <circle class="ring" cx="50" cy="50" r="14"/>
+            <polygon class="wedge" points="50,50 8,8 92,8"/>
+            <polygon class="wedge-line" points="50,50 8,8 92,8"/>
+            <g id="dial-marks"></g>
+            <circle class="hub" cx="50" cy="50" r="2.4"/>
+          </svg>
+        </section>
+
+        <section class="list">
+          <span class="label">Contacts this tick</span>
+          <div class="contacts" id="contacts"></div>
+          <p id="contacts-none" hidden></p>
+          <p id="contacts-more" hidden></p>
+        </section>
       </div>
 
       <!-- Where in the match you are. Live it is not a scrubber: the server
