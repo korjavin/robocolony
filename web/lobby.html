@@ -491,16 +491,30 @@ function renderFinished(list) {
 
 const ordinal = (n) => n + (["th", "st", "nd", "rd"][n % 100 > 10 && n % 100 < 14 ? 0 : Math.min(n % 10, 4)] || "th");
 
+// The approvals the rail is currently promising, as the ids PUT /loadout wants.
+// Written by renderField, spent by create-and-start — which is the only reason
+// it is not a local: a lobby created there is started in the same breath, so
+// the window in which its seat can be given a loadout is the one between the
+// POST and the start, and nothing else is standing in it.
+let carry = [];
+
 // What the colony you are about to field is actually made of. A new lobby has
-// no loadout yet — approvals are per seat, and there is no seat until the lobby
-// exists — so this reads the seat you already hold in the newest open lobby,
-// and otherwise says the truth about a fresh one: it opens on the starter kit,
-// which is unarmed.
+// no loadout of its own — approvals are per seat, and there is no seat until
+// the lobby exists — so this reads the seat you already hold in the newest open
+// lobby and carries it forward, which is what makes the heading a promise
+// rather than a preview of somewhere else. Hold no seat anywhere and the truth
+// about a fresh colony is the starter kit, which is unarmed.
 function renderField(lobbies) {
   const box = $("field");
   box.replaceChildren();
   const seat = me && lobbies.map((l) => l.members.find((m) => m.user_id === me.id)).find(Boolean);
-  const entries = (seat && seat.loadout && seat.loadout.entries) || [];
+  let entries = (seat && seat.loadout && seat.loadout.entries) || [];
+  // Only approvals whose designs still exist can be re-sent — the server
+  // re-resolves every id and one 404 fails the whole request — so the ones the
+  // loadout picker would drop are dropped here too, rather than promised and
+  // then quietly missing from the match.
+  if (library.blueprints.length && library.programs.length) entries = entries.filter(inLibrary);
+  carry = entries.map((e) => ({ blueprint_id: e.blueprint_id, program_id: e.program_id }));
   const row = (glyph, node) => box.append(el("span", null, glyph), node);
 
   for (const e of entries) {
@@ -587,6 +601,22 @@ async function refresh() {
 //
 // Approving nothing is a real answer: the colony starts from the built-in kit,
 // which is what every colony did before there was anything to choose.
+//
+// An approval is stored as a frozen snapshot and re-sent as ids: PUT /loadout
+// replaces the whole list and the server re-resolves every id, so one design
+// deleted from the library since it was approved would 404 the entire request
+// and leave the picker unusable except for "Use the starter kit", which throws
+// away every other approval. Drop those entries instead — and name them,
+// because the snapshot still knows what they were called.
+//
+// Presence by id is the whole check. Library ids are AUTOINCREMENT
+// (sql/migrations/005_stable_library_ids.sql), so a present id is still the
+// design that was approved, and editing that design re-approves it with its
+// new parts — which is the point of editing.
+const inLibrary = (e) =>
+  library.blueprints.some((b) => b.id === e.blueprint_id)
+  && library.programs.some((p) => p.id === e.program_id);
+
 function loadoutPicker(l, seat) {
   const wrap = document.createElement("div");
   const entries = (seat.loadout && seat.loadout.entries) || [];
@@ -596,20 +626,6 @@ function loadoutPicker(l, seat) {
     : "Your colony uses the built-in starter kit. Approve one of your own designs to field it instead.");
   wrap.append(line);
 
-  // An approval is stored as a frozen snapshot and re-sent as ids: PUT /loadout
-  // replaces the whole list and the server re-resolves every id, so one design
-  // deleted from the library since it was approved would 404 the entire request
-  // and leave the picker unusable except for "Use the starter kit", which throws
-  // away every other approval. Drop those entries here instead — and name them,
-  // because the snapshot still knows what they were called.
-  //
-  // Presence by id is the whole check. Library ids are AUTOINCREMENT
-  // (sql/migrations/005_stable_library_ids.sql), so a present id is still the
-  // design that was approved, and editing that design re-approves it with its
-  // new parts — which is the point of editing.
-  const inLibrary = (e) =>
-    library.blueprints.some((b) => b.id === e.blueprint_id)
-    && library.programs.some((p) => p.id === e.program_id);
   const dropped = entries.filter((e) => !inLibrary(e));
   if (dropped.length) {
     wrap.append(el("div", "meta",
@@ -704,7 +720,10 @@ async function start(id) {
   } catch (e) { err(e.message); }
 }
 
-// Create and start: three calls, and the match on screen. Each step that fails
+// Create and start: the match on screen in one click. The order is forced —
+// a loadout and an AI seat can only be written while the lobby is open, and
+// this button closes it — so both go in before the start, and the checklist
+// above the button is the list that actually gets sent. Each step that fails
 // leaves the lobby standing and open in the list below, which is exactly what
 // the old two-step flow left behind — so a failure is a slower path to the same
 // place, never a lost lobby.
@@ -727,6 +746,7 @@ $("create").addEventListener("submit", async (ev) => {
         arena: f.get("arena"),
       },
     });
+    if (carry.length) await api("PUT", `/api/lobbies/${lobby.id}/loadout`, { entries: carry });
     if (seatedAI) await api("PUT", `/api/lobbies/${lobby.id}/ai`, { profiles: [seatedAI] });
   } catch (e) { err(e.message); await refresh(); return; }
   await start(lobby.id);
