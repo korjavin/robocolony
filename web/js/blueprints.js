@@ -102,8 +102,12 @@ function unspent() {
 // this file looks the answer up rather than asking again per row.
 // ---------------------------------------------------------------------------
 
+// Null until the answer on hand is about the parts list on screen. A marginal
+// price is a verdict on a click the player is about to make, so an answer for
+// the design they just changed is worse than none: the palette falls back to the
+// catalogue price for the round trip rather than promising the wrong fit.
 const marginal = (variant) =>
-  ((preview && preview.marginal) || []).find((m) => m.variant === variant) || null;
+  (previewFor === key() && preview ? preview.marginal || [] : []).find((m) => m.variant === variant) || null;
 
 // One verdict per part, said in one place so the palette and the empty bays
 // cannot drift apart. "Fits" is not "cheaper than the leftover" — the leftover
