@@ -44,8 +44,9 @@
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby" aria-current="page">Lobbies</a>
-    <a href="/history">History</a>
+    <a href="/blueprints">Blueprints</a>
     <a href="/editor">Editor</a>
+    <a href="/history">History</a>
     <a href="/help">Guide</a>
     <span class="grow"></span>
     <a href="/login">Sign in</a>
@@ -268,7 +269,8 @@ function loadoutPicker(l, seat) {
   if (!library.blueprints.length || !library.programs.length) {
     const hint = document.createElement("div");
     hint.className = "meta";
-    hint.append("Design a robot and write a program in the ", link("/editor", "editor"), " to choose your own.");
+    hint.append("Design a robot in the ", link("/blueprints", "blueprint configurator"),
+      " and write it a program in the ", link("/editor", "editor"), " to choose your own.");
     wrap.append(hint);
     return wrap;
   }

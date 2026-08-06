@@ -190,6 +190,24 @@ func defaultStartingBudget() int { return startingRobots * DefaultBlueprint().Va
 // What is left over is not wasted: equipColony converts it into base inventory
 // (design §12 P0), so spending less than the budget buys spares rather than
 // nothing.
+// DefaultStartingBudget is Settings.StartingBudget's default, and StartingFleet
+// is how many robots a colony would open with if this design were its only
+// approval. Both exist for the blueprint configurator: "the starting budget
+// fields three of these, or two of that" is the trade a player is actually
+// making, and it has to be answered by the code that decides it rather than by
+// arithmetic in the browser.
+//
+// The rng is a throwaway and that is sound rather than a shortcut: with exactly
+// one choice every draw returns that choice, so the count is a pure function of
+// value and budget. Going through startingRoster anyway is the whole point —
+// the startingRobots cap and the budget subtraction are its rules, and a second
+// copy of them here would be exactly the drift the configurator exists to avoid.
+func DefaultStartingBudget() int { return defaultStartingBudget() }
+
+func StartingFleet(bp sim.Blueprint, budget int) int {
+	return len(startingRoster(rand.New(rand.NewSource(1)), []sim.Blueprint{bp}, budget))
+}
+
 func startingRoster(rng *rand.Rand, choices []sim.Blueprint, budget int) []sim.Blueprint {
 	out := make([]sim.Blueprint, 0, startingRobots)
 	fits := make([]sim.Blueprint, 0, len(choices))

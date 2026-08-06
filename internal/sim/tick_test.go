@@ -159,10 +159,10 @@ func TestVisionIsDirectional(t *testing.T) {
 func TestVisionRange(t *testing.T) {
 	w := arena(40)
 	r := w.addRobot(0, Coord{20, 20}, North, scavengerBlueprint())
-	for _, d := range []int{visionRange, visionRange + 1} {
+	for _, d := range []int{VisionRange, VisionRange + 1} {
 		w.Loose = []*LooseComponent{{ID: 1, Coord: Coord{20, 20 - d}, Variant: Laser}}
 		seen, _ := w.look(r)
-		if want := d <= visionRange; (len(seen) > 0) != want {
+		if want := d <= VisionRange; (len(seen) > 0) != want {
 			t.Fatalf("component %d cells ahead: visible = %v, want %v", d, len(seen) > 0, want)
 		}
 	}

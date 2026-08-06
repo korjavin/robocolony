@@ -112,15 +112,11 @@
   .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .filebtn:focus-within { outline: 2px solid var(--fg-0); outline-offset: 1px; }
 
-  /* Blueprint editor. The palette is grouped by the catalogue's own kind, and
-     every number in .stats is derived server-side. */
-  .kindrow { display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; margin: .35rem 0; }
-  .kindname { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
-              color: var(--fg-2); flex-basis: 100%; }
+  /* The selected blueprint's one-line summary. Every number in it is derived
+     server-side; designing the robot itself lives on /blueprints. */
   .stats { display: flex; flex-wrap: wrap; gap: .1rem .9rem; margin: .3rem 0; }
   .stat { font-size: 11px; color: var(--fg-2); display: inline-flex; gap: .25rem; align-items: baseline; }
   .stat b { font-size: 15px; color: var(--fg-0); font-variant-numeric: tabular-nums; }
-  #bpstats { margin: .4rem 0; }
 
   /* Dry-run report and the per-rule mark that makes it actionable. */
   .report {
@@ -143,8 +139,9 @@
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby">Lobbies</a>
-    <a href="/history">History</a>
+    <a href="/blueprints">Blueprints</a>
     <a href="/editor" aria-current="page">Editor</a>
+    <a href="/history">History</a>
     <a href="/help">Guide</a>
     <span class="grow"></span>
     <a href="/login">Sign in</a>
@@ -179,27 +176,11 @@
       <h2>Blueprint</h2>
       <p class="meta">Programs are checked against the robot they will run on:
       no radar, no radar actions.</p>
-      <div class="bar">
-        <select id="blueprint"></select>
-        <button id="bpedit" title="change the selected blueprint in place">Edit</button>
-        <button id="bpdel" title="delete the selected blueprint from your library">Delete</button>
-      </div>
+      <select id="blueprint"></select>
       <div class="meta" id="bpmeta"></div>
-      <details id="bpnew">
-        <summary>Design a robot</summary>
-        <p class="meta">Exactly one locomotion unit and one armored body; at most
-        one radar and two weapons. A manipulator is what lets a robot pick
-        anything up. Every part you add is mass, and mass is speed.</p>
-        <div id="bpparts"></div>
-        <div class="kw">INSTALLED</div>
-        <div id="bppicked"></div>
-        <div id="bpstats"></div>
-        <div class="bar">
-          <input type="text" id="bpname" maxlength="64" placeholder="name">
-          <button id="bpcreate">Save blueprint</button>
-          <button id="bpcopy" title="start a new design from the selected blueprint">Copy selected</button>
-        </div>
-      </details>
+      <p class="meta">Designing the robot itself is its own page: the parts, the
+      two meters and what they cost you are on the <a href="/blueprints">blueprint
+      configurator</a>.</p>
     </div>
 
     <div>

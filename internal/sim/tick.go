@@ -40,8 +40,11 @@ const (
 	// robot can fire on consecutive ticks and a one-weapon robot cannot.
 	attackTicks = 1
 
-	// Forward vision, design §7.1.
-	visionRange = 6
+	// Forward vision, design §7.1. Exported because it is not only a balance
+	// number: the blueprint configurator draws the sight wedge from it, and a
+	// second copy in the browser is a wedge that can lie about what a robot
+	// perceives.
+	VisionRange = 6
 	// cos² of the cone's half-angle, as an exact rational so the test stays
 	// integer-only. 1/2 is ±45°: a 90° wedge, and nothing behind the robot.
 	visionCosSqNum = 1
@@ -252,6 +255,12 @@ func moveTicks(bp Blueprint, t Terrain) int {
 	s := SpeedOn(bp, t)
 	return max(1, (speedScale+s-1)/s)
 }
+
+// TicksPerCell is moveTicks in the unit a player thinks in. A speed number is
+// an abstraction; "one cell every four ticks" is the thing that decides whether
+// a scavenger gets home. The configurator shows this rather than the speed, so
+// it comes from here and not from a division in the browser.
+func TicksPerCell(bp Blueprint, t Terrain) int { return moveTicks(bp, t) }
 
 // turnTicks is what one eighth-turn costs: a fraction of a cell of movement on
 // open ground, never less than a tick. Terrain does not enter it — the robot

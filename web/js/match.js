@@ -12,6 +12,8 @@
 
 import { colonyVar, drawGraph, mmss, seriesAppend, seriesReset, SVGNS } from "./graph.js";
 
+import { SHAPES, MUZZLE, slug } from "./shapes.js";
+
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
 
@@ -47,7 +49,6 @@ const css = (name, fallback) => {
   return v || fallback;
 };
 const colonyColor = (id) => css(colonyVar(id), "#888");
-const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
 let init = null;       // init frame
 let snap = null;       // last tick frame
@@ -112,38 +113,13 @@ function bakeTerrain() {
 //   - **Armed or not**, because that is the question a player watching a fight
 //     is actually asking.
 //
-// Armour tier, weapon *count*, radar and manipulator are not encoded. A cell is
-// about 14px at the default arena size; an outline weight, a second barrel or a
-// dish are invisible there, and a silhouette that tries to say six things says
-// none. The manipulator is already implied by the cargo dot, and the radars
-// change what a robot knows rather than what it does.
+// The manipulator is already implied by the cargo dot, and the radars change
+// what a robot knows rather than what it does.
 //
-// The paths are unit space, centred on the origin, spanning about ±1, and drawn
-// pointing north — heading 0 — so one rotate() orients a robot and the shape's
-// nose *is* the heading mark. That replaces the black notch line: forward vision
-// is the core mechanic, and a shape whose front you can see says it without
-// spending a second mark on it.
-//
-// The same strings drive the canvas (through Path2D) and the legend's inline
-// SVG, which is the only reason the legend cannot drift from the map.
-const SHAPES = {
-  // Tracks: flat sides, square tail, blunt mass. The workhorse reads as a hull.
-  tracks: "M0-1.25L.9-.5L.9.9L-.9.9L-.9-.5Z",
-  // Legs: the same body carried on splayed limbs. The spurs are the silhouette.
-  legs: "M0-1.15L.5-.55L1.15-.45L.6.05L1 1.15L.3.45L-.3.45L-1 1.15L-.6.05L-1.15-.45L-.5-.55Z",
-  // Anti-gravity: a smooth lens with nothing angular on it and no ground contact.
-  "anti-gravity-platform": "M0-1.25C.85-.8.95.3 0 .95C-.95.3-.85-.8 0-1.25Z",
-  // A locomotion the catalogue has grown and this file has never heard of, or a
-  // robot whose blueprint is not on this frame: a plain body, still with a nose,
-  // so an unknown chassis never costs the player the heading.
-  unknown: "M0-1.3L.72-.7A1 1 0 1 1-.72-.7Z",
-};
-
-// A barrel past the nose, in the same unit space and in the weapon colour the
-// loose components and the legend already use. Binary: one weapon or two draws
-// the same barrel, because two barrels 2px apart is noise, not information.
-const MUZZLE = "M-.26-.9L.26-.9L.26-1.8L-.26-1.8Z";
-
+// The paths themselves are in shapes.js, shared with the blueprint
+// configurator: the same strings drive the canvas (through Path2D), the
+// legend's inline SVG and the preview a player designs against, which is the
+// only reason none of the three can drift from the others.
 const BODY = Object.fromEntries(Object.entries(SHAPES).map(([k, d]) => [k, new Path2D(d)]));
 const BARREL = new Path2D(MUZZLE);
 

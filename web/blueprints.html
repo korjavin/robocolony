@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blueprints &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  :root { --page: 84rem; }
+
+  /* Three columns: what the robot is made of, what it will look like in the
+     arena, and what that costs it. The consequence column is the point of the
+     page, so it never drops below the fold on a wide screen and it is the
+     first thing under the bays on a narrow one. */
+  .cfg { display: grid; grid-template-columns: 20rem minmax(0, 1fr) 22rem; gap: 1.5rem; align-items: start; }
+  @media (max-width: 72rem) { .cfg { grid-template-columns: 1fr; } }
+
+  /* Section headings on this page are labels, not prose headings: the shared
+     .label rule says it, and h2 borrows it so the markup stays a heading. */
+  h2 {
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--fg-2); font-weight: 500; margin: 1.5rem 0 .5rem;
+  }
+  h2:first-child { margin-top: 0; }
+
+  /* A bay is one installed component: what kind of slot it fills, what it is,
+     and what it cost. Empty bays are drawn too — a slot you have not spent is
+     a decision, not an absence, and it is drawn in the dashed idiom the rest
+     of the app uses for "nothing here yet". */
+  .bay {
+    border: 1px solid var(--line-1); box-shadow: var(--shadow-1);
+    background: var(--bg-elev); padding: 8px 11px; margin: 0 0 10px;
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .bay .swatch { flex: 0 0 auto; width: 6px; align-self: stretch; }
+  .bay .body { flex: 1 1 auto; min-width: 0; }
+  .bay .kind {
+    display: block; font-size: 10px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--fg-2);
+  }
+  .bay .what { font-weight: 700; font-size: 14px; }
+  /* Its own line: a part name and its price on one line wrap in the middle of
+     the name the moment the column narrows. */
+  .bay .cost { display: block; font-size: 12px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .bay.empty {
+    border-style: dashed; border-color: var(--line-2);
+    box-shadow: none; background: none; color: var(--fg-3);
+  }
+  .bay.empty .what { font-weight: 400; font-style: italic; font-size: 13px; }
+  .bay button { flex: 0 0 auto; padding: 1px 7px; font-size: 12px; }
+
+  .palette { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 10px; }
+  .palette .kindname {
+    flex-basis: 100%; font-size: 10px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--fg-2); margin-top: 6px;
+  }
+  .palette button { padding: 2px 8px; font-size: 12px; }
+
+  /* Meters. Both are a hard-ruled track, and both carry the number in words
+     above them: a bar nobody can read a value off is a decoration. */
+  .meter { margin: 2px 0 4px; }
+  .meter .head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: 12px; }
+  .meter .head b { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .track { display: flex; height: 14px; border: 1px solid var(--line-1); background: var(--bg-1); }
+  .track .unit { display: flex; border-right: 1px solid var(--line-1); }
+  .track .unit:last-child { border-right: 0; }
+  .track .seg { min-width: 1px; }
+  /* Ticks-per-cell is a count, not a proportion, so it is drawn as that many
+     blocks rather than as a fraction of a scale nobody has. */
+  .ticks { display: flex; gap: 3px; flex-wrap: wrap; }
+  .ticks i { width: 12px; height: 14px; border: 1px solid var(--line-1); background: var(--fg-0); }
+
+  /* The consequence column. One sentence per line, no bullets, no colour: they
+     are all equally true, and colouring three of them teaches a player to read
+     only those. */
+  #consequences p { margin: 9px 0; font-size: 12px; display: flex; gap: 9px; }
+  #consequences p::before { content: "→"; font-weight: 700; color: var(--fg-2); }
+
+  /* The viewBox is in cells, so every stroke here is non-scaling: a 1px line
+     stays 1px whether the design carries a 6-cell wedge or a 28-cell radar.
+     Dash lengths stay in cells on purpose — one dash is one cell of reach. */
+  .silwrap { border: 1px solid var(--line-1); background: var(--terrain-open); padding: 16px; }
+  .silhouette { display: block; width: 100%; max-width: 22rem; margin: 0 auto; }
+  .silhouette * { vector-effect: non-scaling-stroke; }
+  .silhouette .hull { stroke: #000; stroke-width: 1.5; }
+  .silhouette .ring { fill: none; stroke: var(--kind-radar); stroke-width: 1.5; stroke-dasharray: 1 1; }
+  .silhouette .wedge { fill: var(--colony-0); opacity: .28; }
+  .silhouette .wedge-edge { fill: none; stroke: var(--colony-0); stroke-width: 1.5; stroke-dasharray: 1 .6; }
+
+  .fit { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
+  .fit .no { color: var(--fg-3); }
+  .fit .why { color: var(--fg-2); }
+
+  .bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+</style>
+</head>
+<body>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby">Lobbies</a>
+    <a href="/blueprints" aria-current="page">Blueprints</a>
+    <a href="/editor">Editor</a>
+    <a href="/history">History</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
+  <h1>Blueprint configurator</h1>
+  <p class="tag">Every part costs budget and adds mass, and mass is speed. What
+  the parts buy is on the right, in sentences: that column is the design, and
+  the silhouette is the receipt &mdash; it is the shape the arena will actually
+  draw.
+  <br>Approving a design freezes a copy of the parts list, so editing a library
+  row later cannot reach a lobby that already approved it or a match running on
+  it &mdash; what it can reach is a program that needed the radar you just took
+  off, and the compatibility column below says so before you save. Approve what
+  you want your base to build on the <a href="/lobby">lobbies page</a>.</p>
+
+  <p class="err" id="err"></p>
+
+  <div class="bar">
+    <label>Library <select id="library"></select></label>
+    <button id="edit" title="change the selected design in place">Edit</button>
+    <button id="copy" title="start a new design from the selected one, leaving it alone">Copy</button>
+    <button id="del" title="delete the selected design from your library">Delete</button>
+    <button id="clear">Start empty</button>
+  </div>
+
+  <div class="cfg">
+    <div>
+      <h2>Bays</h2>
+      <div id="bays"></div>
+
+      <h2>Add a part</h2>
+      <p class="meta">Exactly one locomotion unit and one armored body; at most
+      one radar and two weapons. A manipulator is what lets a robot pick
+      anything up.</p>
+      <div class="palette" id="palette"></div>
+    </div>
+
+    <div>
+      <h2>Silhouette &mdash; as the arena draws it</h2>
+      <div class="silwrap">
+        <svg class="silhouette" id="silhouette" viewBox="-32 -32 64 64" role="img"
+             aria-labelledby="sil-desc"></svg>
+      </div>
+      <p class="meta" id="sil-desc"></p>
+
+      <h2>Program compatibility</h2>
+      <p class="meta">Every program in your library, checked against this
+      hardware. A dead rule is legal and will simply never fire.</p>
+      <div class="fit" id="fit"></div>
+    </div>
+
+    <div>
+      <h2>Budget</h2>
+      <div class="meter" id="budget"></div>
+
+      <h2>Mass &rarr; speed</h2>
+      <div class="meter" id="speed"></div>
+
+      <h2>Consequences</h2>
+      <div id="consequences"></div>
+
+      <h2>Save</h2>
+      <div class="bar">
+        <input type="text" id="name" maxlength="64" placeholder="name" size="16">
+        <button class="btn sm primary" id="save">Save blueprint</button>
+      </div>
+      <p class="meta" id="status"></p>
+    </div>
+  </div>
+
+<script type="module" src="/js/blueprints.js"></script>
+</body>
+</html>
