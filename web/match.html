@@ -87,16 +87,20 @@
      bar rather than in the inspector: that panel is replaceChildren()-ed ten
      times a second, and a button inside it would be detached mid-click. The
      state is [aria-pressed] and only that, so what a screen reader announces
-     cannot drift from the box that is drawn. */
-  .field-bar .toggle {
+     cannot drift from the box that is drawn.
+
+     MY COLONY ONLY over the event log is the same control in a second place, so
+     it is the same rule rather than a copy of it: two toggles that look alike
+     until one of them is edited is how a page stops matching itself. */
+  .field-bar .toggle, .log-head .toggle {
     font: inherit; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
     padding: 1px 7px; border: 1px dashed var(--line-2); color: var(--fg-2);
     background: none; box-shadow: none; cursor: pointer;
   }
-  .field-bar .toggle[aria-pressed="true"] {
+  .field-bar .toggle[aria-pressed="true"], .log-head .toggle[aria-pressed="true"] {
     border-style: solid; border-color: var(--line-1); color: var(--fg-0);
   }
-  .field-bar .toggle:hover { background: var(--fg-0); color: var(--bg-0); }
+  .field-bar .toggle:hover, .log-head .toggle:hover { background: var(--fg-0); color: var(--bg-0); }
 
   /* MAP/POV/SPLIT is a .seg, drawn entirely by app.css: one border, a divider
      per seam, [aria-pressed="true"] inverted, and the base button's inverting
@@ -274,6 +278,29 @@
     position: absolute; bottom: -19px; left: 0; transform: translateX(-50%);
     font-size: 10px; color: var(--fg-2); white-space: nowrap;
   }
+  /* Event marks (design 1a 236-248, 1c 553-566): one tick on the track per
+     entry of the match event feed, placed by the tick it happened on. The same
+     marks serve both tenses of this bar — a replay re-derives the same feed by
+     re-running the match — so there is one implementation and not a live one
+     and a replay one.
+
+     The strip is a positioned box of its own rather than marks parented to
+     .track directly: match.js appends into it and clears it in one call, and it
+     sits above the fill and under the live mark by document order alone. */
+  .track .marks { position: absolute; inset: 0; }
+  .track .ev { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--fg-3); }
+  .track .ev > b {
+    position: absolute; top: 1px; left: 0; transform: translateX(-50%);
+    font-size: 10px; font-weight: 400; line-height: 1; color: var(--fg-2);
+  }
+  /* What a mark means, said once beside the track it is on. */
+  .timeline .glyphs { display: flex; gap: 10px; font-size: 11px; color: var(--fg-2); }
+  .timeline .glyphs b { font-weight: 400; color: var(--fg-0); }
+  /* The feed keeps the last 400 events (internal/lobby/events.go). Past that a
+     long match's marks do not reach back to the start, and the bar says so
+     rather than showing a partial history as a whole one. */
+  .timeline .dropped { font-size: 11px; color: var(--warn); }
+
   .ticks {
     display: flex; justify-content: space-between; margin-top: 6px;
     font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums;
@@ -329,6 +356,12 @@
   .roster .row .num.hurt { color: var(--warn); font-weight: 700; }
   .roster .row .num.crit { color: var(--bad); font-weight: 700; }
   .roster .row.sel .num.hurt, .roster .row.sel .num.crit { color: inherit; font-weight: 700; }
+  /* The last notable thing that happened to this robot (design 99-151), in the
+     same glyphs the timeline marks use. A fixed column, so a stack of rows
+     reads down it; · is "nothing lately" and is meant to disappear. */
+  .roster .row .evg { flex: none; width: .9rem; text-align: center; font-size: 11px; }
+  .roster .row .evg.quiet { color: var(--fg-3); }
+  .roster .row.sel .evg.quiet { color: inherit; }
 
   /* Inspector ------------------------------------------------------------ */
 
@@ -486,6 +519,34 @@
   .hist .evt { font-size: 11px; }
   .hist .evt.mem::before { content: "✎ "; }
   .hist .evt.sig::before { content: "📡 "; }
+
+  /* Event log (design 1c 576-616), replay only. Every row is a <button>: a
+     click seeks the replay to that event's tick, which is why this is a panel
+     of its own and not a section of #inspector — that one is
+     replaceChildren()-ed ten times a second and would detach a row mid-click.
+     The list is capped in height and scrolls inside the panel, like the trace
+     history above it, so a long feed does not push the rest of the column off
+     the screen. */
+  .log-head { display: flex; align-items: baseline; gap: 8px; padding: .2rem 0 .5rem; }
+  .log { display: grid; align-content: start;
+         max-height: 22rem; overflow-y: auto; overflow-x: hidden; }
+  .log .row {
+    display: flex; align-items: baseline; gap: 9px; width: 100%; text-align: left;
+    font: inherit; font-size: 12px; padding: 7px 2px;
+    border: 0; border-bottom: 1px solid var(--line-3);
+    background: none; color: var(--fg-1); box-shadow: none; cursor: pointer;
+  }
+  .log .row:hover { background: var(--bg-2); color: var(--fg-0); }
+  /* The entry at the tick the replay is standing on, inverted — the same "the
+     loudest thing in a list is the one you are on" rule the roster follows. */
+  .log .row.cur { background: var(--fg-0); color: var(--bg-0); }
+  .log .row .when { flex: none; width: 2.7rem; font-size: 11px;
+                    color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .log .row.cur .when { color: inherit; }
+  .log .row .g { flex: none; }
+  .log .row .what { flex: 1 1 0; min-width: 0;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .log .row .swatch { flex: none; margin: 0; }
 
   /* Below three columns there is no instrument left to fill: the shell stops
      owning the viewport, every pane goes back to flowing in the document, and
@@ -808,12 +869,28 @@
         <div class="head">
           <span class="label">Timeline</span>
           <span class="meta" id="timeline-note">the match runs whether or not anyone is watching</span>
+          <span class="grow"></span>
+          <!-- What a mark on the track means (design 1a 233-237). Static, and
+               the four of them are the wire's four kinds
+               (internal/sim/events.go): a fifth would arrive unlabelled here,
+               which is the signal to name it. -->
+          <span class="meta">Events</span>
+          <span class="glyphs">
+            <span><b>&#10007;</b> loss</span>
+            <span><b>&#9670;</b> deposit</span>
+            <span><b>&#9646;</b> build</span>
+            <span><b>!</b> stall</span>
+          </span>
+          <span class="dropped" id="events-dropped" hidden>earliest events dropped</span>
         </div>
         <!-- The chip is a child of the fill, so it is carried by the same edge
              the head is drawn from. The live mark is only ever shown when the
-             client has actually been told where the live match is. -->
+             client has actually been told where the live match is. The marks
+             strip is filled by match.js from the event feed — one tick per
+             event, appended as the feed grows and never rebuilt per frame. -->
         <div class="track">
           <i id="progress"><span class="now" id="now-chip">now</span></i>
+          <span class="marks" id="track-marks"></span>
           <span class="live-mark" id="live-mark" hidden><span id="live-mark-label"></span></span>
         </div>
         <div class="ticks"><span>start</span><span id="tick-mid">&nbsp;</span><span>end</span></div>
@@ -837,6 +914,11 @@
             <span class="grow"></span>
             <span class="kbd">&larr;</span><span class="kbd">&rarr;</span>
             <span class="hint">&plusmn; 1 tick</span>
+            <!-- Design 551: the same two keys with shift jump between the
+                 things that actually happened, over the list the event log is
+                 showing — so MY COLONY ONLY is one question and not two. -->
+            <span class="kbd">&#8679;&larr;</span><span class="kbd">&#8679;&rarr;</span>
+            <span class="hint">prev / next event</span>
           </div>
           <div class="scrub">
             <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"
@@ -858,6 +940,25 @@
       <p class="spectating" id="spectate" hidden></p>
 
       <div class="pane-body">
+        <!-- Replay only, and shown by match.js (design 1c 576-616): the match's
+             own event feed as a list, with the entry at the tick the replay is
+             standing on inverted and a click on any row seeking there. Live
+             there is nothing to seek to — the server keeps no per-tick history
+             — so the marks on the timeline are the whole of the feed there.
+
+             Its own panel, above the inspector rather than inside it: every row
+             here is a button, and #inspector is replaceChildren()-ed ten times
+             a second. -->
+        <details class="fold" id="p-events" open hidden>
+          <summary>Event log</summary>
+          <div class="log-head">
+            <button class="badge toggle" type="button" id="ev-mine" aria-pressed="false"
+                    title="Show only what happened to your own colony">My colony only &#10007;</button>
+          </div>
+          <div class="log" id="event-log"></div>
+          <p class="meta" id="event-note">No events yet.</p>
+        </details>
+
         <!-- Command lives outside #inspector on purpose: that panel is cleared
              with replaceChildren() every tick, and detaching a <select> from
              the document closes any dropdown the player has open. The fold
