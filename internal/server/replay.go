@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"math"
@@ -31,7 +32,10 @@ const (
 // Service.Replay re-simulates the match from tick 0 up to `from` — about 0.3s
 // for a full default match, and proportional to the target tick with no ceiling
 // on match duration (see the ponytail note there). Every client control is a
-// reconnect, so that is the cost of a scrub or a speed change.
+// reconnect, so that is the cost of a scrub or a speed change. It is bounded by
+// the replay budget, which arrives here as context.DeadlineExceeded and is a
+// 503; the client hanging up mid-rebuild arrives through the same return as
+// context.Canceled and is not an error at all.
 //
 // Like Stream, this handler owns no goroutines and selects on stopping, so a
 // client that disappears leaves nothing behind and a shutdown can drain.
@@ -61,6 +65,18 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 			// silently — a log replayed under a build that simulates
 			// differently is a different game (internal/lobby/persist.go).
 			http.Error(w, lobby.ErrStaleReplay.Error(), http.StatusConflict)
+			return
+		case errors.Is(err, context.Canceled):
+			// The client hung up while the rebuild was running. Not an error:
+			// nothing to write to, and nothing went wrong.
+			return
+		case errors.Is(err, context.DeadlineExceeded):
+			// The replay budget. 503, not 500: nothing is broken, the server
+			// declined work it will not do on a request goroutine. The rebuild
+			// is entirely before the first byte, so a real status is still
+			// available here.
+			slog.Warn("a replay rebuild ran out of budget", "match_id", id, "from", from)
+			http.Error(w, "this match is too long to replay from here", http.StatusServiceUnavailable)
 			return
 		case err != nil:
 			slog.Error("could not rebuild a match for replay", "match_id", id, "from", from, "err", err)
@@ -112,7 +128,13 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 				slog.Info("replay stream closed: server shutting down", "match_id", id, "tick", tick)
 				return
 			case <-ticker.C:
-				if err := m.ReplayTo(tick + 1); err != nil {
+				if err := m.ReplayTo(ctx, tick+1); err != nil {
+					if ctx.Err() != nil {
+						// The client went away between the select and here:
+						// ReplayTo returns the ctx error, which is a disconnect
+						// rather than a broken record.
+						return
+					}
 					// The record replayed this far and no further: corrupt past
 					// the point already sent. Say the replay is over rather
 					// than leaving the client waiting for frames.

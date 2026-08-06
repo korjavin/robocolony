@@ -55,7 +55,9 @@ func (s *Service) Shutdown(ctx context.Context) error { return s.reg.Shutdown(ct
 // A match whose record is missing, corrupt, or written by a build that
 // simulates differently is finished instead — the reaping this used to do
 // unconditionally, now the fallback rather than the rule. A bad record must
-// never keep the server from coming up, so only a database failure is returned.
+// never keep the server from coming up, so only a database failure and a
+// cancelled ctx are returned; the latter is shutdown, and settling a lobby over
+// it would destroy a match that was fine.
 func (s *Service) Restore(ctx context.Context) error {
 	running, err := s.db.ListLobbies(ctx, db.LobbyRunning)
 	if err != nil {
@@ -69,6 +71,12 @@ func (s *Service) Restore(ctx context.Context) error {
 		rerr := s.restore(ctx, l)
 		if rerr == nil {
 			continue
+		}
+		if errors.Is(rerr, context.Canceled) || errors.Is(rerr, context.DeadlineExceeded) {
+			// The replay was interrupted, which here means the process is going
+			// down. The record is fine and the lobby is fine: return rather
+			// than settle a match that was still perfectly restorable.
+			return rerr
 		}
 		if errors.Is(rerr, errMatchIsHistory) {
 			// The match reached its end and the process died between the
@@ -121,7 +129,7 @@ func (s *Service) restore(ctx context.Context, lobby db.Lobby) error {
 		return err
 	}
 	started := time.Now()
-	match, err := replay(lobby, set, members, rec)
+	match, err := replay(ctx, lobby, set, members, rec)
 	if err != nil {
 		return err
 	}

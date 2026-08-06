@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -96,7 +97,10 @@ func (c Command) apply(w *sim.World, rt *prog.Runtime) error {
 //
 // Every failure here is a corrupt or foreign record, and the caller abandons
 // the match rather than serving a world that is not the one the players left.
-func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) (*Match, error) {
+//
+// A cancelled ctx here means shutdown, not a bad record: the error comes back
+// unwrapped so Restore can tell the two apart (lobby.go).
+func replay(ctx context.Context, lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) (*Match, error) {
 	m, err := newReplay(lobby, set, members, rec)
 	if err != nil {
 		return nil, err
@@ -109,7 +113,7 @@ func replay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLog) 
 	if end := set.durationTicks(); target >= end && rec.FinishedAt.IsZero() {
 		return nil, fmt.Errorf("lobby: match %d: recorded at tick %d, past its end at %d", lobby.ID, target, end)
 	}
-	if err := m.ReplayTo(target); err != nil {
+	if err := m.ReplayTo(ctx, target); err != nil {
 		return nil, err
 	}
 	if m.replayed < len(m.log) {
@@ -148,9 +152,22 @@ func newReplay(lobby db.Lobby, set Settings, members []db.Member, rec db.MatchLo
 //
 // Only for a match built from a stored record. On a live one it would re-apply
 // commands the players have already made.
-func (m *Match) ReplayTo(target uint64) error {
+//
+// It is O(target tick) with no ceiling on match duration, so it is the ctx that
+// bounds it: the error comes back unwrapped, and every caller either has a
+// deadline over it (Service.Replay) or is a shutdown path.
+func (m *Match) ReplayTo(ctx context.Context, target uint64) error {
 	stalled := false
-	for {
+	for n := 0; ; n++ {
+		// Not every tick: an unbounded loop has to be interruptible, but a
+		// rebuild is thousands of iterations and the check buys nothing at that
+		// granularity. ctxCheckTicks of simulation is single-digit milliseconds,
+		// which is prompt enough for both a 30s budget and a hung-up client.
+		if n%ctxCheckTicks == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		tick, err := m.applyDue()
 		if err != nil {
 			return err
@@ -166,6 +183,9 @@ func (m *Match) ReplayTo(target uint64) error {
 		stalled = !m.step()
 	}
 }
+
+// ctxCheckTicks is how many replayed ticks pass between two ctx checks.
+const ctxCheckTicks = 256
 
 // applyDue re-applies every recorded command due at the tick the world is
 // standing on, and reports that tick.

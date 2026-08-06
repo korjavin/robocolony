@@ -150,7 +150,7 @@ func testReplayPreservesStateHash(t *testing.T, set Settings) {
 		t.Fatalf("saved tick %d, match is at %d", rec.Tick, live.world.Tick)
 	}
 
-	restored, err := replay(lobby, set, members, rec)
+	restored, err := replay(t.Context(), lobby, set, members, rec)
 	if err != nil {
 		t.Fatalf("replay() = %v", err)
 	}
@@ -184,7 +184,7 @@ func TestReplayFinishedMatchToItsEnd(t *testing.T) {
 
 	rec, m := finishedMatch(t, svc, database, lobby, set, members)
 
-	restored, err := replay(lobby, set, members, rec)
+	restored, err := replay(t.Context(), lobby, set, members, rec)
 	if err != nil {
 		t.Fatalf("replay() of a finished match = %v", err)
 	}
@@ -202,7 +202,7 @@ func TestReplayFinishedMatchToItsEnd(t *testing.T) {
 	// finished_at is a *running* match claiming to stand at its own end, which
 	// is corrupt.
 	rec.FinishedAt = time.Time{}
-	if _, err := replay(lobby, set, members, rec); err == nil {
+	if _, err := replay(t.Context(), lobby, set, members, rec); err == nil {
 		t.Error("replay() accepted a running match recorded at its end tick")
 	}
 }
@@ -269,7 +269,7 @@ func TestRebuildCost(t *testing.T) {
 		StartedAt: time.Now().UTC(), Commands: "[]", FinishedAt: time.Now().UTC(),
 	}
 	started := time.Now()
-	m, err := replay(lobby, set, members, rec)
+	m, err := replay(t.Context(), lobby, set, members, rec)
 	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatalf("replay() = %v", err)
@@ -302,6 +302,100 @@ func finishedMatch(t *testing.T, svc *Service, database *db.DB, lobby db.Lobby, 
 		t.Fatalf("MatchLogByID() = %v", err)
 	}
 	return rec, m
+}
+
+// TestReplayToStopsOnCancel: the rebuild is O(target tick) and rc-8hu left match
+// duration with no ceiling, so the loop has to be interruptible. A cancelled ctx
+// must stop it where it stands rather than pay for the whole match, and come
+// back unwrapped so a caller can tell a hang-up from a corrupt record.
+func TestReplayToStopsOnCancel(t *testing.T) {
+	svc, database := newService(t)
+	set := shortSettings(600)
+	lobby, members := seatedLobby(t, svc, database, set)
+	set.Seed = mustSettings(t, lobby).Seed
+	liveMatch(t, svc, lobby, set, members)
+	rec, err := database.MatchLogByID(t.Context(), lobby.ID)
+	if err != nil {
+		t.Fatalf("MatchLogByID() = %v", err)
+	}
+	target := set.durationTicks() // 6000 ticks: a fraction of a second of work
+
+	fresh := func(t *testing.T) *Match {
+		t.Helper()
+		m, err := newReplay(lobby, set, members, rec)
+		if err != nil {
+			t.Fatalf("newReplay() = %v", err)
+		}
+		return m
+	}
+
+	t.Run("cancelled before it starts", func(t *testing.T) {
+		m := fresh(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := m.ReplayTo(ctx, target); !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReplayTo() with a cancelled ctx = %v, want context.Canceled", err)
+		}
+		if m.world.Tick != 0 {
+			t.Errorf("a cancelled replay simulated %d ticks anyway", m.world.Tick)
+		}
+	})
+
+	t.Run("cancelled mid rebuild", func(t *testing.T) {
+		m := fresh(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		time.AfterFunc(5*time.Millisecond, cancel)
+		started := time.Now()
+		err := m.ReplayTo(ctx, target)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReplayTo() cancelled mid rebuild = %v, want context.Canceled", err)
+		}
+		if m.world.Tick >= target {
+			t.Errorf("the replay ran to its target %d anyway", target)
+		}
+		t.Logf("stopped at tick %d of %d after %v", m.world.Tick, target, time.Since(started).Round(time.Millisecond))
+	})
+}
+
+// TestRestoreKeepsALobbyItWasInterrupted: Restore's fallback for a record it
+// cannot use is to finish the lobby and delete the record. A cancelled ctx is
+// shutdown, not a bad record, and must never be mistaken for one — the match was
+// fine and the next process has to be able to restore it.
+func TestRestoreKeepsALobbyItWasInterrupted(t *testing.T) {
+	svc, database := newService(t)
+	// An hour-long match, so the rebuild below is hundreds of milliseconds and
+	// the cancellation lands well inside it however loaded the box is.
+	set := shortSettings(3600)
+	lobby, members := seatedLobby(t, svc, database, set)
+	set.Seed = mustSettings(t, lobby).Seed
+	liveMatch(t, svc, lobby, set, members)
+
+	// A record far enough in that the rebuild is the slow part of Restore: the
+	// commands are all in the first 213 ticks, so this only moves the target.
+	rec, err := database.MatchLogByID(t.Context(), lobby.ID)
+	if err != nil {
+		t.Fatalf("MatchLogByID() = %v", err)
+	}
+	rec.Tick = 30000
+	if err := database.SaveMatchLog(t.Context(), rec); err != nil {
+		t.Fatalf("SaveMatchLog() = %v", err)
+	}
+
+	next := New(database) // the process after the deploy, going down mid-restore
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(20*time.Millisecond, cancel) // well inside the rebuild
+	if err := next.Restore(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Restore() interrupted = %v, want context.Canceled", err)
+	}
+	after, err := database.LobbyByID(t.Context(), lobby.ID)
+	if err != nil || after.State != db.LobbyRunning {
+		t.Errorf("lobby state is %q (err %v), want running: an interrupted restore settled a match that was fine", after.State, err)
+	}
+	if _, err := database.MatchLogByID(t.Context(), lobby.ID); err != nil {
+		t.Errorf("MatchLogByID() after an interrupted restore = %v, want the record kept", err)
+	}
 }
 
 // TestRestoreResumesRunningMatch is the same thing end to end: a second service

@@ -1,12 +1,14 @@
 package lobby
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/korjavin/robocolony/internal/prog"
 	"github.com/korjavin/robocolony/internal/sim"
@@ -145,13 +147,13 @@ func TestReplayStandsAtTheRequestedTick(t *testing.T) {
 		t.Error("a replay was put in the registry: it must never touch the live world")
 	}
 	// Stepping it forward from there is what the SSE handler does per frame.
-	if err := m.ReplayTo(121); err != nil {
+	if err := m.ReplayTo(t.Context(), 121); err != nil {
 		t.Fatalf("ReplayTo(121) = %v", err)
 	}
 	if got := m.Info().Tick; got != 121 {
 		t.Errorf("after ReplayTo(121) the match stands at tick %d", got)
 	}
-	if err := m.ReplayTo(set.durationTicks()); err != nil {
+	if err := m.ReplayTo(t.Context(), set.durationTicks()); err != nil {
 		t.Fatalf("ReplayTo(end) = %v", err)
 	}
 	var got, want uint64
@@ -173,6 +175,33 @@ func TestReplayStandsAtTheRequestedTick(t *testing.T) {
 	other, _ := seatedLobby(t, svc, database, set)
 	if _, err := svc.Replay(t.Context(), other.ID, 0); !errors.Is(err, ErrNoRecord) {
 		t.Errorf("Replay() of a match that never finished = %v, want ErrNoRecord", err)
+	}
+}
+
+// TestReplayBudgetBoundsTheRebuild: the rebuild runs on a request goroutine and
+// costs O(target tick) with no ceiling on match duration, so the budget is what
+// stops one request occupying a goroutine indefinitely. The default budget is
+// 30s and every other test here replays inside it — this one shrinks it, which
+// is the only way to see it fire without a match nobody would play.
+func TestReplayBudgetBoundsTheRebuild(t *testing.T) {
+	defer func(prev time.Duration) { replayBudget = prev }(replayBudget)
+
+	svc, database := newService(t)
+	set := shortSettings(60)
+	lobby, members := seatedLobby(t, svc, database, set)
+	set.Seed = mustSettings(t, lobby).Seed
+	finishedMatch(t, svc, database, lobby, set, members)
+
+	replayBudget = time.Nanosecond
+	_, err := svc.Replay(t.Context(), lobby.ID, set.durationTicks())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Replay() over budget = %v, want context.DeadlineExceeded", err)
+	}
+
+	// And the budget is a ceiling, not a cost: the same replay inside it works.
+	replayBudget = 30 * time.Second
+	if _, err := svc.Replay(t.Context(), lobby.ID, set.durationTicks()); err != nil {
+		t.Fatalf("Replay() inside the budget = %v", err)
 	}
 }
 
