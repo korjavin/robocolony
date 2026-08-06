@@ -51,6 +51,10 @@ let lang = null;        // /api/language: the component catalogue and the limits
 let blueprints = [];    // the saved library
 let picked = [];        // the design on screen, as variant ids in slot order
 let editing = 0;        // library id the draft writes back to, 0 = a new design
+// The library row the draft was opened from, whether to edit it or to copy it.
+// Not the same question as `editing`: Copy writes to a new row but the approvals
+// panel still has to say what the row it came from is approved as.
+let origin = 0;
 let preview = null;     // the last /api/blueprints/preview answer
 let previewFor = null;  // the parts list that answer describes
 let lobbies = [];       // GET /api/lobbies, for the approvals panel
@@ -399,7 +403,7 @@ function renderApprovals() {
     const seat = mySeat(l);
     const entries = (seat && seat.loadout.entries) || [];
     if (entries.some((e) => partsKey(e.components) === mine)) builds.push(l);
-    else if (editing && entries.some((e) => e.blueprint_id === editing)) stale.push(l);
+    else if (origin && entries.some((e) => e.blueprint_id === origin)) stale.push(l);
   }
   const links = (list) => list.flatMap((l, i) =>
     [i ? el("span", { textContent: ", " }) : null, el("a", { href: "/lobby", textContent: l.name })]);
@@ -541,6 +545,7 @@ function showName() {
 // Save writes back to that library row or mints a new one.
 function load(bp, inPlace) {
   editing = inPlace ? bp.id : 0;
+  origin = bp.id;
   picked = [...bp.components];
   $("name").value = inPlace ? bp.name : `${bp.name} mk2`;
   preview = null;
@@ -571,7 +576,7 @@ $("edit").addEventListener("click", () => { const b = selected(); if (b) load(b,
 $("copy").addEventListener("click", () => { const b = selected(); if (b) load(b, false); });
 $("name").addEventListener("input", showName);
 $("clear").addEventListener("click", () => {
-  editing = 0; picked = []; preview = null; previewFor = null;
+  editing = 0; origin = 0; picked = []; preview = null; previewFor = null;
   $("name").value = ""; status(""); refresh();
 });
 
@@ -603,7 +608,7 @@ $("save").addEventListener("click", async () => {
     if (!bp) return;
     const at = blueprints.findIndex((x) => x.id === bp.id);
     if (at < 0) blueprints.push(bp); else blueprints[at] = bp;
-    editing = bp.id;
+    editing = origin = bp.id;
     renderLibrary();
     $("library").value = String(bp.id);
     $("name").value = bp.name;
