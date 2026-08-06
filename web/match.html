@@ -109,9 +109,10 @@
   .overlay.tl { top: 20px; left: 20px; }
   .overlay.bl { bottom: 20px; left: 20px; }
 
-  /* Timeline. There is no scrubbing here: the server keeps no per-tick history
+  /* Timeline. Live there is no scrubbing: the server keeps no per-tick history
      to seek into, so this says where in the match you are and nothing it cannot
-     back up. Replay is the follow-up, and it is a server change first. */
+     back up. A finished match is a different question — its whole command log
+     is on disk — so ?replay=1 adds the .replay row below. */
   .timeline { border-top: 1px solid var(--line-1); padding: 10px 14px 12px; }
   .timeline .head { display: flex; align-items: baseline; gap: 12px; }
   .track {
@@ -133,6 +134,13 @@
     display: flex; justify-content: space-between; margin-top: 6px;
     font-size: 11px; color: var(--fg-2); font-variant-numeric: tabular-nums;
   }
+  /* Replay only, and shown by match.js. The range takes the width that is left
+     so the whole match is one drag. */
+  .replay { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .replay #rp-seek { flex: 1 1 auto; min-width: 0; }
+  .replay #rp-at { font-variant-numeric: tabular-nums; }
+  .replay #rp-play { min-width: 5rem; }
+  .replay select { padding: .1rem .4rem; font-size: 12px; }
 
   /* Roster --------------------------------------------------------------- */
 
@@ -190,8 +198,6 @@
     text-transform: uppercase; color: var(--fg-2); font-weight: 500;
   }
 
-  .swatch { display: inline-block; width: .7rem; height: .7rem; margin-right: .35rem; }
-
   /* Map legend. Every swatch takes its colour from the same custom property
      the canvas reads — via var(), never a literal — so the legend cannot drift
      from what is drawn, and it follows the theme without a re-render. Marks
@@ -239,15 +245,6 @@
   /* One line per colony: a wrapped name makes every row two rows tall, which
      is a worse trade than scrolling the last column into view. */
   #stats td.who { white-space: nowrap; }
-
-  /* Score-over-time graph. Colours come from --colony-N, never a literal. */
-  .graph-head { display: flex; align-items: baseline; gap: .5rem;
-                font-size: 11px; margin: .2rem 0 .3rem; }
-  .graph-head select { padding: .1rem .4rem; font-size: 11px; }
-  .graph { display: block; width: 100%; height: 8rem;
-           border: 1px solid var(--line-1); background: var(--bg-1); }
-  .graph polyline { fill: none; stroke-width: 2; stroke-linejoin: round;
-                    stroke-linecap: round; }
 
   .hp { height: 8px; border: 1px solid var(--line-1); background: var(--bg-1);
         overflow: hidden; margin: .3rem 0 .5rem; }
@@ -332,6 +329,7 @@
     <a href="/lobby" aria-current="true">Lobbies</a>
     <a href="/blueprints">Blueprints</a>
     <a href="/editor">Editor</a>
+    <a href="/history">History</a>
     <a href="/help">Guide</a>
     <span class="grow"></span>
     <a href="/login">Sign in</a>
@@ -478,16 +476,39 @@
         </details>
       </div>
 
-      <!-- Where in the match you are. Not a scrubber: the server keeps no
-           per-tick history to seek into, so there is nothing behind the head to
-           drag back to. -->
+      <!-- Where in the match you are. Live it is not a scrubber: the server
+           keeps no per-tick history to seek into, so there is nothing behind
+           the head to drag back to. A replay does have the whole log, so the
+           row below appears for ?replay=1 and only then.
+
+           It lives here rather than in the right-hand column because that
+           column holds #inspector, which is replaceChildren()-ed ten times a
+           second — a <select> in there closes under the pointer. -->
       <div class="timeline">
         <div class="head">
           <span class="label">Timeline</span>
-          <span class="meta">the match runs whether or not anyone is watching</span>
+          <span class="meta" id="timeline-note">the match runs whether or not anyone is watching</span>
         </div>
         <div class="track"><i id="progress"></i></div>
         <div class="ticks"><span>start</span><span id="tick-mid">&nbsp;</span><span>end</span></div>
+
+        <!-- Replay controls. Every one of them is a reconnect with new query
+             params (see match.js): pause closes the stream, play, scrub and
+             speed reopen it. -->
+        <div class="replay" id="replay" hidden>
+          <button class="btn sm" type="button" id="rp-play">Pause</button>
+          <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"
+                 aria-label="Seek to a tick of the match">
+          <span class="meta" id="rp-at">0:00</span>
+          <label class="meta" for="rp-speed">Speed</label>
+          <select id="rp-speed" aria-label="Playback speed">
+            <option value="0.5">0.5&times;</option>
+            <option value="1" selected>1&times;</option>
+            <option value="2">2&times;</option>
+            <option value="4">4&times;</option>
+            <option value="8">8&times;</option>
+          </select>
+        </div>
       </div>
     </section>
 

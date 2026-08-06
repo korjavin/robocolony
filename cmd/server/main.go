@@ -145,6 +145,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	mux.HandleFunc("GET /lobby", lobbyPage)
 	mux.HandleFunc("GET /match", matchPage)
 	mux.HandleFunc("GET /blueprints", blueprintsPage)
+	mux.HandleFunc("GET /history", historyPage)
 	mux.HandleFunc("GET /editor", editorPage)
 	mux.HandleFunc("GET /help", helpPage)
 	// Everything under /api needs a session; the static shell does not.
@@ -153,6 +154,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	library.Routes(mux, a.RequireAuth)
 	server.NewDryRunner(library).Routes(mux, a.RequireAuth)
 	mux.Handle("GET /api/matches/{id}/stream", a.RequireAuth(server.Stream(lobbies.Registry(), stopping)))
+	mux.Handle("GET /api/matches/{id}/replay", a.RequireAuth(server.Replay(lobbies, stopping)))
 	server.NewRobots(lobbies.Registry(), database).Routes(mux, a.RequireAuth)
 	// FileServerFS serves index.html for "/" and 404s everything unknown.
 	mux.Handle("GET /", http.FileServerFS(web.FS))
@@ -193,6 +195,15 @@ func blueprintsPage(w http.ResponseWriter, r *http.Request) {
 // editorPage gives the program editor a route of its own. It was previously
 // reachable only as the static file /editor.html, which no page linked to — so
 // the editor existed and could not be found.
+// historyPage lists the matches that have finished. Static like the rest: it
+// gets what it shows from /api/history, which is where the session is required.
+func historyPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "history.html")
+}
+
+// editorPage gives the program and blueprint editor a route of its own. It was
+// previously reachable only as the static file /editor.html, which no page
+// linked to — so the editor existed and could not be found.
 func editorPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "editor.html")
 }

@@ -59,6 +59,11 @@ type Match struct {
 	// replays, and it is why the world itself is never serialised.
 	log []Command
 
+	// replayed is how many of log have been re-applied while rebuilding this
+	// match from a stored record (persist.go). It stays zero on a live match,
+	// which appends to log rather than replaying it.
+	replayed int
+
 	// history is the sampled score/robots/collected series behind the match
 	// view's graph (history.go). Observation, not state: a replay rebuilds it
 	// by re-stepping, and nothing in it is persisted.
@@ -138,6 +143,10 @@ func newMatch(lobby db.Lobby, s Settings, members []db.Member) (*Match, error) {
 	return m, nil
 }
 
+// ErrMatchOver is Apply's refusal: the match ended before the command reached
+// the lock. internal/server maps it to the same 409 its own pre-check gives.
+var ErrMatchOver = errors.New("lobby: the match is over")
+
 // Read runs f with exclusive access to the live world and its program runtime.
 //
 // f must be short and must never write to the network or the database: it runs
@@ -158,9 +167,18 @@ func (m *Match) Read(f func(*sim.World, *prog.Runtime)) {
 //
 // cmd.Tick is filled in from the world, not by the caller: the tick a command
 // applied at is only knowable under the lock.
+//
+// A finished match refuses. Callers check Finished() first for a clean answer,
+// but that check cannot hold — the flag is set under this same lock — and this
+// is where it has to be enforced: the finishing save (E9) is the last write of
+// the record, so a command accepted after it is lost from the log for good, and
+// the stored match would replay into a world the players did not see.
 func (m *Match) Apply(cmd Command, f func(*sim.World, *prog.Runtime) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.finished {
+		return ErrMatchOver
+	}
 	if err := f(m.world, m.runtime); err != nil {
 		return err
 	}
@@ -197,11 +215,14 @@ type Info struct {
 	Colonies []Status `json:"colonies"`
 }
 
-// Status is one colony's headline numbers.
+// Status is one colony's headline numbers. Score is the design §9 score, which
+// is what makes this a standing rather than a list of seats — the history page
+// (E9) shows nothing else.
 type Status struct {
 	Colony
 	Robots    int `json:"robots"`
 	Inventory int `json:"inventory"`
+	Score     int `json:"score"`
 }
 
 // Info reports the match metadata under the lock.
@@ -227,7 +248,7 @@ func (m *Match) Info() Info {
 		Colonies: make([]Status, len(m.Colonies)),
 	}
 	for i, c := range m.Colonies {
-		st := Status{Colony: c}
+		st := Status{Colony: c, Score: m.world.Score(c.ID)}
 		for _, r := range m.world.Robots {
 			if r.Colony == c.ID {
 				st.Robots++
@@ -318,14 +339,12 @@ type Registry struct {
 	// under the match lock. Nil disables persistence, which is what a test that
 	// only wants a ticking world asks for.
 	save func(*Match)
-	// forget drops a record a match no longer needs. Nil like save.
-	forget func(*Match)
 }
 
-// NewRegistry returns an empty registry. save and forget may be nil; see the
-// Registry fields of the same name.
-func NewRegistry(save, forget func(*Match)) *Registry {
-	return &Registry{matches: map[int64]*Match{}, done: make(chan struct{}), save: save, forget: forget}
+// NewRegistry returns an empty registry. save may be nil; see the Registry
+// field of the same name.
+func NewRegistry(save func(*Match)) *Registry {
+	return &Registry{matches: map[int64]*Match{}, done: make(chan struct{}), save: save}
 }
 
 // ErrShuttingDown is returned by Start once Shutdown has begun.
@@ -396,12 +415,17 @@ func (r *Registry) drive(m *Match, onEnd func(*Match)) {
 				continue
 			}
 			slog.Info("match finished", "match_id", m.ID, "ticks", m.Settings.durationTicks())
-			// Before onEnd: a record left behind for a finished match is dead
-			// weight on the volume, and one more way for a restart to try to
-			// resurrect a match that is over.
-			if r.forget != nil {
-				r.forget(m)
-			}
+			// The finishing save (E9). It is what turns the replay record into
+			// history: the periodic saves land up to saveEvery ticks short of
+			// the end, and this one is at the exact final tick and carries the
+			// standing with it.
+			//
+			// Before onEnd, which settles the lobby row: a process killed in
+			// between then leaves a record marked finished under a lobby that
+			// still says running, and Restore settles that (lobby.go). The other
+			// order would leave a finished lobby whose record stops short of the
+			// end, with nothing left to notice.
+			r.persist(m)
 			if onEnd != nil {
 				onEnd(m)
 			}

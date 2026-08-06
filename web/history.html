@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>History &mdash; robocolony</title>
+<link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* A finished match is a record, so this page is a list on the left and the
+     record you picked on the right — the same two-column contract as the
+     lobbies page, which is the page this one is the past tense of. */
+  :root { --page: 84rem; }
+  .cols { display: grid; grid-template-columns: 24rem minmax(0, 1fr); gap: 0; align-items: start; }
+  .cols > .detail {
+    border-left: 1px solid var(--line-2); padding-left: 1.5rem; margin-left: 1.5rem;
+  }
+  @media (max-width: 68rem) {
+    .cols { grid-template-columns: 1fr; }
+    .cols > .detail { border-left: 0; padding-left: 0; margin-left: 0; }
+  }
+  h2 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+       color: var(--fg-2); font-weight: 500; margin: 1.6rem 0 .5rem; }
+
+  ul { list-style: none; padding: 0; margin: 0; }
+  /* One button per match: focus, Enter and Space come free, and the whole row
+     is the target. Selected inverts, like the match view's roster. */
+  li > .pick {
+    display: block; width: 100%; text-align: left; font: inherit;
+    border: 1px solid var(--line-2); background: var(--bg-elev); color: inherit;
+    box-shadow: none; padding: .6rem .8rem; margin: .4rem 0;
+  }
+  li > .pick:hover { background: var(--bg-1); color: var(--fg-0); }
+  li > .pick[aria-pressed=true] { border-color: var(--line-1); box-shadow: var(--shadow-1); }
+  li > .pick .who { font-weight: 700; }
+  #standing { font-size: 13px; font-variant-numeric: tabular-nums; }
+  #standing td.who { white-space: nowrap; }
+  /* The winner is the row you came here to read. */
+  #standing tr.win td { font-weight: 700; }
+  #standing .badge { margin-left: .4rem; font-weight: 500; }
+</style>
+</head>
+<body>
+  <nav class="site" aria-label="Site">
+    <a class="brand" href="/">robocolony</a>
+    <a href="/lobby">Lobbies</a>
+    <a href="/blueprints">Blueprints</a>
+    <a href="/editor">Editor</a>
+    <a href="/history" aria-current="page">History</a>
+    <a href="/help">Guide</a>
+    <span class="grow"></span>
+    <a href="/login">Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+  </nav>
+
+  <h1>History</h1>
+  <p class="tag">Every match that has finished, newest first &mdash; the final
+  standing, how the score got there, and the whole thing played back if this
+  build still simulates the way that one did.</p>
+
+  <p class="err" id="err"></p>
+
+  <div class="cols">
+    <div>
+      <h2>Finished matches</h2>
+      <ul id="matches"></ul>
+    </div>
+
+    <div class="detail">
+      <h2 id="detail-name">Pick a match</h2>
+      <p class="meta" id="detail-when">Its standing and its graph appear here.</p>
+
+      <div id="watch"></div>
+
+      <div class="tablewrap"><table id="standing"></table></div>
+
+      <!-- The same graph the match view draws, from the same module: score,
+           robots or parts collected over the match, one polyline per colony,
+           coloured from --colony-N through var(). -->
+      <h3>Over time</h3>
+      <div class="graph-head">
+        <label for="graph-metric">Series</label>
+        <select id="graph-metric">
+          <option value="score">Score</option>
+          <option value="robots">Robots</option>
+          <option value="collected">Parts collected</option>
+        </select>
+      </div>
+      <svg class="graph" id="graph" viewBox="0 0 600 180"
+           preserveAspectRatio="none" role="img"
+           aria-label="Colony series over the finished match">
+        <g id="graph-lines"></g>
+      </svg>
+      <p class="meta" id="graph-note">Pick a match to see how its score moved.</p>
+    </div>
+  </div>
+
+<script type="module" src="/js/history.js"></script>
+</body>
+</html>

@@ -20,12 +20,13 @@ import (
 // adding a page; the test says what the other half is.
 var pages = []string{
 	"index.html", "login.html", "lobby.html", "blueprints.html", "editor.html", "match.html", "help.html",
+	"history.html",
 }
 
 // destinations is every route the nav must offer. /match is deliberately absent:
 // a match needs an id, so it is reached from the lobbies page, which lists the
 // ones that are running.
-var destinations = []string{"/", "/lobby", "/blueprints", "/editor", "/help", "/login", "/auth/logout"}
+var destinations = []string{"/", "/lobby", "/blueprints", "/editor", "/history", "/help", "/login", "/auth/logout"}
 
 var (
 	navRe     = regexp.MustCompile(`(?s)<nav class="site".*?</nav>`)

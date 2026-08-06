@@ -527,7 +527,7 @@ func TestMatchRuns(t *testing.T) {
 // TestMatchTicks: a started match advances over wall time on its own goroutine,
 // and stops when the registry shuts down.
 func TestMatchTicks(t *testing.T) {
-	reg := NewRegistry(nil, nil)
+	reg := NewRegistry(nil)
 	m := testMatch(t, shortSettings(60), 1)
 	if err := reg.Start(m, nil); err != nil {
 		t.Fatalf("Start() = %v", err)
@@ -614,7 +614,7 @@ func TestMatchEndsAtDuration(t *testing.T) {
 // tick driver writes the world ten times a second while handlers read it.
 // Remove the mutex from Match and this test fails under -race.
 func TestConcurrentReadsWhileTicking(t *testing.T) {
-	reg := NewRegistry(nil, nil)
+	reg := NewRegistry(nil)
 	m := testMatch(t, shortSettings(60), 2)
 	if err := reg.Start(m, nil); err != nil {
 		t.Fatalf("Start() = %v", err)
