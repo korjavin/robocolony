@@ -1055,10 +1055,16 @@ function histEntry(e) {
   if (rest > 0) node.append(el("div", "evt sig", `and ${rest} more signal${rest > 1 ? "s" : ""}`));
 
   // Text-only updates from here on: extending a run touches one text node.
-  let n = 1;
-  const stamp = () => setText(when, n > 1 ? `${e.tick} · ×${n}` : String(e.tick));
+  //
+  // Both ends of the range, not just where it started: a robot repeating one
+  // decision for six seconds is the common case, and "3661 · ×61" leaves the
+  // panel unable to say when that stretch ended — which is the one question a
+  // list organised by tick exists to answer. The count rides along because the
+  // ticks in a run need not be consecutive; the poll window has gaps.
+  let to = e.tick, n = 1;
+  const stamp = () => setText(when, n > 1 ? `${e.tick}–${to} · ×${n}` : String(e.tick));
   stamp();
-  return { node, extend: () => { n++; stamp(); } };
+  return { node, extend: (next) => { to = next.tick; n++; stamp(); } };
 }
 
 function histAdd(events) {
@@ -1068,7 +1074,7 @@ function histAdd(events) {
   const before = list.scrollHeight;
   for (const e of events) {
     const key = histKey(e);
-    if (key !== null && histRun && histRun.key === key) { histRun.row.extend(); continue; }
+    if (key !== null && histRun && histRun.key === key) { histRun.row.extend(e); continue; }
     const row = histEntry(e);
     list.insertBefore(row.node, list.firstChild);
     histRun = key === null ? null : { key, row };
