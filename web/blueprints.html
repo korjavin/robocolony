@@ -58,14 +58,18 @@
   .palette button { padding: 2px 8px; font-size: 12px; }
 
   /* Meters. Both are a hard-ruled track, and both carry the number in words
-     above them: a bar nobody can read a value off is a decoration. */
-  .meter { margin: 2px 0 4px; }
+     above them: a bar nobody can read a value off is a decoration.
+     These predate the design system's .meter and .seg in app.css, which mean
+     different things (a one-line ranked bar, a segmented control). The pinned
+     display and border below are what keeps those global rules from reaching
+     in; rc-pt6.3 rebuilds this page against the primitives and drops them. */
+  .meter { display: block; margin: 2px 0 4px; }
   .meter .head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: 12px; }
   .meter .head b { font-size: 13px; font-variant-numeric: tabular-nums; }
   .track { display: flex; height: 14px; border: 1px solid var(--line-1); background: var(--bg-1); }
   .track .unit { display: flex; border-right: 1px solid var(--line-1); }
   .track .unit:last-child { border-right: 0; }
-  .track .seg { min-width: 1px; }
+  .track .seg { min-width: 1px; border: 0; }
   /* Ticks-per-cell is a count, not a proportion, so it is drawn as that many
      blocks rather than as a fraction of a scale nobody has. */
   .ticks { display: flex; gap: 3px; flex-wrap: wrap; }

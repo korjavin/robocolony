@@ -373,3 +373,57 @@ table.t tr:hover td { background: var(--bg-1); }
   font-variant-numeric: tabular-nums;
 }
 .stat-grid > .stat .delta { font-size: 11px; color: var(--fg-2); margin-top: 4px; }
+
+/* The four below are the design's second tier: widgets docs/ux appears on four
+   or more screens and every page had been hand-rolling with inline styles. They
+   are added here ahead of the pages that use them, so nothing on screen changes
+   yet — the per-page beads under rc-pt6 do the adoption. */
+
+/* Segmented control: choose one of a few, in a row that reads as a single
+   object rather than as three buttons. MAP/POV/SPLIT on the match view,
+   CARDS/CODE in the editor, the dashboard's date range, the lobby's duration
+   and seat pickers. Selection is [aria-pressed="true"] and only that, so the
+   state a screen reader announces and the state you can see cannot drift; the
+   options are <button>s and inherit the base button's inverting hover, which
+   reads as a preview of the choice. .fill divides the width evenly instead of
+   hugging the labels — the lobby's pickers, which sit in a fixed column. */
+.seg { display: inline-flex; border: 1px solid var(--line-1); }
+.seg > * {
+  padding: 3px 12px; font-size: 12px; color: var(--fg-1);
+  border: 0; border-radius: 0; background: none; box-shadow: none;
+}
+.seg > * + * { border-left: 1px solid var(--line-1); }
+.seg > [aria-pressed="true"] { background: var(--fg-0); color: var(--bg-0); font-weight: 700; }
+.seg.fill { display: flex; }
+.seg.fill > * { flex: 1 1 0; text-align: center; padding: 4px 0; }
+
+/* A component kind's colour as a small square, sat in the corner of the thing
+   it labels — the configurator's bays. Distinct from .swatch, which is the
+   taller bar that precedes a colony's name; this one is a mark, not a prefix.
+   The colour is written inline from var(--kind-*) by whoever knows the kind.
+   web/editor.html and web/match.html both had a .chip of their own first; each
+   now pins its own box against this rule until rc-pt6.2 / rc-pt6.4 reconcile
+   them. */
+.chip { display: inline-block; width: 9px; height: 9px; }
+
+/* A status list: one glyph, one sentence, repeated. ✓ done, ✗ missing, ! worth
+   knowing. Children are laid out in pairs, glyph first; the glyph column is
+   tertiary so the sentences read as a paragraph and the marks stay a scanning
+   aid rather than a column of icons competing with them. */
+.checklist { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; }
+.checklist > :nth-child(odd) { color: var(--fg-2); }
+
+/* One row of a ranked bar chart: a fixed label so a stack of them aligns, a
+   hard-ruled track, and the number repeated at the end — a bar nobody can read
+   a value off is a decoration. The fill's width is the only inline style, set
+   by whoever computed the proportion. Stack rows in a flex column with a gap.
+   Scoped children on purpose, the same trap .stat-grid documents above:
+   web/blueprints.html calls its budget bars .meter and their insides .track. */
+.meter {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.meter > .k { flex: 0 0 130px; }
+.meter > .bar { flex: 1 1 0; height: 11px; border: 1px solid var(--line-1); }
+.meter > .bar > * { display: block; height: 100%; background: var(--fg-0); }
+.meter > .v { width: 2.5ch; text-align: right; }

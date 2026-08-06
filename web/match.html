@@ -297,7 +297,9 @@
   .hist .at { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
   .hist .why { font-size: 11px; color: var(--fg-1); }
   .hist .also { font-size: 10px; color: var(--fg-2); }
-  .hist .chip { font-size: 11px; }
+  /* Same name as app.css's 9px colour square, different thing — pin the box
+     back to a plain block row. rc-pt6.4 reconciles them. */
+  .hist .chip { font-size: 11px; display: block; width: auto; height: auto; }
   .hist .chip.mem::before { content: "✎ "; }
   .hist .chip.sig::before { content: "📡 "; }
 
