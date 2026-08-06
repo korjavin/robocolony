@@ -2033,10 +2033,13 @@ function feedAdd(list) {
     feed.push(e);
     if (e.robot) lastEventOf.set(e.robot, e);
   }
-  // The client keeps what the server keeps: the last EVENT_CAP entries. Without
-  // this a long match accumulates a mark on the track for every event of it,
-  // for no gain — the marks past the cap are the ones a reload could not have
-  // shown anyway. Trimmed in blocks rather than one at a time because dropping
+  // Bounded like the server's ring, and deliberately not in step with it. A
+  // client watching from the start has *seen* the events the server has since
+  // dropped, and showing them is not a lie — feedDropped is a statement about
+  // this list, so it stays false for as long as this list does reach back to
+  // the start, whatever the server is still holding. What is not acceptable is
+  // growing without bound: a long match would put a mark on the track for every
+  // event of it. Trimmed in blocks rather than one at a time because dropping
   // the head invalidates the appended-so-far state of the marks and the log, so
   // each trim costs a rebuild; a block of 200 makes that rare.
   if (feed.length > EVENT_CAP + 200) {
