@@ -167,10 +167,10 @@ func (s *Service) save(m *Match) {
 		Commands:    string(commands),
 	}
 	if finished {
-		// Info and History take the match lock themselves, which is why they
-		// are outside record() rather than in it. The world is frozen by now,
-		// so the three reads cannot disagree.
-		summary, err := json.Marshal(Summary{Info: m.Info(), History: m.History()})
+		// Info, History and Combat take the match lock themselves, which is why
+		// they are outside record() rather than in it. The world is frozen by
+		// now, so the reads cannot disagree.
+		summary, err := json.Marshal(Summary{Info: m.Info(), History: m.History(), Combat: m.Combat()})
 		if err != nil {
 			slog.Error("could not encode a finished match's summary", "match_id", m.ID, "err", err)
 			return
