@@ -94,12 +94,18 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 
 		info := m.Info()
 		hist := m.History() // takes the match lock, so not inside Read
+		// Re-derived, not stored: the rebuild above re-ran every tick through
+		// Match.step, which is the same step that fills the feed on a live
+		// match (internal/lobby/events.go). Both take the match lock, so both
+		// are read outside Read.
+		feed := m.Events(0)
 		var initFrame Init
 		var board Snapshot
 		m.Read(func(world *sim.World, rt *prog.Runtime) {
-			initFrame = NewInit(info, m.Colonies, world, hist)
-			board = NewSnapshot(world, rt, info.EndTick)
+			initFrame = NewInit(info, m.Colonies, world, hist, feed)
+			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
+		sentEvents := board.Tick
 		if _, err := send(w, flusher, "init", initFrame); err != nil {
 			return
 		}
@@ -144,9 +150,16 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 				}
 				var snap Snapshot
 				m.Read(func(world *sim.World, rt *prog.Runtime) {
-					snap = NewSnapshot(world, rt, info.EndTick)
+					snap = NewSnapshot(world, rt, info.EndTick, nil)
 				})
 				tick = snap.Tick
+				// Nothing else drives this match, so the cursor is exact here;
+				// it is advanced off the events for the same reason as the live
+				// stream, which is the one code path a client sees.
+				if evs := m.Events(sentEvents); len(evs) > 0 {
+					sentEvents = evs[len(evs)-1].Tick + 1
+					snap.Events = newEvents(evs)
+				}
 				if _, err := send(w, flusher, "tick", snap); err != nil {
 					return
 				}

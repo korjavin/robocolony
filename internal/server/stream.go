@@ -129,12 +129,20 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 		// below, which the client handles by appending only ticks newer than
 		// the last one in the series.
 		hist := m.History()
+		// The whole feed so far, on the init frame beside the history and for
+		// the same reason. Outside Read: Events takes the match lock itself.
+		feed := m.Events(0)
 		var initFrame Init
 		var board Snapshot
 		m.Read(func(world *sim.World, rt *prog.Runtime) {
-			initFrame = NewInit(info, m.Colonies, world, hist)
-			board = NewSnapshot(world, rt, info.EndTick)
+			initFrame = NewInit(info, m.Colonies, world, hist, feed)
+			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
+		// An event is stamped with the tick it happened *during*, so everything
+		// the init frame could carry is stamped below board.Tick however far the
+		// world moved between the two reads. This is the cursor the loop below
+		// advances.
+		sentEvents := board.Tick
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return
@@ -186,11 +194,22 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 					if world.Tick == last {
 						return // no new tick yet; nothing to say
 					}
-					snap = NewSnapshot(world, rt, info.EndTick)
+					snap = NewSnapshot(world, rt, info.EndTick, nil)
 					fresh = true
 				})
 				if fresh {
 					last = snap.Tick
+					// Outside Read, so the world may already have moved on and
+					// handed us an event from a tick past this frame's.
+					// Advancing the cursor off the events themselves rather
+					// than off snap.Tick is what makes that harmless: nothing
+					// is sent twice and nothing is skipped, and one tick's
+					// events are appended in a single critical section, so a
+					// cut can never split a tick.
+					if evs := m.Events(sentEvents); len(evs) > 0 {
+						sentEvents = evs[len(evs)-1].Tick + 1
+						snap.Events = newEvents(evs)
+					}
 					if _, err := send(w, flusher, "tick", snap); err != nil {
 						return
 					}

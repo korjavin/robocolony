@@ -253,6 +253,12 @@ type Base struct {
 	Blueprints []Blueprint // approved for automatic production
 	Build      BuildOrder  // current assembly job; zero when idle
 	Stats      Stats
+
+	// stalled remembers that this base has already reported its idle stall, so
+	// EventIdle fires on the edge rather than ten times a second for the rest of
+	// the match. Observation, not state (events.go): nothing in the simulation
+	// reads it, and it is deliberately out of StateHash.
+	stalled bool
 }
 
 // SortedInventory returns the inventory in variant order. Anything that feeds
@@ -322,6 +328,10 @@ type World struct {
 	// signals are the broadcasts heard this tick — sent during the previous
 	// one. State, and hashed.
 	signals []Signal
+
+	// events are what happened during the current tick (events.go). Observation,
+	// not state: never read back, never hashed, and reset at the top of Step.
+	events []Event
 
 	rng    *rand.Rand
 	nextID int

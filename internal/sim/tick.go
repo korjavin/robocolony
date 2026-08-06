@@ -335,6 +335,10 @@ func (w *World) recallAction(r *Robot) Action {
 // A finished match (design §9) does not step at all: the world freezes exactly
 // as it was and stays readable.
 func (w *World) Step() {
+	// Before the Ended check: a finished world reports no events rather than
+	// re-reporting the last tick's forever. The backing array is reused, which
+	// is why Events returns a copy.
+	w.events = w.events[:0]
 	if w.Ended() {
 		return
 	}
@@ -641,6 +645,18 @@ func (w *World) attack(r *Robot, at Coord) int {
 			if s := w.statsOf(r.Colony); s != nil {
 				s.Kills++
 			}
+			// The loss event is emitted here and not in the end-of-tick sweep,
+			// which is the other candidate: this is the only place in the
+			// package where a robot's health reaches zero, and it is the only
+			// place the attacker's identity still exists. Same guarantee as the
+			// kill credit above — one event per wreck, because enemyAt refuses a
+			// target already at zero. A future destruction path that is not a
+			// shot has to emit its own loss event; sweepDestroyed says so.
+			w.emit(Event{
+				Kind: EventLoss, Colony: target.Colony,
+				Robot: target.ID, Blueprint: target.Blueprint.ID,
+				Attacker: r.ID, AttackerColony: r.Colony,
+			})
 		}
 	}
 	return attackTicks
@@ -694,6 +710,7 @@ func (w *World) deposit(r *Robot) {
 	b.Inventory[r.Cargo]++
 	b.Stats.Collected++
 	r.Cargo = VariantNone
+	w.emit(Event{Kind: EventDeposit, Colony: r.Colony, Robot: r.ID, Blueprint: r.Blueprint.ID})
 }
 
 // drop implements drop_component: the cargo becomes an ordinary loose
@@ -725,6 +742,7 @@ func buildTicks(bp Blueprint) int {
 // the colony's only recovery path and has no failure state — it just waits.
 func (w *World) produce(b *Base) {
 	if b.Build.Ticks > 0 {
+		b.stalled = false
 		b.Build.Ticks--
 		if b.Build.Ticks == 0 {
 			w.spawn(b, b.Build.Blueprint)
@@ -741,8 +759,18 @@ func (w *World) produce(b *Base) {
 		}
 	}
 	if len(buildable) == 0 {
+		// §5.2 step 3 is a legitimate wait, not a failure — but a colony that
+		// has been holding unusable salvage for a thousand ticks is the thing
+		// the starter kit has stalled on three times (docs/engineering-notes.md)
+		// and it is invisible without a mark on the timeline. Edge-triggered, so
+		// a stalled base costs one event and not ten a second.
+		if !b.stalled {
+			b.stalled = true
+			w.emit(Event{Kind: EventIdle, Colony: b.Colony})
+		}
 		return
 	}
+	b.stalled = false
 	// 4. Random selection, from the world's seeded rng — never math/rand.
 	bp := buildable[w.rng.Intn(len(buildable))]
 	// 5. Reserve and consume.
@@ -796,7 +824,7 @@ func covers(inv map[Variant]int, bp Blueprint) bool {
 // spawn releases a finished robot at the base with the blueprint's default
 // program (design §5.2 step 7).
 func (w *World) spawn(b *Base, bp Blueprint) {
-	w.Robots = append(w.Robots, &Robot{
+	r := &Robot{
 		ID:        w.NextID(),
 		Colony:    b.Colony,
 		Coord:     b.Coord,
@@ -804,7 +832,9 @@ func (w *World) spawn(b *Base, bp Blueprint) {
 		Health:    StartingHealth(bp),
 		Blueprint: bp,
 		ProgramID: bp.ProgramID,
-	})
+	}
+	w.Robots = append(w.Robots, r)
+	w.emit(Event{Kind: EventBuild, Colony: b.Colony, Robot: r.ID, Blueprint: bp.ID})
 }
 
 func add(a, b Coord) Coord { return Coord{a.X + b.X, a.Y + b.Y} }

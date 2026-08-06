@@ -49,18 +49,25 @@ func TestFrameSize(t *testing.T) {
 		for _, tick := range []int64{600, 1800, 3600, 6000} {
 			t.Run(cfg.name+"/"+strconv.FormatInt(tick, 10)+"ticks", func(t *testing.T) {
 				m := replayLargeMatch(t, tick, cfg.max, cfg.arena)
-				info, hist := m.Info(), m.History()
+				// All three take the match lock, so none may be called inside
+				// Read.
+				info, hist, feed := m.Info(), m.History(), m.Events(0)
 				var in Init
 				var snap Snapshot
 				m.Read(func(w *sim.World, rt *prog.Runtime) {
-					in = NewInit(info, m.Colonies, w, hist)
-					snap = NewSnapshot(w, rt, info.EndTick)
+					in = NewInit(info, m.Colonies, w, hist, feed)
+					snap = NewSnapshot(w, rt, info.EndTick, nil)
 				})
 				initBytes, _ := json.Marshal(in)
 				tickBytes, _ := json.Marshal(snap)
-				t.Logf("tick %d: colonies %d robots %d loose %d | tick frame %d B (%.1f KB, budget %d KB) | init frame %d B",
+				// The feed's own share of the init frame, so the eventCap
+				// comment in internal/lobby/events.go is a measurement rather
+				// than an estimate (rc-pt6.8).
+				feedBytes, _ := json.Marshal(in.Events)
+				t.Logf("tick %d: colonies %d robots %d loose %d | tick frame %d B (%.1f KB, budget %d KB) | init frame %d B (feed %d events, %d B)",
 					snap.Tick, len(snap.Colonies), len(snap.Robots), len(snap.Loose),
-					len(tickBytes), float64(len(tickBytes))/1024, maxFrameBytes>>10, len(initBytes))
+					len(tickBytes), float64(len(tickBytes))/1024, maxFrameBytes>>10, len(initBytes),
+					len(in.Events), len(feedBytes))
 			})
 		}
 	}

@@ -68,6 +68,10 @@ type Match struct {
 	// view's graph (history.go). Observation, not state: a replay rebuilds it
 	// by re-stepping, and nothing in it is persisted.
 	history History
+
+	// events is the match-wide event feed (events.go), bounded by eventCap.
+	// Observation on the same terms as history, and re-derived the same way.
+	events []sim.Event
 }
 
 // newMatch generates the arena and puts every colony in it: one per member,
@@ -277,8 +281,10 @@ func (m *Match) step() bool {
 	}
 	m.world.Step()
 	m.spawnResources()
-	// Before the end check, so a match whose last tick is a sampling tick has
-	// its final point. Reads the world, writes nothing in it (history.go).
+	// Both before the end check, so a match's last tick keeps its events and a
+	// last tick that is a sampling tick keeps its point. Each reads the world
+	// and writes nothing in it (events.go, history.go).
+	m.collectEvents()
 	m.sample()
 	if m.world.Tick >= m.Settings.durationTicks() {
 		m.finished = true
