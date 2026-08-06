@@ -45,6 +45,10 @@ func (w *World) dropAt(at Coord, v Variant) {
 // the robot slice while Step is walking it. Order is slice order, which is
 // allocation order, so the salvage rolls come off the rng in the same sequence
 // on every run.
+//
+// It does *not* emit the loss event (events.go): attack does, because that is
+// the only place a robot's health reaches zero and the only place the attacker
+// is still known. A destruction path that is not a shot must emit its own.
 func (w *World) sweepDestroyed() {
 	for _, r := range w.Robots {
 		if !isDestroyed(r) {

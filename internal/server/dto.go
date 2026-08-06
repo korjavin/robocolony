@@ -51,6 +51,12 @@ type Init struct {
 	// is already a wire payload with its own tags, and a second copy of three
 	// int slices would be a layer with no decision in it.
 	History lobby.History `json:"history"`
+
+	// Events is the match event feed so far (internal/lobby/events.go), oldest
+	// first, capped at eventCap. Here for the same reason History is: a client
+	// that reloads mid-match, or joins late, cannot have observed the events it
+	// missed, and the tick frame below only carries the new ones.
+	Events []Event `json:"events"`
 }
 
 // Colony is one seat: who is playing it, under which colony id.
@@ -112,6 +118,57 @@ type Snapshot struct {
 	Bases    []Base        `json:"bases"`
 	Loose    []Loose       `json:"loose"`
 	Colonies []ColonyStats `json:"colonies"`
+
+	// Events are the feed entries this frame is the first to carry — usually
+	// none, and a handful at most. Absent when empty: a match with nothing
+	// happening pays nothing for the feed, which is what keeps this off the
+	// 64 KB budget at maxFrameBytes.
+	Events []Event `json:"events,omitempty"`
+}
+
+// Event is one entry of the match event feed (internal/sim/events.go): a robot
+// lost, built, a component banked, a base stalled.
+//
+// Kind is the name rather than the number — the enum is a wire value either
+// way, and a feed is read by a person in a curl at least as often as by the
+// renderer.
+type Event struct {
+	Tick   uint64 `json:"tick"`
+	Kind   string `json:"kind"`
+	Colony int    `json:"colony"`
+	// Robot and Blueprint are the subject of the event, and absent on a
+	// base-level one (kind "idle"). Blueprint is the design id, which the init
+	// frame's per-colony Blueprints resolves to a name.
+	Robot     int    `json:"robot,omitempty"`
+	Blueprint string `json:"blueprint,omitempty"`
+
+	// Attacker is who landed the killing blow, on kind "loss" only. A nested
+	// object rather than two flat fields because colony 0 is a real colony:
+	// there is no zero value that could mean "no attacker", and one pointer
+	// says it without inventing a sentinel.
+	Attacker *EventActor `json:"attacker,omitempty"`
+}
+
+// EventActor identifies a robot and the colony it belongs to.
+type EventActor struct {
+	Robot  int `json:"robot"`
+	Colony int `json:"colony"`
+}
+
+// newEvents projects the feed onto the wire.
+func newEvents(evs []sim.Event) []Event {
+	out := make([]Event, 0, len(evs))
+	for _, e := range evs {
+		dto := Event{
+			Tick: e.Tick, Kind: e.Kind.String(), Colony: int(e.Colony),
+			Robot: e.Robot, Blueprint: e.Blueprint,
+		}
+		if e.Kind == sim.EventLoss {
+			dto.Attacker = &EventActor{Robot: e.Attacker, Colony: int(e.AttackerColony)}
+		}
+		out = append(out, dto)
+	}
+	return out
 }
 
 // End is the terminal frame: the match is over and no further tick will come.
@@ -247,9 +304,9 @@ type ColonyStats struct {
 }
 
 // NewInit builds the connect frame. Callers must hold the match lock over w —
-// and must therefore have taken hist (Match.History) outside it, since that
-// takes the same lock.
-func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World, hist lobby.History) Init {
+// and must therefore have taken hist (Match.History) and evs (Match.Events)
+// outside it, since those take the same lock.
+func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World, hist lobby.History, evs []sim.Event) Init {
 	specs := sim.TerrainSpecs()
 	legend := make([]TerrainClass, 0, len(specs))
 	for _, s := range specs {
@@ -302,18 +359,23 @@ func NewInit(info lobby.Info, colonies []lobby.Colony, w *sim.World, hist lobby.
 		Terrain: rows, TerrainLegend: legend,
 		Components: comps, Colonies: seats,
 		History: hist,
+		Events:  newEvents(evs),
 	}
 }
 
 // NewSnapshot builds one tick frame. Callers must hold the match lock over w
 // and rt, and must send the result after releasing it.
-func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64) Snapshot {
+//
+// evs are the feed entries this frame should be the first to carry, taken from
+// Match.Events outside the lock; nil is a frame with no events on it.
+func NewSnapshot(w *sim.World, rt *prog.Runtime, endTick uint64, evs []sim.Event) Snapshot {
 	s := Snapshot{
 		Tick:    w.Tick,
 		EndTick: endTick,
 		Robots:  make([]Robot, 0, len(w.Robots)),
 		Bases:   make([]Base, 0, len(w.Bases)),
 		Loose:   make([]Loose, 0, len(w.Loose)),
+		Events:  newEvents(evs),
 	}
 
 	stats := map[sim.ColonyID]*ColonyStats{}

@@ -77,7 +77,7 @@ func TestTerrainLegendMatchesSpecs(t *testing.T) {
 
 	info, hist := m.Info(), m.History()
 	var in Init
-	m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist) })
+	m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist, nil) })
 
 	specs := sim.TerrainSpecs()
 	if len(in.TerrainLegend) != len(specs) {
@@ -122,7 +122,7 @@ func TestArenaPresetReachesTheInitFrame(t *testing.T) {
 
 			info, hist := m.Info(), m.History()
 			var in Init
-			m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist) })
+			m.Read(func(w *sim.World, rt *prog.Runtime) { in = NewInit(info, m.Colonies, w, hist, nil) })
 			if in.Width != want || in.Height != want {
 				t.Fatalf("init frame is %dx%d, want %dx%d", in.Width, in.Height, want, want)
 			}
@@ -142,8 +142,8 @@ func TestSnapshotShape(t *testing.T) {
 	var init Init
 	var snap Snapshot
 	m.Read(func(w *sim.World, rt *prog.Runtime) {
-		init = NewInit(info, m.Colonies, w, hist)
-		snap = NewSnapshot(w, rt, info.EndTick)
+		init = NewInit(info, m.Colonies, w, hist, nil)
+		snap = NewSnapshot(w, rt, info.EndTick, nil)
 	})
 
 	switch {
@@ -234,7 +234,7 @@ func TestSnapshotShape(t *testing.T) {
 	for {
 		var traced *Trace
 		m.Read(func(w *sim.World, rt *prog.Runtime) {
-			traced = NewSnapshot(w, rt, info.EndTick).Robots[0].Trace
+			traced = NewSnapshot(w, rt, info.EndTick, nil).Robots[0].Trace
 		})
 		if traced != nil {
 			if traced.Rule < -1 {

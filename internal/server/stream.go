@@ -62,6 +62,13 @@ const heartbeatEvery = 15 * time.Second
 // The init frame grows with the arena too, and it is the one that scales
 // cleanly: one terrain char per cell puts XL at 31–36 KB against M's 18–23 KB.
 // It is sent once per connection, not per tick.
+//
+// rc-pt6.8 put the event feed on that frame as well, which is the largest thing
+// added to it since the approved designs: 10 KB on a default board at tick
+// 6000, and 33–37 KB once the buffer reaches eventCap on XL or the stressed
+// preset (the numbers, and why the cap is where it is, are at eventCap in
+// internal/lobby/events.go). The tick frame is unchanged — a tick with nothing
+// to report carries no events key at all — so this budget is untouched.
 const maxFrameBytes = 64 << 10
 
 // pollInterval is how often the stream checks for a new tick. Deliberately
@@ -129,12 +136,28 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 		// below, which the client handles by appending only ticks newer than
 		// the last one in the series.
 		hist := m.History()
+		// The whole feed so far, on the init frame beside the history and for
+		// the same reason. Outside Read: Events takes the match lock itself.
+		feed := m.Events(0)
 		var initFrame Init
 		var board Snapshot
 		m.Read(func(world *sim.World, rt *prog.Runtime) {
-			initFrame = NewInit(info, m.Colonies, world, hist)
-			board = NewSnapshot(world, rt, info.EndTick)
+			initFrame = NewInit(info, m.Colonies, world, hist, feed)
+			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
+		// The cursor starts after the backlog the init frame just took, never at
+		// board.Tick (see takeEvents).
+		var sentEvents uint64
+		if n := len(feed); n > 0 {
+			sentEvents = feed[n-1].Tick + 1
+		}
+		// Whatever the world produced between those two reads rides this first
+		// board frame rather than waiting for the next fresh tick. Usually
+		// nothing — but if that advance was the match's *final* tick there is no
+		// next fresh tick: the loop below finds world.Tick == last and goes
+		// straight to the end frame, and a spectator who connected in that
+		// window would lose the last thing that happened in the match.
+		board.Events, sentEvents = takeEvents(m, sentEvents, board.Tick)
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return
@@ -186,11 +209,12 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 					if world.Tick == last {
 						return // no new tick yet; nothing to say
 					}
-					snap = NewSnapshot(world, rt, info.EndTick)
+					snap = NewSnapshot(world, rt, info.EndTick, nil)
 					fresh = true
 				})
 				if fresh {
 					last = snap.Tick
+					snap.Events, sentEvents = takeEvents(m, sentEvents, snap.Tick)
 					if _, err := send(w, flusher, "tick", snap); err != nil {
 						return
 					}
@@ -203,6 +227,36 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// takeEvents is what a frame at tick still owes the client from the match event
+// feed, and the cursor that follows it. Both stream handlers drain through here,
+// so the live stream and the replay stream deliver on identical terms — a
+// client renders one code path.
+//
+// Two rules, and both are about a race with the tick driver: the feed and the
+// board are separate reads of the match lock, so the world can move between
+// them.
+//
+//   - only events from ticks the frame has already advanced past. An event is
+//     stamped with the tick it happened *during*, so one stamped at or after
+//     the frame's tick describes something the frame does not show yet; it
+//     waits for the frame that does.
+//   - the cursor comes off the events actually taken, never off the frame's
+//     tick. A cursor set from the tick would declare a straddled tick's events
+//     delivered when they were not, and drop them silently.
+func takeEvents(m *lobby.Match, since, tick uint64) ([]Event, uint64) {
+	var owed []sim.Event
+	for _, e := range m.Events(since) {
+		if e.Tick >= tick {
+			break
+		}
+		owed = append(owed, e)
+	}
+	if len(owed) == 0 {
+		return nil, since
+	}
+	return newEvents(owed), owed[len(owed)-1].Tick + 1
 }
 
 // send marshals and writes one SSE event, then flushes, and reports the payload
