@@ -48,7 +48,25 @@ const css = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 };
-const colonyColor = (id) => css(colonyVar(id), "#888");
+
+// Colony colours are resolved once a frame rather than once a robot: css() is a
+// getComputedStyle call, and the arena, the minimap and the panels together ask
+// for one per robot per frame with up to ~160 of them ten times a second. draw()
+// empties this, so a theme switch still lands on the next frame with no reload.
+const colonyColors = new Map();
+const colonyColor = (id) => {
+  let c = colonyColors.get(id);
+  if (c === undefined) { c = css(colonyVar(id), "#888"); colonyColors.set(id, c); }
+  return c;
+};
+
+// The name a robot goes by on screen: the initial of its archetype — which is
+// the letter the arena draws inside it — and its id. The roster, the inspector
+// and the overlay card all use it, so the list, the map and the panel agree on
+// what to call the thing you picked.
+const shortID = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String(r.id).padStart(2, "0")}`;
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 let init = null;       // init frame
 let snap = null;       // last tick frame
@@ -95,6 +113,47 @@ function bakeTerrain() {
   for (let i = 0; i <= init.height; i++) {
     t.beginPath(); t.moveTo(0, i * cell + .5); t.lineTo(terrain.width, i * cell + .5); t.stroke();
   }
+  bakeMinimap();
+}
+
+// ---------------------------------------------------------------- minimap
+//
+// The whole arena at a glance (design 1a 215-226), in a card over the top right
+// of the field. It is not a second renderer: the terrain is the offscreen
+// canvas above, blitted down in one drawImage, and everything on top of it is a
+// fillRect. Nothing here allocates, because it runs ten times a second.
+//
+// There is no viewport rectangle on it because there is no camera to draw one
+// for — the arena always shows the whole world. Panning, zoom and the rectangle
+// that would then mean something belong to the POV bead.
+
+const MINIMAP_W = 148; // css px, and the surface too: it is never scaled by CSS
+
+const minimap = $("minimap");
+const mctx = minimap.getContext("2d");
+let mcell = 0;
+
+function bakeMinimap() {
+  mcell = MINIMAP_W / init.width;
+  minimap.width = MINIMAP_W;
+  minimap.height = Math.round(init.height * mcell);
+  setText($("minimap-label"), `${init.width} × ${init.height}`);
+  $("minimap-card").hidden = false;
+}
+
+function drawMinimap() {
+  mctx.drawImage(terrain, 0, 0, minimap.width, minimap.height);
+  // A dot has to survive the scale: at 64 cells across a cell is barely two
+  // pixels, and a base has to stay findable without becoming a district.
+  const dot = Math.max(2, mcell);
+  for (const b of snap.bases) {
+    mctx.fillStyle = colonyColor(b.colony);
+    mctx.fillRect(b.x * mcell - dot, b.y * mcell - dot, dot * 3, dot * 3);
+  }
+  for (const r of snap.robots) {
+    mctx.fillStyle = colonyColor(r.colony);
+    mctx.fillRect(r.x * mcell, r.y * mcell, dot, dot);
+  }
 }
 
 // ------------------------------------------------------------ silhouettes
@@ -128,7 +187,7 @@ const BARREL = new Path2D(MUZZLE);
 // it. A blueprint id means one design for the whole match, so the entry never
 // goes stale; the map is cleared with the rest of the match state on init.
 const styles = new Map();
-const UNKNOWN_STYLE = { shape: "unknown", armed: false, radar: 0 };
+const UNKNOWN_STYLE = { shape: "unknown", armed: false, radar: 0, radarOf: "" };
 
 function robotStyle(r) {
   const key = `${r.colony}|${r.blueprint}`;
@@ -149,6 +208,10 @@ function robotStyle(r) {
     shape: SHAPES[name] ? name : "unknown",
     armed: parts.some((c) => c && c.kind === "weapon"),
     radar: (radar && RADAR_RANGE[slug(radar.name)]) || 0,
+    // Which radar, not just how far: the three of them answer three different
+    // questions (design §7.2), and a contact count that did not know which
+    // would be a number about nothing. Empty when none is fitted.
+    radarOf: radar ? slug(radar.name) : "",
   };
   styles.set(key, style);
   return style;
@@ -261,40 +324,59 @@ function buildLegend() {
 // second. Per frame it still follows a theme switch without a reload.
 let weaponColor = "#c23b3b";
 
+// SIGHT and RADAR, design 1a 192-193. These gate the two overlays and nothing
+// else: hiding the wedge does not change what the robot perceives, it changes
+// what is drawn over the ground it is standing on. The controls live in the
+// field bar — see senseToggle — because #inspector is replaceChildren()-ed ten
+// times a second and a button in there would be detached mid-click.
+const senses = { sight: true, radar: true };
+
 function draw() {
   if (!init || !terrain) return;
+  colonyColors.clear();
   ctx.drawImage(terrain, 0, 0);
   if (!snap) return;
   weaponColor = css("--kind-weapon", "#c23b3b");
 
-  const sel = snap.robots.find((r) => r.id === selected);
+  const sel = snap.robots.find((r) => r.id === selected) || null;
   if (sel) {
-    drawVision(sel);
-    // Both senses or neither: the wedge alone was the map claiming a robot
-    // perceives only what is in front of its nose.
+    // Under the senses and everything else: the trail is where the robot has
+    // been, and it must not sit on top of where it is.
+    if (replay) drawTrail(sel);
+    if (senses.sight) drawVision(sel);
     const { radar } = robotStyle(sel);
-    if (radar) drawRadar(sel, radar);
+    if (radar && senses.radar) drawRadar(sel, radar);
   }
 
   for (const b of snap.bases) drawBase(b);
   for (const l of snap.loose) drawLoose(l);
   for (const r of snap.robots) drawRobot(r, r.id === selected);
+
+  drawMinimap();
+  renderSelCard(sel);
+  renderTrailsCard(sel);
+}
+
+// inCone is sim.inCone: a 90° wedge — cos² of the half-angle is ½ — tested in
+// the robot's own frame. The wedge the map paints and the count the overlay
+// card reports both go through it, so the picture and the number cannot
+// disagree. Range is the caller's business: it is Chebyshev, and drawVision
+// expresses it as the bounds of its own loop.
+function inCone(heading, dx, dy) {
+  const [hx, hy] = DELTA[heading % 8];
+  const dot = dx * hx + dy * hy;
+  if (dot <= 0) return false;
+  return dot * dot * 2 >= (dx * dx + dy * dy) * (hx * hx + hy * hy);
 }
 
 // drawVision paints the exact cells sim.inCone reports, not an approximate arc:
 // the wedge is Chebyshev-ranged, so an arc would lie at the corners.
 function drawVision(r) {
-  const [hx, hy] = DELTA[r.heading % 8];
-  const hsq = hx * hx + hy * hy;
   ctx.fillStyle = colonyColor(r.colony);
   ctx.globalAlpha = .18;
   for (let dy = -VISION_RANGE; dy <= VISION_RANGE; dy++) {
     for (let dx = -VISION_RANGE; dx <= VISION_RANGE; dx++) {
-      const dot = dx * hx + dy * hy;
-      if (dot <= 0) continue;
-      const dsq = dx * dx + dy * dy;
-      if (dot * dot * 2 < dsq * hsq) continue;
-      ctx.fillRect((r.x + dx) * cell, (r.y + dy) * cell, cell, cell);
+      if (inCone(r.heading, dx, dy)) ctx.fillRect((r.x + dx) * cell, (r.y + dy) * cell, cell, cell);
     }
   }
   ctx.globalAlpha = 1;
@@ -313,6 +395,133 @@ function drawRadar(r, range) {
   ctx.setLineDash([cell / 2, cell / 2]);
   ctx.strokeRect((r.x - range) * cell, (r.y - range) * cell, side, side);
   ctx.restore();
+}
+
+// ---------------------------------------------------------------- trails
+//
+// Where a robot has been (design 1c 524-535). The wire carries one tick at a
+// time, so the path is remembered here rather than asked for: the server sends
+// nothing extra for this.
+//
+// Replay only. Live, the head of the stream *is* the present — there is nothing
+// behind it that a viewer has not just watched — and a 400-tick window for ~160
+// robots would be paid for on every live frame to draw a picture nobody asked
+// for. A seek clears the lot (see reopen): a buffer carried across a jump would
+// draw a path through ticks that never followed one another.
+//
+// One ring buffer per robot, allocated the first time that robot is seen and
+// never again. Appending is two writes and an index, so a tick costs nothing
+// that grows with the window.
+const TRAIL_TICKS = 400;
+const trails = new Map(); // robot id -> {xs, ys, n, at}
+
+function trailsRecord() {
+  for (const r of snap.robots) {
+    let t = trails.get(r.id);
+    if (!t) {
+      t = { xs: new Int16Array(TRAIL_TICKS), ys: new Int16Array(TRAIL_TICKS), n: 0, at: 0 };
+      trails.set(r.id, t);
+    }
+    t.xs[t.at] = r.x;
+    t.ys[t.at] = r.y;
+    t.at = (t.at + 1) % TRAIL_TICKS;
+    if (t.n < TRAIL_TICKS) t.n++;
+  }
+  // A robot that is gone has no path left to draw. Only walked when the counts
+  // disagree, which is the tick something died on.
+  if (trails.size > snap.robots.length) {
+    const live = new Set(snap.robots.map((r) => r.id));
+    for (const id of trails.keys()) if (!live.has(id)) trails.delete(id);
+  }
+}
+
+// Dashed, in the robot's own colony colour and under everything else, so it
+// reads as a record rather than as another thing on the board.
+function drawTrail(r) {
+  const t = trails.get(r.id);
+  if (!t || t.n < 2) return;
+  ctx.save();
+  ctx.strokeStyle = colonyColor(r.colony);
+  ctx.lineWidth = Math.max(1, cell * 0.14);
+  ctx.setLineDash([cell / 2, cell / 2]);
+  ctx.globalAlpha = .7;
+  ctx.beginPath();
+  const first = (t.at - t.n + TRAIL_TICKS) % TRAIL_TICKS;
+  for (let i = 0; i < t.n; i++) {
+    const j = (first + i) % TRAIL_TICKS;
+    const x = t.xs[j] * cell + cell / 2, y = t.ys[j] * cell + cell / 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderTrailsCard(r) {
+  const card = $("trails-card");
+  const t = r && trails.get(r.id);
+  card.hidden = !replay || !t || t.n < 2;
+  // The window is what has actually been recorded, not the cap: a replay opened
+  // thirty ticks ago has thirty ticks of path, and saying 400 would be a claim
+  // about frames this page never saw.
+  if (!card.hidden) setText($("trails-label"), `Trails · last ${t.n} ticks · ${shortID(r)}`);
+}
+
+// --------------------------------------------------------- selected card
+//
+// The selected robot, said over the map it is standing on (design 1a 207-213):
+// where it is, which way it faces, and what each of its two senses is reaching
+// at this instant. The nodes are in match.html and only their text is written
+// here, because this runs on every frame.
+//
+// The counts come from the same geometry the overlays are drawn from — inCone
+// and the radar's Chebyshev box — so a number here can never describe a
+// different shape from the one on the map.
+
+function radarContacts(r, kind, range) {
+  let list = null, enemyOnly = true;
+  if (kind === "parts-radar") { list = snap.loose; enemyOnly = false; }
+  else if (kind === "enemy-robot-radar") list = snap.robots;
+  else if (kind === "enemy-base-radar") list = snap.bases;
+  if (!list) return 0;
+  let n = 0;
+  for (const o of list) {
+    if (enemyOnly && o.colony === r.colony) continue;
+    if (Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y)) <= range) n++;
+  }
+  return n;
+}
+
+function renderSelCard(r) {
+  const card = $("sel-card");
+  card.hidden = !r;
+  if (!r) return;
+  setText($("sel-who"), `Selected · ${shortID(r)}`);
+  setText($("sel-cell"), `cell ${r.x},${r.y} · facing ${HEADINGS[r.heading % 8]}`);
+  // var(--colony-N), never a resolved literal: the marks are then literally the
+  // property the canvas reads, and they follow a theme switch with no re-render.
+  const colour = `var(${colonyVar(r.colony)})`;
+
+  const sight = $("sel-sight");
+  sight.hidden = !senses.sight;
+  if (senses.sight) {
+    let seen = 0;
+    for (const l of snap.loose) {
+      const dx = l.x - r.x, dy = l.y - r.y;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) <= VISION_RANGE && inCone(r.heading, dx, dy)) seen++;
+    }
+    sight.firstElementChild.style.background = colour;
+    setText(sight.lastElementChild,
+      `sight · 90° × ${VISION_RANGE} cells · ${plural(seen, "component")}`);
+  }
+
+  const row = $("sel-radar");
+  const { radar, radarOf } = robotStyle(r);
+  row.hidden = !radar || !senses.radar;
+  if (!row.hidden) {
+    row.firstElementChild.style.color = colour;
+    setText(row.lastElementChild, `radar · ${radar} cells omni · `
+      + plural(radarContacts(r, radarOf, radar), "contact"));
+  }
 }
 
 function drawBase(b) {
@@ -471,6 +680,29 @@ function defs(pairs) {
   return dl;
 }
 
+// idCard is the inspector's header, design 261-266: the colony as a swatch, the
+// robot's short id, its archetype, and — right-aligned, because it is the fact
+// that decides whether everything under it is present tense — whether it is
+// still in the world.
+function idCard(r, alive) {
+  const head = el("div", "idcard");
+  if (r) {
+    const sw = el("span", "swatch");
+    sw.style.background = colonyColor(r.colony);
+    sw.title = colonyName(r.colony);
+    head.append(sw, el("span", "id", shortID(r)), el("span", "kind", r.archetype));
+  } else {
+    head.append(el("span", "id", `#${selected}`));
+  }
+  head.append(el("span", alive ? "badge" : "badge gone", alive ? "▮ Alive" : "▮ Destroyed"));
+  return head;
+}
+
+// The last robot the inspector drew. A snapshot that no longer carries it
+// carries nothing to name it by either, and "#7 is gone" is a worse answer than
+// "S-07 is gone" when the whole panel is about which robot this was.
+let lastSel = null;
+
 function renderInspector() {
   const box = $("inspector");
   box.replaceChildren();
@@ -481,37 +713,40 @@ function renderInspector() {
   }
   const r = snap?.robots.find((x) => x.id === selected);
   if (!r) {
-    box.append(el("p", "meta", `Robot #${selected} is gone — destroyed, or salvaged.`));
+    box.append(idCard(lastSel && lastSel.id === selected ? lastSel : null, false),
+      el("p", "meta", `Robot #${selected} is gone — destroyed, or salvaged.`));
     renderCommand(null);
     return;
   }
+  lastSel = r;
 
-  const head = el("div");
-  const sw = el("span", "swatch");
-  sw.style.background = colonyColor(r.colony);
-  head.append(sw, el("strong", null, `${r.archetype} #${r.id}`),
-    el("span", "meta", ` · ${colonyName(r.colony)}`));
-  box.append(head);
+  box.append(idCard(r, true));
 
   const frac = r.hp_max > 0 ? r.hp / r.hp_max : 0;
   const bar = el("div", "hp" + (frac <= .33 ? " crit" : frac < 1 ? " hurt" : ""));
   const fill = el("i");
   fill.style.width = `${Math.max(0, Math.min(1, frac)) * 100}%`;
   bar.append(fill);
-  box.append(bar, el("div", "meta", `${r.hp} / ${r.hp_max} hp`));
+  // The fraction goes above the bar (design 269-277): the number is the fact,
+  // and the bar is the shape of it.
+  const hphead = el("div", "hp-head");
+  hphead.append(el("span", "label", "Health"), el("span", "v", `${r.hp} / ${r.hp_max}`));
+  box.append(hphead, bar);
 
   box.append(el("h3", null, "Active rule"));
   box.append(ruleBox(r));
 
+  // Loadout is what the robot *is* (design 303-310). Where it is standing and
+  // which way it faces moved to the card over the map, where the cell it names
+  // is a place you can look at rather than a pair of numbers.
   const bp = blueprintOf(r);
   box.append(el("h3", null, "Loadout"));
   box.append(defs([
     ["Blueprint", bp ? `${bp.name} (${bp.id})` : r.blueprint],
-    ["Components", bp ? bp.components.map(compName).join(", ") : "—"],
+    ["Parts", bp ? bp.components.map(compName).join(", ") : "—"],
     ["Program", r.program || "none"],
     ["Cargo", r.cargo ? compName(r.cargo) : "empty"],
-    ["Position", `${r.x}, ${r.y} facing ${HEADINGS[r.heading % 8]}`],
-    ["Cooldown", r.cooldown > 0 ? `${r.cooldown} ticks` : "ready"],
+    ["Mass", bp ? massLine(bp) : "—"],
   ]));
 
   box.append(el("h3", null, "Memory"));
@@ -578,6 +813,10 @@ function ruleBox(r) {
   if (snap && t.tick !== snap.tick) {
     div.append(el("div", "meta", `decided on tick ${t.tick}, ${snap.tick - t.tick} ticks ago`));
   }
+  // The cooldown is about this tick's decision — whether the weapon was even
+  // available to it — so it belongs beside the decision rather than in the
+  // loadout, which is what the robot is rather than what it can do right now.
+  if (r.cooldown > 0) div.append(el("div", "meta", `weapon cooling down · ${r.cooldown} ticks`));
   return div;
 }
 
@@ -589,6 +828,34 @@ const blueprintsOf = (colony) =>
 
 function blueprintOf(r) {
   return blueprintsOf(r.colony).find((x) => x.id === r.blueprint) || null;
+}
+
+// massLine is design 309: what the robot weighs, and what that weight costs it.
+//
+// The mass is added up here because it is addition over a catalogue the init
+// frame already carries. The pace is not: design §6.4's speed model is sim's,
+// and E7.3 retunes the game by editing sim's tables, so nothing outside that
+// package may hold a second copy of them (internal/server/programs.go). It is
+// asked for once per parts list and remembered — the row says the mass alone
+// until the answer lands, and keeps saying it if the request fails, which is
+// what an observer without a library gets.
+const paces = new Map(); // parts list -> ticks per cell on open ground
+
+function massLine(bp) {
+  const mass = bp.components.reduce((n, v) => n + (catalogue(v)?.mass || 0), 0);
+  const key = bp.components.join(",");
+  if (!paces.has(key)) {
+    paces.set(key, null); // in flight, and never asked for twice
+    api("POST", "/api/blueprints/preview", { components: bp.components })
+      .then((s) => {
+        if (!s || !s.ticks_per_cell) return;
+        paces.set(key, s.ticks_per_cell);
+        render();
+      })
+      .catch(() => { /* the mass is still true without it */ });
+  }
+  const pace = paces.get(key);
+  return pace ? `${mass} · 1 cell / ${pace} ticks` : String(mass);
 }
 
 // ---------------------------------------------------------------- roster
@@ -604,38 +871,61 @@ function blueprintOf(r) {
 // ordered by (colony, id), both of which are fixed for a robot's whole life. A
 // row therefore never moves out from under the pointer.
 
-const rosterRows = new Map(); // robot id -> {node, update}
-let rosterShown = null;       // selection the list last scrolled to
+const rosterRows = new Map();   // robot id -> {node, update}
+const rosterGroups = new Map(); // colony -> {node, update}
+const rosterOrder = [];         // robot ids in list order, for ↑/↓
+let rosterShown = null;         // selection the list last scrolled to
 
 const setText = (n, s) => { if (n.textContent !== s) n.textContent = s; };
+
+// A colony's header row (design 86-96, 153-170). The swatch that used to repeat
+// on every row is said once here, with the colony's name, how many robots it
+// has left, and the YOU tag on the viewer's own.
+function rosterGroup(colony) {
+  const node = el("div", "group");
+  const sw = el("span", "swatch");
+  // var(--colony-N) rather than a resolved colour: the header is built once and
+  // lives as long as the colony does, so a theme switch has to reach it.
+  sw.style.background = `var(${colonyVar(colony)})`;
+  const count = el("span", "meta");
+  const you = el("span", "meta", "you");
+  node.append(sw, el("span", "name", colonyName(colony)), count, el("span", "grow"), you);
+  return {
+    node,
+    update: (n, mine) => { setText(count, `· ${n}`); you.hidden = !mine; },
+  };
+}
 
 function rosterRow(r) {
   const node = el("button", "row");
   node.type = "button";
-  const sw = el("span", "swatch");
-  sw.style.background = colonyColor(r.colony);
-  // Identity is fixed at build time; only the numbers below change per tick.
-  const who = el("span", "who", `${r.archetype} #${r.id}`);
-  const hp = el("span");
+  // Identity is fixed at build time; only the fields below change per tick.
+  const who = el("span", "who", shortID(r));
   const act = el("span", "act");
-  const cargo = el("span", "cargo");
-  const sub = el("span", "sub");
-  sub.append(act, cargo);
-  node.append(sw, who, hp, sub);
+  const hp = el("span", "num");
+  node.append(who, act, hp);
   node.addEventListener("click", () => { selected = r.id; render(); });
 
   const update = (cur) => {
-    setText(hp, `${cur.hp}/${cur.hp_max}`);
+    // One health number, not a fraction: the row is scanned, and hurt and
+    // critical are already said in colour (design 99-151).
+    setText(hp, String(cur.hp));
     hp.className = cur.hp * 3 <= cur.hp_max ? "num crit" : cur.hp < cur.hp_max ? "num hurt" : "num";
 
     // A recalled robot has suspended its program (design §4.2), so its trace is
     // stale — say what it is actually doing, not what it last decided.
     const t = cur.trace;
-    setText(act, cur.recalled ? "returning to base" : t ? (t.action || "idle") : "no decision yet");
-    const why = cur.recalled ? "recalled" : (t && t.reason) || "";
-    if (node.title !== why) node.title = why;
+    const doing = !cur.recalled && (!t || !t.action);
+    setText(act, cur.recalled ? "returning to base"
+      : t ? (t.action || (t.rule >= 0 ? "idle" : "no rule matched — idle"))
+        : "no decision yet");
+    act.className = doing ? "act idle" : "act";
 
-    setText(cargo, cur.cargo ? compName(cur.cargo) : "");
+    // Cargo lost its column to the single-line row, so it rides the tooltip
+    // with the reason — the arena still draws the shoulder dot for it.
+    let why = cur.recalled ? "recalled" : (t && t.reason) || "";
+    if (cur.cargo) why = why ? `${why} · carrying ${compName(cur.cargo)}` : `carrying ${compName(cur.cargo)}`;
+    if (node.title !== why) node.title = why;
 
     const on = cur.id === selected;
     if (node.classList.contains("sel") !== on) {
@@ -653,19 +943,38 @@ function renderRoster() {
   $("roster-empty").hidden = live.length > 0;
 
   // Walk the list in order, moving a node only when it is not already where it
-  // belongs: in the steady state this touches no DOM at all.
+  // belongs: in the steady state this touches no DOM at all. Group headers are
+  // part of that walk — they are keyed by colony, and both keys are fixed for
+  // as long as the thing they name exists, so nothing moves under the pointer.
+  const mine = myColony();
+  rosterOrder.length = 0;
   let at = list.firstChild;
+  let colony = null;
   for (const r of live) {
+    if (r.colony !== colony) {
+      colony = r.colony;
+      let group = rosterGroups.get(colony);
+      if (!group) { group = rosterGroup(colony); rosterGroups.set(colony, group); }
+      if (at === group.node) at = at.nextSibling;
+      else list.insertBefore(group.node, at);
+      // The server's own count, not one recomputed here: it is on every frame.
+      group.update(snap.colonies.find((c) => c.colony === colony)?.robots ?? 0, colony === mine);
+    }
     let row = rosterRows.get(r.id);
     if (!row) { row = rosterRow(r); rosterRows.set(r.id, row); }
     if (at === row.node) at = at.nextSibling;
     else list.insertBefore(row.node, at);
     row.update(r);
+    rosterOrder.push(r.id);
   }
 
   const ids = new Set(live.map((r) => r.id));
   for (const [id, row] of rosterRows) {
     if (!ids.has(id)) { row.node.remove(); rosterRows.delete(id); }
+  }
+  const colonies = new Set(live.map((r) => r.colony));
+  for (const [id, group] of rosterGroups) {
+    if (!colonies.has(id)) { group.node.remove(); rosterGroups.delete(id); }
   }
 
   // Bring a robot picked on the canvas into view, once per selection: doing it
@@ -712,14 +1021,18 @@ function histKey(e) {
 
 function histEntry(e) {
   const node = el("div", "hist" + (e.idle ? " idle" : " acted"));
-  const when = el("div", "when");
+  const when = el("span", "when");
   const head = el("div", "head");
   head.append(el("span", "idx", ruleName(e)),
     el("span", "act", e.action || "idle"));
   // The cell the action aimed at. It cannot be worked out from the arena later:
   // the component or enemy it was aimed at has moved or is gone.
   if (e.target) head.append(el("span", "at", `→ ${e.target.x}, ${e.target.y}`));
-  node.append(when, head);
+  // The tick range is the last thing on the head row, right-aligned (design
+  // 337-339): the rule and its action are what the eye runs down, and when it
+  // happened is the column it checks them against.
+  head.append(when);
+  node.append(head);
   if (e.reason) node.append(el("div", "why", e.reason));
 
   // The rules that matched but did not take the tick. Without this the player
@@ -732,18 +1045,24 @@ function histEntry(e) {
       + (hidden > 0 ? ` and ${hidden} more` : "")));
   }
   for (const m of e.memory || []) {
-    node.append(el("div", "chip mem",
+    node.append(el("div", "evt mem",
       m.cleared ? `cleared point ${m.point}` : `point ${m.point} set to ${m.x}, ${m.y}`));
   }
   for (const s of e.signals || []) {
-    node.append(el("div", "chip sig", `heard “${s.kind}” from #${s.from} at ${s.x}, ${s.y}`));
+    node.append(el("div", "evt sig", `heard “${s.kind}” from #${s.from} at ${s.x}, ${s.y}`));
   }
   const rest = (e.signals_total || 0) - (e.signals || []).length;
-  if (rest > 0) node.append(el("div", "chip sig", `and ${rest} more signal${rest > 1 ? "s" : ""}`));
+  if (rest > 0) node.append(el("div", "evt sig", `and ${rest} more signal${rest > 1 ? "s" : ""}`));
 
   // Text-only updates from here on: extending a run touches one text node.
+  //
+  // Both ends of the range, not just where it started: a robot repeating one
+  // decision for six seconds is the common case, and "3661 · ×61" leaves the
+  // panel unable to say when that stretch ended — which is the one question a
+  // list organised by tick exists to answer. The count rides along because the
+  // ticks in a run need not be consecutive; the poll window has gaps.
   let to = e.tick, n = 1;
-  const stamp = () => setText(when, n > 1 ? `ticks ${e.tick}–${to} · ${n} decisions` : `tick ${e.tick}`);
+  const stamp = () => setText(when, n > 1 ? `${e.tick}–${to} · ×${n}` : String(e.tick));
   stamp();
   return { node, extend: (next) => { to = next.tick; n++; stamp(); } };
 }
@@ -886,15 +1205,23 @@ async function loadPrograms() {
 // a <select> replaced ten times a second cannot be used at all: the dropdown
 // closes under the pointer.
 function commandBox(r) {
+  // Design 321-328: two equal buttons side by side and one caption under them.
+  // The program picker sits above the pair rather than behind an "INSTALL
+  // PROGRAM…" dialog — a dialog would be a second interactive thing hanging off
+  // a panel that is rebuilt ten times a second, and this box already exists
+  // outside #inspector for exactly that reason.
   const node = el("div", "cmd");
   const state = el("div", "state");
-  const recall = el("button", null, "Recall to base");
   const pick = el("select");
-  const install = el("button", null, "Install");
+  const recall = el("button", "btn sm", "Recall home");
+  const install = el("button", "btn sm", "Install program");
   const msg = el("p", "note");
   const row = el("div", "row");
-  row.append(pick, install);
-  node.append(state, recall, row, msg);
+  row.append(recall, install);
+  node.append(state, pick, row,
+    el("p", "caption", "Reprogramming wipes all three memory points."
+      + " It takes effect on the next tick."),
+    msg);
 
   const fail = (e) => { note = { robot: r.id, text: e.message, bad: true }; };
 
@@ -1108,11 +1435,18 @@ function renderBase() {
 
 function renderClock() {
   if (!snap || !init) return;
+  const rate = init.tick_rate || 10;
   const end = Number(snap.end_tick);
   const left = Math.max(0, end - Number(snap.tick));
-  const secs = Math.ceil(left / (init.tick_rate || 10));
-  $("clock").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
-  $("tick").textContent = `tick ${snap.tick} / ${snap.end_tick}`;
+  const secs = Math.ceil(left / rate);
+  setText($("clock"), `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`);
+  // Design 76 and 515: the big number is the time left, and one meta line says
+  // what it is of. In a replay that line becomes how far behind the running
+  // match you are — but only when the client has been told where that is; see
+  // liveTick. Everywhere else it would be a made-up number.
+  setText($("tick"), liveTick === null
+    ? `/ ${mmss(end)} · tick ${snap.tick}`
+    : `tick ${snap.tick} · −${Math.max(0, Math.round((liveTick - Number(snap.tick)) / rate))}s`);
 
   // The timeline is one filled bar whose right edge is now. Live it is not a
   // scrubber — nothing behind the head is seekable, because the server keeps no
@@ -1120,8 +1454,17 @@ function renderClock() {
   // under the bar is shown for that case only.
   const done = end > 0 ? Math.min(1, Number(snap.tick) / end) : 0;
   $("progress").style.width = `${(done * 100).toFixed(2)}%`;
-  const gone = Math.floor(Number(snap.tick) / (init.tick_rate || 10));
-  $("tick-mid").textContent = `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`;
+  // The chip rides the head, so it needs no position of its own. Live it says
+  // NOW; a replay is somewhere in the past and says which tick (design 252, 560).
+  setText($("now-chip"), replay ? `tick ${snap.tick}` : "now");
+  const mark = $("live-mark");
+  mark.hidden = liveTick === null || end <= 0;
+  if (!mark.hidden) {
+    mark.style.left = `${Math.min(100, liveTick / end * 100).toFixed(2)}%`;
+    setText($("live-mark-label"), `live ${liveTick}`);
+  }
+  const gone = Math.floor(Number(snap.tick) / rate);
+  setText($("tick-mid"), `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`);
   if (replay) renderSeek(end);
 }
 
@@ -1154,6 +1497,57 @@ for (const d of document.querySelectorAll("details.fold")) {
 // Unfolding the trace panel starts the poll again now rather than up to half a
 // second from now: the panel is opened to answer a question about this tick.
 $("p-history").addEventListener("toggle", () => { if (!over) pollHistory(); });
+
+// -------------------------------------------------------------- field bar
+//
+// The two sense toggles. They read their own label out of the markup and put
+// the tick or the cross back, so the word is written once — in match.html,
+// where the title that explains it lives too. [aria-pressed] is the whole
+// state: what a screen reader announces cannot drift from the box that is drawn
+// because they are the same attribute.
+function senseToggle(btn, key) {
+  const name = btn.textContent.trim().replace(/\s*[✓✗]$/, "");
+  const sync = () => {
+    btn.setAttribute("aria-pressed", senses[key] ? "true" : "false");
+    setText(btn, `${name} ${senses[key] ? "✓" : "✗"}`);
+  };
+  // draw() alone: nothing outside the canvas and its overlay card reads these.
+  btn.addEventListener("click", () => { senses[key] = !senses[key]; sync(); draw(); });
+  sync();
+}
+senseToggle($("t-sight"), "sight");
+senseToggle($("t-radar"), "radar");
+
+// -------------------------------------------------------------- keyboard
+//
+// ↑/↓ walk the roster in the order it is drawn (design 177-180); ←/→ step a
+// replay one tick (design 550). Both are ignored while a form control has the
+// focus — the program picker is a <select>, and stealing its arrow keys would
+// make it unusable — and while a modifier is down, which is the browser's.
+document.addEventListener("keydown", (ev) => {
+  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+  if (ev.target instanceof Element && ev.target.closest("input, select, textarea")) return;
+
+  if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+    if (rosterOrder.length === 0) return;
+    ev.preventDefault();
+    const step = ev.key === "ArrowDown" ? 1 : -1;
+    const i = rosterOrder.indexOf(selected);
+    // No selection yet starts at the end you are walking from.
+    selected = i < 0
+      ? rosterOrder[step > 0 ? 0 : rosterOrder.length - 1]
+      : rosterOrder[(i + step + rosterOrder.length) % rosterOrder.length];
+    render();
+    return;
+  }
+
+  if (replay && (ev.key === "ArrowLeft" || ev.key === "ArrowRight")) {
+    // One tick is one reconnect, like every other replay control: the client
+    // keeps no buffer to nudge, and the server rebuilds to the target.
+    ev.preventDefault();
+    reopen(at() + (ev.key === "ArrowRight" ? 1 : -1));
+  }
+});
 
 function render() {
   // A new selection starts a new history, and polls at once so the server
@@ -1199,6 +1593,15 @@ let speed = 1;
 let seeking = false; // connected, first frame of this seek not in yet
 let dragging = false;
 
+// Where the running match has got to, or null when there is no running match to
+// be behind — which is the ordinary case, because a replay is a *finished*
+// match played back from its command log. It is asked for once, in replay mode
+// only (see probeLive): a number that ages by a tick every 100ms is a marker on
+// a ten-minute timeline, not a clock, and polling it would buy nothing. Null is
+// what keeps the "−131s" readout, the LIVE marker and the JUMP TO LIVE button
+// off the screen rather than making any of them up.
+let liveTick = null;
+
 function connect() {
   if (!matchID) { err("No match id in the URL: try /match?id=1"); conn("over", "no match"); return; }
   seeking = replay;
@@ -1214,12 +1617,20 @@ function connect() {
     // before the first frame — a few hundred ms on a default match — and
     // "live" over a board that has not moved yet would be a lie. The tick
     // handler reports it when there is something to report.
-    if (!replay) conn("live", "live");
+    if (!replay) conn("live", "▮ live");
   });
 
   source.addEventListener("init", (ev) => {
     init = JSON.parse(ev.data);
-    $("subtitle").textContent = `${init.name} — ${init.width}×${init.height}, seed ${init.seed}`;
+    // Design 70-73. The name is the match's, the two badges are this one's:
+    // which match it is, and the seed its world was generated from — the number
+    // a player quotes when the terrain is worth talking about. The size moved to
+    // the minimap's label, where it is beside the thing it measures.
+    setText($("subtitle"), init.name);
+    setText($("match-no"), `Match #${init.match_id}`);
+    setText($("match-seed"), `Seed ${init.seed}`);
+    $("match-no").hidden = false;
+    $("match-seed").hidden = false;
     document.title = `${init.name} — robocolony`;
     styles.clear(); // silhouettes are resolved against this catalogue, not the last one
     bakeTerrain();
@@ -1234,7 +1645,10 @@ function connect() {
     snap = JSON.parse(ev.data);
     if (replay) {
       from = Number(snap.tick);
-      if (seeking) { seeking = false; conn("live", `replay ×${speed}`); }
+      // One frame per tick, in order, so this is the whole of the trail: a seek
+      // clears it rather than stitching two stretches of match together.
+      trailsRecord();
+      if (seeking) { seeking = false; conn("live", `▮ replay ×${speed}`); }
     }
     render();
   });
@@ -1323,11 +1737,22 @@ function pause() {
   syncPlay();
 }
 
-// reopen is play, seek and speed change alike: one connection, from one tick.
+// at is where the replay currently stands: the last frame that arrived, or the
+// tick the next connection is queued to start from while it is paused.
+const at = () => Number(snap ? snap.tick : from);
+
+// Ten seconds a press. Enough to move, small enough that the rebuild the server
+// does for it is the same order of work as an ordinary scrub.
+const skipTicks = () => 10 * (init?.tick_rate || 10);
+
+// reopen is play, seek, skip and speed change alike: one connection, one tick.
 function reopen(atTick) {
   if (source) { source.close(); source = null; }
   clearTimeout(retryTimer);
   from = Math.max(0, Math.round(atTick));
+  // A trail is a run of consecutive ticks. Across a jump it would draw a path
+  // through positions that never followed one another, so it starts again here.
+  trails.clear();
   // The end frame set `over`, which stops the retry loop. Scrubbing back out of
   // it is how a replay gets watched twice.
   over = false;
@@ -1346,12 +1771,38 @@ function renderSeek(end) {
   syncPlay();
 }
 
+// probeLive asks, once, whether there is still a live match behind this replay.
+// There usually is not — a replay is a finished match played back from its
+// command log — and then nothing here appears at all: no jump, no LIVE marker,
+// no "−131s". The alternative to asking is inventing one of them.
+//
+// Plain fetch rather than api(): a 401 here is a signed-out observer watching a
+// public replay, and bouncing them to the login page over an optional badge
+// would be a worse answer than not showing it.
+async function probeLive() {
+  const res = await fetch(`/api/matches/${encodeURIComponent(matchID)}`,
+    { headers: { Accept: "application/json" } }).catch(() => null);
+  if (!res || !res.ok) return; // 404 or 410: finished, or gone with the process
+  const info = await res.json().catch(() => null);
+  if (!info || info.state !== "running" || !Number.isFinite(Number(info.tick))) return;
+  liveTick = Number(info.tick);
+  const jump = $("to-live");
+  jump.href = `/match?id=${encodeURIComponent(matchID)}`;
+  jump.hidden = false;
+  render();
+}
+
 if (replay) {
   $("replay").hidden = false;
+  $("replay-badge").hidden = false;
   setText($("timeline-note"), "a finished match, replayed from its command log");
+  probeLive();
   $("rp-play").addEventListener("click", () => {
     if (source) pause(); else reopen(Number($("rp-seek").value));
   });
+  // Skip is a seek by a fixed step, so it goes through the same reconnect.
+  $("rp-back").addEventListener("click", () => reopen(at() - skipTicks()));
+  $("rp-fwd").addEventListener("click", () => reopen(at() + skipTicks()));
   // Dragging pauses: incoming ticks write the thumb's position, so a stream
   // left running would fight the pointer for it.
   $("rp-seek").addEventListener("input", () => {
@@ -1363,9 +1814,18 @@ if (replay) {
     dragging = false;
     reopen(Number($("rp-seek").value));
   });
-  $("rp-speed").addEventListener("change", () => {
-    speed = Number($("rp-speed").value) || 1;
-    if (source) reopen(from); // paused stays paused; the next play uses the new speed
+  // The speed set is the server's own clamp (internal/server/replay.go: 0.25 to
+  // 16), so no button here can ask for a rate that is silently rounded. One
+  // listener on the group rather than four on the buttons, and [aria-pressed]
+  // is the selection — the same attribute app.css draws the segment from.
+  $("rp-speed").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-speed]");
+    if (!btn) return;
+    speed = Number(btn.dataset.speed) || 1;
+    for (const b of $("rp-speed").children) {
+      b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+    }
+    if (source) reopen(at()); // paused stays paused; the next play uses the new speed
   });
   syncPlay();
 }
