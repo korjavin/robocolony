@@ -27,6 +27,11 @@ type Evaluator struct {
 	// — the normal case — for every other robot. See history.go: recording is
 	// opt-in precisely so that a fleet nobody has selected costs nothing.
 	hist *history
+
+	// explain is the last tick's condition table, recorded only while hist is
+	// non-nil. Overwritten per tick like trace, and for the same reason: it is
+	// the answer to "why now", not an archive. See explain.go.
+	explain Explanation
 }
 
 // Trace is which rule controlled the tick and why. Deliberately fixed-size:
@@ -151,6 +156,7 @@ func (e *Evaluator) Decide(v sim.RobotView) sim.Action {
 	}
 
 	e.trace = tr
+	e.explainTick(v)
 	e.record(tr, v, act)
 	return act
 }
