@@ -73,6 +73,7 @@ let snap = null;       // last tick frame
 let over = false;      // end frame seen
 let selected = null;   // robot id, persists across frames
 let terrain = null;    // offscreen canvas, drawn once
+let terrainColors = []; // by terrain class index, resolved on the init frame
 let cell = 12;
 const buildTotals = new Map(); // colony|blueprint -> longest build seen, for the progress bar
 
@@ -93,7 +94,10 @@ function bakeTerrain() {
   canvas.width = init.width * cell;
   canvas.height = init.height * cell;
 
-  const colors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
+  // Resolved once per match rather than per cell, and kept: the camera paints
+  // the same ground cell by cell (drawPOV) and must read the same property, or
+  // the two views would disagree about what a robot is standing on.
+  terrainColors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");
   terrain.width = canvas.width;
   terrain.height = canvas.height;
@@ -101,7 +105,7 @@ function bakeTerrain() {
   for (let y = 0; y < init.height; y++) {
     const row = init.terrain[y] || "";
     for (let x = 0; x < init.width; x++) {
-      t.fillStyle = colors[row.charCodeAt(x) - 48] || colors[0];
+      t.fillStyle = terrainColors[row.charCodeAt(x) - 48] || terrainColors[0];
       t.fillRect(x * cell, y * cell, cell, cell);
     }
   }
@@ -124,8 +128,9 @@ function bakeTerrain() {
 // fillRect. Nothing here allocates, because it runs ten times a second.
 //
 // There is no viewport rectangle on it because there is no camera to draw one
-// for — the arena always shows the whole world. Panning, zoom and the rectangle
-// that would then mean something belong to the POV bead.
+// for — the arena always shows the whole world, and the POV view beside it is a
+// second view rather than a crop of this one. A rectangle would need panning
+// and zoom to exist first.
 
 const MINIMAP_W = 148; // css px, and the surface too: it is never scaled by CSS
 
@@ -187,7 +192,7 @@ const BARREL = new Path2D(MUZZLE);
 // it. A blueprint id means one design for the whole match, so the entry never
 // goes stale; the map is cleared with the rest of the match state on init.
 const styles = new Map();
-const UNKNOWN_STYLE = { shape: "unknown", armed: false, radar: 0, radarOf: "" };
+const UNKNOWN_STYLE = { shape: "unknown", armed: false, hands: false, radar: 0, radarOf: "" };
 
 function robotStyle(r) {
   const key = `${r.colony}|${r.blueprint}`;
@@ -207,6 +212,11 @@ function robotStyle(r) {
   const style = {
     shape: SHAPES[name] ? name : "unknown",
     armed: parts.some((c) => c && c.kind === "weapon"),
+    // Whether it can pick anything up (design §6.3, sim.pickUp). It changes no
+    // mark on the map — the cargo dot already says when something is carried —
+    // but the camera's contact list is about what this robot could act on, and
+    // "in reach" said to a robot with no manipulator would be a lie.
+    hands: parts.some((c) => c && c.kind === "manipulator"),
     radar: (radar && RADAR_RANGE[slug(radar.name)]) || 0,
     // Which radar, not just how far: the three of them answer three different
     // questions (design §7.2), and a contact count that did not know which
@@ -331,14 +341,26 @@ let weaponColor = "#c23b3b";
 // times a second and a button in there would be detached mid-click.
 const senses = { sight: true, radar: true };
 
+// Which view is live: "map" is the arena alone, "pov" the robot camera alone,
+// "split" both side by side (design 1b 368-372). It is a drawing choice and
+// nothing else — the stream, the selection and every panel are the same in all
+// three, so switching cannot desync anything. The hidden view is not drawn:
+// painting into a display:none canvas is work nobody can see.
+let mode = "map";
+
 function draw() {
   if (!init || !terrain) return;
   colonyColors.clear();
-  ctx.drawImage(terrain, 0, 0);
-  if (!snap) return;
+  if (mode !== "pov") ctx.drawImage(terrain, 0, 0);
+  // The world exists before the first tick frame does. The camera says so —
+  // empty bands and "pick a robot" — rather than staying blank, which reads as
+  // a view that failed to load.
+  if (!snap) { if (mode !== "map") renderCamera(null); return; }
   weaponColor = css("--kind-weapon", "#c23b3b");
 
   const sel = snap.robots.find((r) => r.id === selected) || null;
+  if (mode !== "map") renderCamera(sel);
+  if (mode === "pov") { renderSelCard(sel); renderTrailsCard(sel); return; }
   if (sel) {
     // Under the senses and everything else: the trail is where the robot has
     // been, and it must not sit on top of where it is.
@@ -368,6 +390,29 @@ function inCone(heading, dx, dy) {
   if (dot <= 0) return false;
   return dot * dot * 2 >= (dx * dx + dy * dy) * (hx * hx + hy * hy);
 }
+
+// sees is sim.inCone asked about a thing rather than about a cell: inside the
+// 90° wedge, within Chebyshev VISION_RANGE, and not the robot's own cell —
+// sim.inCone refuses distance 0, and a component underfoot is reported by the
+// pickup rule rather than by sight. The overlay card's count, the camera's
+// bands and the contacts list all go through it, so none of them can describe a
+// different shape from the one drawVision paints below.
+// Chebyshev distance: the one distance the whole simulation is written in —
+// sight, radar, pickup and the base check all measure with it.
+const cheb = (r, o) => Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
+
+function sees(r, o) {
+  const d = cheb(r, o);
+  return d > 0 && d <= VISION_RANGE && inCone(r.heading, o.x - r.x, o.y - r.y);
+}
+
+// seesRobot is the rest of sim.World.look, and the reason it exists as its own
+// name: forward vision reports loose components and robots *of other colonies*,
+// and nothing else at all. A robot's own colony is invisible to it in every
+// direction, and no base is ever a sighting — only the base radar reports one.
+// Drawing either as something the robot perceives would teach the player that a
+// rule can test it, which is the exact lie this whole screen exists to kill.
+const seesRobot = (r, o) => o.colony !== r.colony && sees(r, o);
 
 // drawVision paints the exact cells sim.inCone reports, not an approximate arc:
 // the wedge is Chebyshev-ranged, so an arc would lie at the corners.
@@ -477,23 +522,44 @@ function renderTrailsCard(r) {
 // and the radar's Chebyshev box — so a number here can never describe a
 // different shape from the one on the map.
 
+// What a radar answers about, per design §7.2 / sim.radar: which list it reads
+// and whether the robot's own colony counts. The count below, the dial's marks
+// and the contacts list all read it here, so a number, a mark and a row cannot
+// disagree about what "a contact" is. An unknown radar reports nothing at all,
+// for the same reason RADAR_RANGE gives it no reach.
+function radarList(kind) {
+  if (kind === "parts-radar") return snap.loose;
+  if (kind === "enemy-robot-radar") return snap.robots;
+  if (kind === "enemy-base-radar") return snap.bases;
+  return null;
+}
+
+// Distance 0 is not a contact: sim.radar tests `d > 0 && d <= rng`, so a
+// component the robot is standing on is not something its radar reports.
+const radarSees = (r, o, kind, range) => {
+  if (kind !== "parts-radar" && o.colony === r.colony) return false;
+  const d = cheb(r, o);
+  return d > 0 && d <= range;
+};
+
 function radarContacts(r, kind, range) {
-  let list = null, enemyOnly = true;
-  if (kind === "parts-radar") { list = snap.loose; enemyOnly = false; }
-  else if (kind === "enemy-robot-radar") list = snap.robots;
-  else if (kind === "enemy-base-radar") list = snap.bases;
+  const list = radarList(kind);
   if (!list) return 0;
   let n = 0;
-  for (const o of list) {
-    if (enemyOnly && o.colony === r.colony) continue;
-    if (Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y)) <= range) n++;
-  }
+  for (const o of list) if (radarSees(r, o, kind, range)) n++;
   return n;
 }
 
 function renderSelCard(r) {
   const card = $("sel-card");
   card.hidden = !r;
+  // The field bar's own line (design 1b 373): the reach of both senses, out of
+  // the same two constants the renderer draws them from, so the bar cannot
+  // state a range nothing paints.
+  setText($("reach-note"), r
+    ? `90° cone · ${VISION_RANGE} cells`
+      + (robotStyle(r).radar ? ` · radar ${robotStyle(r).radar} cells omni` : " · no radar fitted")
+    : "Overlays are drawn for the selected robot only");
   if (!r) return;
   setText($("sel-who"), `Selected · ${shortID(r)}`);
   setText($("sel-cell"), `cell ${r.x},${r.y} · facing ${HEADINGS[r.heading % 8]}`);
@@ -505,10 +571,7 @@ function renderSelCard(r) {
   sight.hidden = !senses.sight;
   if (senses.sight) {
     let seen = 0;
-    for (const l of snap.loose) {
-      const dx = l.x - r.x, dy = l.y - r.y;
-      if (Math.max(Math.abs(dx), Math.abs(dy)) <= VISION_RANGE && inCone(r.heading, dx, dy)) seen++;
-    }
+    for (const l of snap.loose) if (sees(r, l)) seen++;
     sight.firstElementChild.style.background = colour;
     setText(sight.lastElementChild,
       `sight · 90° × ${VISION_RANGE} cells · ${plural(seen, "component")}`);
@@ -524,6 +587,393 @@ function renderSelCard(r) {
   }
 }
 
+// ---------------------------------------------------------------- camera
+//
+// Design 1b: the same tick, told from inside one robot. The map above is what
+// an observer knows; this is what the *robot* knows, and the gap between the
+// two is the whole game — a rule can only test what is in here.
+//
+// It is a second view of the same snapshot and not a second source of truth.
+// Which cells exist is sim.inCone and the Chebyshev range, asked through the
+// same inCone/sees the map's wedge is painted from; the only thing this section
+// adds is where a cell lands on screen. Nothing here allocates per frame: the
+// surface is baked once, the layout is arithmetic, and the two DOM pieces — the
+// radar dial's marks and the contact rows — are fixed pools that are written
+// into rather than rebuilt.
+
+const POV_W = 640, POV_H = 480; // the baked surface; the canvas rule fits it to the pane
+const POV_TOP = 44;             // the strip past sight, which is most of what there is
+const POV_BOT = 58;             // where the robot itself stands
+const POV_CELL = POV_W / (2 * VISION_RANGE + 1);
+const POV_BAND = (POV_H - POV_TOP - POV_BOT) / VISION_RANGE;
+const POV_LABELS = Array.from({ length: VISION_RANGE }, (_, i) => `RANGE ${i + 1}`);
+
+const pov = $("pov");
+const pctx = pov.getContext("2d");
+
+// povPlace is a cell's place in the camera, and the answer to whether it is
+// there at all. Its band is its Chebyshev range — the range drawVision loops to
+// — and its column is how far it lies to the robot's right, measured against
+// the heading's own right vector, which is (-fy, fx) for a heading (fx, fy).
+//
+// Band r holds exactly 2r+1 cells at columns -r..r for every heading, cardinal
+// or diagonal, which is why the wedge stacks into a clean triangle with no
+// special case per facing. Returns the band, or 0 for a cell the robot cannot
+// see; the position is written into povAt rather than returned fresh, because
+// this runs for every cell of the wedge and every contact in it, ten times a
+// second.
+const povAt = { x: 0, y: 0 };
+function povPlace(h, dx, dy) {
+  const band = Math.max(Math.abs(dx), Math.abs(dy));
+  if (band < 1 || band > VISION_RANGE || !inCone(h, dx, dy)) return 0;
+  const f = DELTA[h % 8];
+  const col = dx * -f[1] + dy * f[0];
+  povAt.x = POV_W / 2 + (col - .5) * POV_CELL;
+  povAt.y = POV_TOP + (VISION_RANGE - band) * POV_BAND;
+  return band;
+}
+
+// Off the board is not a terrain class. It is the edge of the world, and
+// drawing it as open ground would invent somewhere to walk.
+const terrainAt = (x, y) =>
+  x < 0 || y < 0 || x >= init.width || y >= init.height ? -1 : init.terrain[y].charCodeAt(x) - 48;
+
+const kindColor = (variant) =>
+  css(`--kind-${slug(catalogue(variant)?.kind || "unknown")}`, css("--kind-unknown", "#999"));
+
+// A label over the wedge, in the arena's own idiom: white with a dark outline,
+// because it has to stay readable over every terrain colour under it.
+function povLabel(text, x, y) {
+  pctx.font = "700 11px system-ui, sans-serif";
+  pctx.textAlign = "center";
+  pctx.textBaseline = "middle";
+  pctx.lineWidth = 2;
+  pctx.strokeStyle = "#0008";
+  pctx.strokeText(text, x, y);
+  pctx.fillStyle = "#fff";
+  pctx.fillText(text, x, y);
+}
+
+function drawPOV(r) {
+  $("pov-empty").hidden = !!r;
+  const beyond = css("--bg-2", "#ddd");
+  pctx.fillStyle = css("--bg-1", "#eee");
+  pctx.fillRect(0, 0, POV_W, POV_H);
+
+  // The one true thing about everything past range 6, said where the rest of
+  // the world would be if the robot had any way to know about it.
+  pctx.fillStyle = beyond;
+  pctx.fillRect(0, 0, POV_W, POV_TOP);
+  pctx.fillStyle = css("--fg-2", "#666");
+  pctx.font = "700 14px system-ui, sans-serif";
+  pctx.textAlign = "center";
+  pctx.textBaseline = "middle";
+  pctx.fillText("BEYOND SIGHT — NO RULE CAN REACT TO IT", POV_W / 2, POV_TOP / 2);
+  if (!r) return;
+
+  const h = r.heading % 8;
+  const grid = css("--grid-line", "#0001");
+  pctx.lineWidth = 1;
+  for (let dy = -VISION_RANGE; dy <= VISION_RANGE; dy++) {
+    for (let dx = -VISION_RANGE; dx <= VISION_RANGE; dx++) {
+      if (!povPlace(h, dx, dy)) continue;
+      const t = terrainAt(r.x + dx, r.y + dy);
+      pctx.fillStyle = t < 0 ? beyond : terrainColors[t] || terrainColors[0];
+      pctx.fillRect(povAt.x, povAt.y, POV_CELL, POV_BAND);
+      pctx.strokeStyle = grid;
+      pctx.strokeRect(povAt.x + .5, povAt.y + .5, POV_CELL - 1, POV_BAND - 1);
+    }
+  }
+
+  // The bands are numbered because the range is the number every rule in the
+  // language is written in. They sit in the left margin, which the triangle
+  // leaves empty at every band but the last.
+  pctx.font = "500 11px system-ui, sans-serif";
+  pctx.textAlign = "left";
+  pctx.fillStyle = css("--fg-2", "#666");
+  for (let band = 1; band <= VISION_RANGE; band++) {
+    pctx.fillText(POV_LABELS[band - 1], 6, POV_TOP + (VISION_RANGE - band + .5) * POV_BAND);
+  }
+
+  // Only what sim.World.look reports: loose components, then enemy robots. No
+  // base is drawn here however close it is — vision never reports one — and
+  // neither is a robot of this robot's own colony. Both would be a mark for
+  // something no condition in the language can test, on the one screen whose
+  // whole job is to draw the difference.
+  for (const l of snap.loose) {
+    if (!povPlace(h, l.x - r.x, l.y - r.y)) continue;
+    const cx = povAt.x + POV_CELL / 2, cy = povAt.y + POV_BAND / 2;
+    const rad = Math.min(POV_CELL, POV_BAND) * .22;
+    pctx.fillStyle = kindColor(l.variant);
+    pctx.strokeStyle = "#000";
+    pctx.lineWidth = 1;
+    pctx.beginPath();
+    pctx.moveTo(cx, cy - rad); pctx.lineTo(cx + rad, cy);
+    pctx.lineTo(cx, cy + rad); pctx.lineTo(cx - rad, cy);
+    pctx.closePath();
+    pctx.fill();
+    pctx.stroke();
+  }
+  for (const o of snap.robots) {
+    if (o.colony === r.colony || !povPlace(h, o.x - r.x, o.y - r.y)) continue;
+    const st = robotStyle(o);
+    const cx = povAt.x + POV_CELL / 2, cy = povAt.y + POV_BAND / 2;
+    const rad = Math.min(POV_CELL, POV_BAND) * .3;
+    // Its heading relative to yours, not its heading on the map: the camera is
+    // facing-locked, so a robot drawn nose-down is one coming at you.
+    silhouette(pctx, cx, cy, rad, (o.heading - h + 8) % 8, o.colony, st.shape, st.armed);
+    if (o.hp < o.hp_max) {
+      pctx.fillStyle = "#0006";
+      pctx.fillRect(cx - rad, cy + rad + 3, rad * 2, 3);
+      pctx.fillStyle = o.hp * 2 < o.hp_max ? "#c0392b" : "#c98a00";
+      pctx.fillRect(cx - rad, cy + rad + 3, rad * 2 * (o.hp / o.hp_max), 3);
+    }
+    povLabel(shortID(o), cx, cy - rad - 7);
+  }
+
+  // You, at the foot of your own wedge, drawn nose-up because everything above
+  // is already in your frame.
+  const me = robotStyle(r);
+  silhouette(pctx, POV_W / 2, POV_H - POV_BOT + 20, 15, 0, r.colony, me.shape, me.armed);
+  pctx.font = "700 12px system-ui, sans-serif";
+  pctx.textAlign = "center";
+  pctx.textBaseline = "middle";
+  pctx.fillStyle = css("--fg-0", "#111");
+  pctx.fillText(`${shortID(r)} — you are here, facing ${HEADINGS[h]}`, POV_W / 2, POV_H - 14);
+}
+
+// ------------------------------------------------------------- radar dial
+//
+// Design 1b 421-436: radar as its own instrument rather than another mark on
+// the wedge, because it is another sense. Facing-locked like the camera — up is
+// the nose, and the tinted quadrant drawn in the markup is the sight wedge — so
+// a mark below the hub is a contact behind the robot that only a radar rule can
+// reach. What counts as a contact is radarSees, the same predicate the count on
+// the overlay card and the rows below use.
+
+// keepNearest inserts one candidate into a fixed, distance-ordered buffer and
+// drops whatever falls off the end. Both pools below are smaller than the
+// number of contacts a busy tick can produce, and sim hands a rule its
+// sightings nearest-first (sortSightings) — so a panel that filled its pool in
+// world order would routinely hide the one contact the robot is about to act
+// on behind the "and N more". The buffer is preallocated and its entries are
+// written in place: this runs ten times a second.
+//
+// Insertion into eight or twelve slots, rather than a sort: a sort would
+// allocate an array every frame to order a handful of things.
+function keepNearest(buf, n, d, src, o) {
+  if (n === buf.length && d >= buf[n - 1].d) return n;
+  let i = n < buf.length ? n : buf.length - 1;
+  while (i > 0 && buf[i - 1].d > d) {
+    buf[i].d = buf[i - 1].d; buf[i].src = buf[i - 1].src; buf[i].o = buf[i - 1].o;
+    i--;
+  }
+  buf[i].d = d; buf[i].src = src; buf[i].o = o;
+  return Math.min(n + 1, buf.length);
+}
+
+const slot = () => ({ d: 0, src: 0, o: null });
+
+const DIAL_MARKS = 12; // a pool: a dial with more dots than this reads as fog
+const dialPick = Array.from({ length: DIAL_MARKS }, slot);
+const dialMarks = [];
+for (let i = 0; i < DIAL_MARKS; i++) {
+  const m = document.createElementNS(SVGNS, "circle");
+  m.setAttribute("r", "3");
+  m.setAttribute("class", "mark");
+  m.style.display = "none";
+  dialMarks.push(m);
+}
+$("dial-marks").replaceChildren(...dialMarks);
+
+function renderDial(r) {
+  const st = r ? robotStyle(r) : UNKNOWN_STYLE;
+  let n = 0;
+  if (r && st.radar) {
+    // The nearest contacts, not the first ones in the snapshot: a dial that
+    // dropped the close one and kept a far one would point the eye the wrong
+    // way. See keepNearest.
+    for (const o of radarList(st.radarOf) || []) {
+      if (radarSees(r, o, st.radarOf, st.radar)) n = keepNearest(dialPick, n, cheb(r, o), 0, o);
+    }
+    const f = DELTA[r.heading % 8];
+    // A diagonal heading's vector is not a unit one, so both components are
+    // divided by its length; without that a contact dead ahead would plot at
+    // 1.41× its range on half the facings.
+    const norm = Math.hypot(f[0], f[1]);
+    const s = 42 / st.radar; // 42 is the outer ring in the markup's viewBox
+    for (let i = 0; i < n; i++) {
+      const o = dialPick[i].o;
+      const dx = o.x - r.x, dy = o.y - r.y;
+      const m = dialMarks[i];
+      m.setAttribute("cx", (50 + (dx * -f[1] + dy * f[0]) / norm * s).toFixed(1));
+      m.setAttribute("cy", (50 - (dx * f[0] + dy * f[1]) / norm * s).toFixed(1));
+      m.style.fill = st.radarOf === "parts-radar"
+        ? `var(--kind-${slug(catalogue(o.variant)?.kind || "unknown")})`
+        : `var(${colonyVar(o.colony)})`;
+      m.style.display = "";
+    }
+  }
+  for (let i = n; i < DIAL_MARKS; i++) dialMarks[i].style.display = "none";
+
+  setText($("dial-note"), !r ? ""
+    : !st.radar
+      ? "This robot carries no radar. The dial is empty because it has no second"
+        + " sense — not because there is nothing out there."
+      : `${st.radarOf.replace(/-/g, " ")} · ${st.radar} cells · `
+        + plural(radarContacts(r, st.radarOf, st.radar), "contact"));
+}
+
+// ---------------------------------------------------------------- contacts
+//
+// Design 1b 437-444: everything this robot perceives this tick, in one list,
+// with what it could do about it. Rows are a fixed pool written in place — the
+// panel is rewritten ten times a second, and a list rebuilt that often would
+// flicker and allocate for nothing.
+
+const CONTACT_ROWS = 8;
+const contactRows = [];
+for (let i = 0; i < CONTACT_ROWS; i++) {
+  const node = el("div", "crow");
+  const mark = el("span", "cmark");
+  const who = el("span", "cwho");
+  const where = el("span", "cat");
+  const note = el("span", "cnote");
+  node.append(mark, who, where, note);
+  node.hidden = true;
+  contactRows.push({ node, mark, who, where, note });
+}
+$("contacts").replaceChildren(...contactRows.map((c) => c.node));
+
+function contactPut(i, ch, colour, who, where, note) {
+  const row = contactRows[i];
+  setText(row.mark, ch);
+  row.mark.style.color = colour;
+  setText(row.who, who);
+  setText(row.where, where);
+  setText(row.note, note);
+  row.node.hidden = false;
+}
+
+// Where a contact is, in the terms a rule is written in: Chebyshev range, and
+// the compass direction of the offset. atan2(dx, -dy) is the angle clockwise
+// from north, which is exactly how sim.Heading is numbered.
+function rangeDir(r, o) {
+  const i = (Math.round(Math.atan2(o.x - r.x, r.y - o.y) / (Math.PI / 4)) + 8) % 8;
+  return `${cheb(r, o)} ${HEADINGS[i]}`;
+}
+
+// sim.pickUp / interactRange: a component is collectable at Chebyshev 1, and
+// only with a manipulator (design §6.3). Duplicated here for the same reason as
+// VISION_RANGE and atOwnBase — the wire carries state, not rules — and it only
+// writes a caption; the server owns whether the pickup happens.
+const INTERACT_RANGE = 1;
+
+// What a row is about. The list is ordered by range across all three, which is
+// both how sim hands a rule its sightings and how design 1b's own example reads
+// (1 NW, then 2 N, then 4 NE).
+const SRC_PART = 0, SRC_ENEMY = 1, SRC_RADAR = 2;
+const contactPick = Array.from({ length: CONTACT_ROWS }, slot);
+
+function renderContacts(r) {
+  let n = 0, kept = 0;
+  const st = r ? robotStyle(r) : UNKNOWN_STYLE;
+  if (r) {
+    for (const l of snap.loose) {
+      if (!sees(r, l)) continue;
+      kept = keepNearest(contactPick, kept, cheb(r, l), SRC_PART, l);
+      n++;
+    }
+    // Enemies only, because that is all forward vision reports: a friendly in
+    // the cone is not a contact, and listing it would say a rule could act on
+    // it. The blind-spot note beside this list is where that fact is said out
+    // loud rather than left as an absence.
+    for (const o of snap.robots) {
+      if (!seesRobot(r, o)) continue;
+      kept = keepNearest(contactPick, kept, cheb(r, o), SRC_ENEMY, o);
+      n++;
+    }
+    // Radar too, but only what sight did not already report: one contact listed
+    // twice would read as two of them. The de-duplication is per radar, because
+    // it is per *kind* — sight reports components and enemy robots, so those
+    // two can repeat, but it never reports a base, and a base radar's contact
+    // in front of the robot must still be listed.
+    if (st.radar) {
+      for (const o of radarList(st.radarOf) || []) {
+        if (!radarSees(r, o, st.radarOf, st.radar)) continue;
+        if (st.radarOf === "parts-radar" ? sees(r, o)
+          : st.radarOf === "enemy-robot-radar" && seesRobot(r, o)) continue;
+        kept = keepNearest(contactPick, kept, cheb(r, o), SRC_RADAR, o);
+        n++;
+      }
+    }
+  }
+  for (let i = 0; i < kept; i++) {
+    const p = contactPick[i], o = p.o;
+    if (p.src === SRC_PART) {
+      contactPut(i, "◆", kindColor(o.variant), compName(o.variant), rangeDir(r, o),
+        p.d > INTERACT_RANGE ? "seen — too far to take"
+          : st.hands ? "in reach — the manipulator can take it"
+            : "in reach, but this robot has no manipulator");
+    } else if (p.src === SRC_ENEMY) {
+      contactPut(i, "▮", `var(${colonyVar(o.colony)})`, `${shortID(o)} ${o.archetype || ""}`,
+        rangeDir(r, o), `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
+    } else {
+      contactPut(i, "◇",
+        st.radarOf === "parts-radar" ? kindColor(o.variant) : `var(${colonyVar(o.colony)})`,
+        st.radarOf === "parts-radar" ? compName(o.variant)
+          : st.radarOf === "enemy-robot-radar" ? shortID(o) : `${colonyName(o.colony)} base`,
+        rangeDir(r, o), "radar only — not in the cone");
+    }
+  }
+  for (let i = kept; i < CONTACT_ROWS; i++) contactRows[i].node.hidden = true;
+
+  const none = $("contacts-none");
+  none.hidden = n > 0;
+  setText(none, r ? "Nothing in sight and nothing on radar this tick."
+    : "No robot selected — the camera has nobody to look out of.");
+  const more = $("contacts-more");
+  more.hidden = n <= CONTACT_ROWS;
+  if (!more.hidden) setText(more, `and ${n - CONTACT_ROWS} more`);
+}
+
+// Within sight's reach but not necessarily in its wedge: the range half of
+// sees(), which is what "a turn away" means.
+const nearby = (r, o) => cheb(r, o) > 0 && cheb(r, o) <= VISION_RANGE;
+
+// The blind spot, counted rather than asserted (design 1b 416-419). The static
+// copy in match.html says what the 270° is; this says what is standing in it
+// right now, which is the sentence that makes it land.
+function blindNote(r) {
+  if (!r) return "";
+  // Two different silences, and they are worth telling apart. Behind: things
+  // sight *would* report if the robot turned — a turn is a rule away, so these
+  // are recoverable. Own colony: things sight never reports at any range or
+  // facing (World.look filters them), so no facing recovers them at all.
+  let behind = 0, mine = 0;
+  for (const l of snap.loose) if (nearby(r, l) && !sees(r, l)) behind++;
+  for (const o of snap.robots) {
+    if (o.colony === r.colony) { if (nearby(r, o)) mine++; continue; }
+    if (nearby(r, o) && !sees(r, o)) behind++;
+  }
+  const first = behind === 0
+    ? `Nothing within ${VISION_RANGE} cells is hidden behind the nose this tick.`
+    : `${plural(behind, "thing")} within ${VISION_RANGE} cells ${behind === 1 ? "is" : "are"}`
+      + ` outside the wedge right now — a turn would reveal ${behind === 1 ? "it" : "them"},`
+      + " and until then no condition can test it.";
+  if (mine === 0) return first;
+  return `${first} ${plural(mine, "robot")} of its own colony ${mine === 1 ? "is" : "are"}`
+    + " within range too, and no facing would help: vision reports loose parts and"
+    + " enemies, never your own.";
+}
+
+function renderCamera(r) {
+  drawPOV(r);
+  renderDial(r);
+  renderContacts(r);
+  setText($("blind-note"), blindNote(r));
+}
+
 function drawBase(b) {
   const c = colonyColor(b.colony);
   const p = cell * 0.15;
@@ -536,13 +986,37 @@ function drawBase(b) {
 }
 
 function drawLoose(l) {
-  const kind = catalogue(l.variant)?.kind || "unknown";
-  ctx.fillStyle = css(`--kind-${slug(kind)}`, css("--kind-unknown", "#999"));
+  ctx.fillStyle = kindColor(l.variant);
   const cx = l.x * cell + cell / 2, cy = l.y * cell + cell / 2, r = cell * 0.28;
   ctx.beginPath();
   ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy); ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
   ctx.closePath();
   ctx.fill();
+}
+
+// silhouette is one robot's body, in whatever context asks for it: the arena
+// and the camera both draw it, and the chassis, the barrel and the nose are
+// therefore the same three facts on both. Drawn in unit space and scaled, so
+// the one place the geometry lives is the SHAPES table. `turns` is eighths of a
+// turn clockwise from north — the robot's heading on the map, and its heading
+// *relative to the viewer* in the camera. The black outline is not decoration:
+// it is what separates a robot from the terrain colour under it.
+function silhouette(c, cx, cy, rad, turns, colony, shape, armed) {
+  c.save();
+  c.translate(cx, cy);
+  c.rotate(turns * Math.PI / 4); // heading 0 is north; the shapes point north
+  c.scale(rad, rad);
+  c.lineWidth = 1 / rad; // one pixel, undoing the scale above
+  c.strokeStyle = "#000";
+  if (armed) {
+    c.fillStyle = weaponColor;
+    c.fill(BARREL);
+    c.stroke(BARREL);
+  }
+  c.fillStyle = colonyColor(colony);
+  c.fill(BODY[shape]);
+  c.stroke(BODY[shape]);
+  c.restore();
 }
 
 function drawRobot(r, isSelected) {
@@ -554,25 +1028,7 @@ function drawRobot(r, isSelected) {
   const cx = r.x * cell + cell / 2, cy = r.y * cell + cell / 2, rad = cell * 0.44;
   const { shape, armed } = robotStyle(r);
 
-  // The silhouette carries the chassis, the barrel says it is armed, and the
-  // nose is the heading — see SHAPES. Drawn in unit space and scaled, so the
-  // one place the geometry lives is that table. The black outline is not
-  // decoration: it is what separates a robot from the terrain colour under it.
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate((r.heading % 8) * Math.PI / 4); // heading 0 is north; the shapes point north
-  ctx.scale(rad, rad);
-  ctx.lineWidth = 1 / rad; // one pixel, undoing the scale above
-  ctx.strokeStyle = "#000";
-  if (armed) {
-    ctx.fillStyle = weaponColor;
-    ctx.fill(BARREL);
-    ctx.stroke(BARREL);
-  }
-  ctx.fillStyle = colonyColor(r.colony);
-  ctx.fill(BODY[shape]);
-  ctx.stroke(BODY[shape]);
-  ctx.restore();
+  silhouette(ctx, cx, cy, rad, r.heading % 8, r.colony, shape, armed);
 
   // Archetype glyph: first letter of the blueprint name, which is player-chosen
   // and therefore cannot come from a hardcoded table.
@@ -1517,6 +1973,34 @@ function senseToggle(btn, key) {
 }
 senseToggle($("t-sight"), "sight");
 senseToggle($("t-radar"), "radar");
+
+// MAP / POV / SPLIT (design 1b 368-372). Which view is drawn, and nothing else:
+// the stream, the selection and every panel are untouched, so switching mid-
+// match cannot desync anything — the next frame simply lands in a different
+// canvas. The choice is remembered like the folds are, so it is made once
+// rather than on every visit.
+const MODES = ["map", "pov", "split"];
+
+function setMode(next) {
+  mode = MODES.includes(next) ? next : "map";
+  store.set("rc.match.mode", mode);
+  for (const b of $("view-mode").children) {
+    b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false");
+  }
+  // [hidden] rather than a class: the hidden view is not drawn either (see
+  // draw), so this is the whole of what the mode does.
+  $("arena-wrap").hidden = mode === "pov";
+  $("pov-wrap").hidden = mode === "map";
+  $("pov-foot").hidden = mode === "map";
+  $("stage").classList.toggle("split", mode === "split");
+  draw();
+}
+
+$("view-mode").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-mode]");
+  if (btn) setMode(btn.dataset.mode);
+});
+setMode(store.get("rc.match.mode"));
 
 // -------------------------------------------------------------- keyboard
 //
