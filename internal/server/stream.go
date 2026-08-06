@@ -62,6 +62,13 @@ const heartbeatEvery = 15 * time.Second
 // The init frame grows with the arena too, and it is the one that scales
 // cleanly: one terrain char per cell puts XL at 31–36 KB against M's 18–23 KB.
 // It is sent once per connection, not per tick.
+//
+// rc-pt6.8 put the event feed on that frame as well, which is the largest thing
+// added to it since the approved designs: 10 KB on a default board at tick
+// 6000, and 33–37 KB once the buffer reaches eventCap on XL or the stressed
+// preset (the numbers, and why the cap is where it is, are at eventCap in
+// internal/lobby/events.go). The tick frame is unchanged — a tick with nothing
+// to report carries no events key at all — so this budget is untouched.
 const maxFrameBytes = 64 << 10
 
 // pollInterval is how often the stream checks for a new tick. Deliberately
@@ -138,11 +145,16 @@ func Stream(reg *lobby.Registry, stopping <-chan struct{}) http.HandlerFunc {
 			initFrame = NewInit(info, m.Colonies, world, hist, feed)
 			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
-		// An event is stamped with the tick it happened *during*, so everything
-		// the init frame could carry is stamped below board.Tick however far the
-		// world moved between the two reads. This is the cursor the loop below
-		// advances.
-		sentEvents := board.Tick
+		// The cursor comes off the feed that was actually sent, never off
+		// board.Tick: the tick driver can advance the world between the two
+		// reads above, and a cursor at board.Tick would then declare the events
+		// of the ticks in between already delivered and drop them. An empty
+		// feed means an empty buffer, so a zero cursor owes the client nothing
+		// it has already had.
+		var sentEvents uint64
+		if n := len(feed); n > 0 {
+			sentEvents = feed[n-1].Tick + 1
+		}
 		n, err := send(w, flusher, "init", initFrame)
 		if err != nil {
 			return

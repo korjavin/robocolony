@@ -105,7 +105,12 @@ func Replay(svc *lobby.Service, stopping <-chan struct{}) http.HandlerFunc {
 			initFrame = NewInit(info, m.Colonies, world, hist, feed)
 			board = NewSnapshot(world, rt, info.EndTick, nil)
 		})
-		sentEvents := board.Tick
+		// Off the feed that was sent, not off board.Tick — the same rule as the
+		// live stream, where the difference is load-bearing (stream.go).
+		var sentEvents uint64
+		if n := len(feed); n > 0 {
+			sentEvents = feed[n-1].Tick + 1
+		}
 		if _, err := send(w, flusher, "init", initFrame); err != nil {
 			return
 		}

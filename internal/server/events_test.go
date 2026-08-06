@@ -1,8 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/korjavin/robocolony/internal/sim"
 )
@@ -68,5 +74,83 @@ func TestEmptyFeedIsAbsentFromTheTickFrame(t *testing.T) {
 	}
 	if _, ok := decoded["events"]; ok {
 		t.Fatalf("an empty feed still put an events key on the tick frame: %s", body)
+	}
+}
+
+// TestStreamDeliversEveryEventOnce is the delivery invariant of the feed, and
+// the check behind the fix the codex review pass found: the init frame carries
+// the backlog and the tick frames carry the rest, with nothing sent twice and —
+// the part that is easy to get wrong — nothing skipped.
+//
+// The trap: the feed and the board are two reads of the match lock, and the
+// tick driver can advance the world between them. A cursor set from the board's
+// tick would then declare the events of the ticks in between already sent, and
+// they would never reach this client. Silent, and invisible to any assertion
+// that only looks at what did arrive — so this compares the delivered feed
+// against the match's own buffer over the ticks that were fully delivered.
+func TestStreamDeliversEveryEventOnce(t *testing.T) {
+	reg, m := startMatch(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/matches/{id}/stream", Stream(reg, nil))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		srv.URL+"/api/matches/"+strconv.FormatInt(m.ID, 10)+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() = %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET stream = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	frames := readEvents(t, resp.Body, 25)
+	var got []Event
+	for i, f := range frames {
+		switch f.name {
+		case "init":
+			var in Init
+			if err := json.Unmarshal(f.data, &in); err != nil {
+				t.Fatalf("init frame does not decode: %v", err)
+			}
+			got = append(got, in.Events...)
+		case "tick":
+			var snap Snapshot
+			if err := json.Unmarshal(f.data, &snap); err != nil {
+				t.Fatalf("tick frame does not decode: %v", err)
+			}
+			got = append(got, snap.Events...)
+		default:
+			t.Fatalf("frame %d is %q, want init or tick", i, f.name)
+		}
+	}
+	if len(got) == 0 {
+		t.Skip("this match produced no events in the window watched; nothing to compare")
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].Tick < got[i-1].Tick {
+			t.Fatalf("delivered out of order at %d: tick %d after %d", i, got[i].Tick, got[i-1].Tick)
+		}
+	}
+
+	// Ground truth. Every event of a tick is buffered in one critical section,
+	// so a tick that delivered anything delivered all of it: everything the
+	// match holds up to the last delivered tick had to arrive, in order, once.
+	last := got[len(got)-1].Tick
+	var buffered []sim.Event
+	for _, e := range m.Events(0) {
+		if e.Tick <= last {
+			buffered = append(buffered, e)
+		}
+	}
+	want := newEvents(buffered)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("the stream delivered %d events up to tick %d, the match holds %d:\ngot  %+v\nwant %+v",
+			len(got), last, len(want), got, want)
 	}
 }

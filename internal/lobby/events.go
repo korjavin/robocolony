@@ -27,14 +27,30 @@ import (
 
 // eventCap is how many events one match keeps.
 //
-// ponytail: a plain ring — past the cap the oldest events fall off, so a long
-// match loses its early timeline. The bound is the init frame, which carries
-// the whole buffer once per connection: 400 events is about 28 KB of JSON,
-// beside the 18-36 KB of terrain already on it and the ~58 KB ceiling
-// history.go allows itself. Deposits dominate the feed (roughly one every two
-// ticks on a default board), so 400 covers the last ~800 ticks of a busy match.
-// Upgrade path if the timeline needs the whole match: serve a tick range from
-// a re-derived replay rather than growing the frame.
+// The bound is the init frame, which carries the whole buffer once per
+// connection. Measured, not extrapolated — an extrapolation of this exact
+// number was wrong by six times twice before (docs/engineering-notes.md), so
+// the frame-size harness reports the feed's own share now:
+//
+//	ROBOCOLONY_FRAMESIZE=1 go test ./internal/server/ -run TestFrameSize -v
+//
+// Eight colonies, seed 0x5eed, at tick 6000:
+//
+//	                      events   feed bytes   init frame
+//	default, M (64×64)       130       10,514       32,755
+//	default, XL (128×128)    396       33,507       68,579
+//	stressed, M              400       37,030       60,525
+//
+// The number that settled 400: an ordinary default match runs its whole 6000
+// ticks and fills a third of the buffer, so nothing falls off a match anyone
+// actually plays. The cap only bites on the largest arena or the stressed
+// preset, where the init frame was the biggest thing on the connection anyway
+// and the tick frame is the budget under pressure (maxFrameBytes), not this.
+//
+// ponytail: a plain ring — past the cap the oldest events fall off, so a very
+// long match loses its early timeline. Upgrade path if the timeline needs the
+// whole match: serve a tick range off a re-derived replay, which costs a
+// rebuild rather than a bigger frame.
 const eventCap = 400
 
 // collectEvents drains the tick's events into the match buffer. Caller holds mu.
