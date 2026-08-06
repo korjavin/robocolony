@@ -98,22 +98,11 @@
   }
   .field-bar .toggle:hover { background: var(--fg-0); color: var(--bg-0); }
 
-  /* A segmented control: one border, one divider per seam, the live segment
-     inverted (design 1b 368-372). MAP/POV/SPLIT is one, and so is the replay
-     speed set down in the timeline — both are marked up as .seg, and this is
-     the one rule that draws them. [aria-pressed] is the whole state, as it is
-     on the sense toggles above: what a screen reader announces cannot drift
-     from the segment that is drawn, because they are the same attribute. */
-  .seg { display: flex; border: 1px solid var(--line-1); }
-  .seg button {
-    font: inherit; font-size: 12px; padding: 3px 12px;
-    border: 0; box-shadow: none; color: var(--fg-1); background: var(--bg-0);
-  }
-  .seg button + button { border-left: 1px solid var(--line-1); }
-  .seg button:hover { background: var(--bg-2); color: var(--fg-0); }
-  .seg button[aria-pressed="true"] {
-    background: var(--fg-0); color: var(--bg-0); font-weight: 700;
-  }
+  /* MAP/POV/SPLIT is a .seg, drawn entirely by app.css: one border, a divider
+     per seam, [aria-pressed="true"] inverted, and the base button's inverting
+     hover as a preview of the choice. Nothing about it is restated here — a
+     page-local copy of a shared class is how two segmented controls quietly
+     stop matching. The same goes for the replay speed set in the timeline. */
 
   /* The canvas is sized by its own drawing surface and two clamps, and by
      nothing else. width/height stay auto, so the box starts at the baked
