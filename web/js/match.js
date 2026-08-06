@@ -3,11 +3,21 @@
 // Renders strictly from the last snapshot the server sent. There is no
 // interpolation and no client-side simulation: the server is authoritative, and
 // a guess drawn between ticks would visibly disagree with the next frame.
+//
+// ?replay=1 points the same page at /api/matches/{id}/replay instead of the
+// live stream. The frames are byte-identical, so everything below renders a
+// finished match exactly as it renders a running one; the timeline gains a
+// scrubber, and the two things that only make sense live — the trace poll and
+// the command controls — stand down. See replayControls at the bottom.
+
+import { colonyVar, drawGraph, mmss, seriesAppend, seriesReset, SVGNS } from "./graph.js";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
 
-const matchID = new URLSearchParams(location.search).get("id");
+const params = new URLSearchParams(location.search);
+const matchID = params.get("id");
+const replay = params.get("replay") === "1";
 
 // Heading is 0..7 clockwise from north (sim.Heading).
 const HEADINGS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -36,11 +46,8 @@ const css = (name, fallback) => {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 };
-const colonyVar = (id) => `--colony-${((id % 8) + 8) % 8}`;
 const colonyColor = (id) => css(colonyVar(id), "#888");
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-const SVGNS = "http://www.w3.org/2000/svg";
 
 let init = null;       // init frame
 let snap = null;       // last tick frame
@@ -551,7 +558,9 @@ function renderInspector() {
 // it. Building the controls once was not enough; the node has to stay attached.
 function renderCommand(r) {
   const host = $("command");
-  if (!r || r.colony !== myColony()) {
+  // Nothing is commandable in a replay: the match is over, and the server would
+  // refuse every one of these — offering the buttons anyway reads as a bug.
+  if (!r || replay || r.colony !== myColony()) {
     host.hidden = true;
     if (cmdFor !== null) { host.replaceChildren(); cmd = null; cmdFor = null; }
     return;
@@ -785,9 +794,12 @@ function histReset() {
   histSince = 0;
   histRun = null;
   histRows = 0;
-  setText($("history-note"), selected === null
-    ? "Select a robot to start recording why it acts."
-    : `Recording robot #${selected} from now on.`);
+  setText($("history-note"), replay
+    ? "Decisions are recorded while a match runs, and only for a selected robot,"
+    + " so a replay has none to show."
+    : selected === null
+      ? "Select a robot to start recording why it acts."
+      : `Recording robot #${selected} from now on.`);
 }
 
 // Polls are strictly serialised. Three things call this — the interval, a new
@@ -796,7 +808,9 @@ function histReset() {
 // wind histSince backwards.
 async function pollHistory() {
   const robot = selected;
-  if (robot === null || !matchID || histBusy) return;
+  // A replayed match decides nothing: asking is what makes the server record,
+  // and there is no live world to record from. histReset says so on screen.
+  if (robot === null || !matchID || histBusy || replay) return;
   // Folded away: stop asking. Asking is what makes the server record, and the
   // watch registry is capped at 8 (internal/server/trace.go) — a panel nobody
   // has open must not hold one of them. Unfolding resumes from histSince, so it
@@ -1053,103 +1067,6 @@ function renderStats() {
   });
 }
 
-// ------------------------------------------------------------------- graph
-//
-// Score over time (design §4.4), as one SVG polyline per colony. No charting
-// library: this is a coordinate transform and a string, and a dependency here
-// would buy axes nobody asked for.
-//
-// The series comes down on the init frame (internal/lobby/history.go) already
-// downsampled, and grows from the tick stream — so nothing rides the 10 Hz
-// frame, and a reload or a late join still shows the whole match.
-//
-// The graph is built once and updated in place, and it lives in the Colonies
-// panel rather than in #inspector, which is cleared on every tick.
-
-// GRAPH_MAX bounds the series in the browser the way historyCap bounds it on
-// the server: once past it, every second sample is dropped and the interval
-// doubles. A page left open on a long match must not grow without limit.
-const GRAPH_MAX = 512;
-
-const METRICS = { score: "score", robots: "robots", collected: "parts collected" };
-
-let series = null; // {interval, ticks, colonies:[{colony, score, robots, collected}]}
-
-function seriesReset(h) {
-  series = h && Array.isArray(h.ticks) && h.interval > 0 ? h : null;
-  drawGraph();
-}
-
-// seriesAppend adds this snapshot to the series if it lands on a sampling tick
-// and is newer than what is there. Both guards matter: the init frame can be
-// one sample ahead of the first tick frame (the server takes them under
-// separate locks), and a reconnect replays a tick already recorded.
-function seriesAppend(s) {
-  if (!series || s.tick % series.interval !== 0) return false;
-  const last = series.ticks.length ? series.ticks[series.ticks.length - 1] : -1;
-  if (s.tick <= last) return false;
-  series.ticks.push(s.tick);
-  for (const c of series.colonies) {
-    const st = s.colonies.find((x) => x.colony === c.colony) || {};
-    c.score.push(st.score || 0);
-    c.robots.push(st.robots || 0);
-    c.collected.push(st.collected || 0);
-  }
-  if (series.ticks.length > GRAPH_MAX) {
-    const half = (a) => a.filter((_, i) => i % 2 === 0);
-    series.interval *= 2;
-    series.ticks = half(series.ticks);
-    for (const c of series.colonies) {
-      c.score = half(c.score); c.robots = half(c.robots); c.collected = half(c.collected);
-    }
-  }
-  return true;
-}
-
-const mmss = (ticks) => {
-  const s = Math.round(ticks / (init?.tick_rate || 10));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
-
-function drawGraph() {
-  const lines = $("graph-lines");
-  const note = $("graph-note");
-  const metric = $("graph-metric").value;
-  if (!series || series.ticks.length < 2) {
-    lines.replaceChildren();
-    setText(note, "Waiting for the first samples — one every "
-      + `${mmss(series?.interval || 100)} of match time.`);
-    return;
-  }
-
-  const W = 600, H = 180, pad = 6;
-  const t0 = series.ticks[0];
-  const span = Math.max(1, series.ticks[series.ticks.length - 1] - t0);
-  let peak = 0;
-  for (const c of series.colonies) for (const v of c[metric]) peak = Math.max(peak, v);
-  const scale = peak || 1;
-
-  lines.replaceChildren(...series.colonies.map((c) => {
-    const p = document.createElementNS(SVGNS, "polyline");
-    p.setAttribute("points", series.ticks.map((t, i) =>
-      `${((t - t0) / span * W).toFixed(1)},`
-      + `${(H - pad - (c[metric][i] || 0) / scale * (H - 2 * pad)).toFixed(1)}`).join(" "));
-    // var(), not a resolved colour: the same custom property the map and the
-    // legend read, so a theme switch needs no redraw.
-    p.style.stroke = `var(${colonyVar(c.colony)})`;
-    p.setAttribute("vector-effect", "non-scaling-stroke");
-    const t = document.createElementNS(SVGNS, "title");
-    t.textContent = colonyName(c.colony);
-    p.append(t);
-    return p;
-  }));
-  setText(note, `${METRICS[metric]} — peak ${peak}, ${mmss(t0)} to `
-    + `${mmss(series.ticks[series.ticks.length - 1])}, `
-    + `one point per ${mmss(series.interval)}. Colours match the standing above.`);
-}
-
-$("graph-metric").addEventListener("change", drawGraph);
-
 // baseColony is the colony the base panel last showed. It sticks: without it
 // the panel jumps back to the first base the instant the selected robot dies —
 // which is exactly the moment its colony may be going out, and a colony with no
@@ -1221,13 +1138,15 @@ function renderClock() {
   $("clock").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   $("tick").textContent = `tick ${snap.tick} / ${snap.end_tick}`;
 
-  // The timeline is one filled bar whose right edge is now. It is not a
-  // scrubber: nothing behind the head is seekable, because the server keeps no
-  // per-tick history to seek into.
+  // The timeline is one filled bar whose right edge is now. Live it is not a
+  // scrubber — nothing behind the head is seekable, because the server keeps no
+  // per-tick history to seek into. A replay has the whole log, so the scrubber
+  // under the bar is shown for that case only.
   const done = end > 0 ? Math.min(1, Number(snap.tick) / end) : 0;
   $("progress").style.width = `${(done * 100).toFixed(2)}%`;
   const gone = Math.floor(Number(snap.tick) / (init.tick_rate || 10));
   $("tick-mid").textContent = `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`;
+  if (replay) renderSeek(end);
 }
 
 // -------------------------------------------------------------- folding
@@ -1296,15 +1215,30 @@ let source = null;
 let backoff = 1000;
 let retryTimer = null;
 
+// Replay state. `from` is the tick the next connection starts at: it follows
+// the stream while playing, so a dropped connection resumes where it stopped
+// rather than at the last seek.
+let from = 0;
+let speed = 1;
+let seeking = false; // connected, first frame of this seek not in yet
+let dragging = false;
+
 function connect() {
   if (!matchID) { err("No match id in the URL: try /match?id=1"); conn("over", "no match"); return; }
-  conn("retry", "connecting…");
-  source = new EventSource(`/api/matches/${encodeURIComponent(matchID)}/stream`);
+  seeking = replay;
+  conn("retry", replay ? "seeking…" : "connecting…");
+  source = new EventSource(replay
+    ? `/api/matches/${encodeURIComponent(matchID)}/replay?from=${from}&speed=${speed}`
+    : `/api/matches/${encodeURIComponent(matchID)}/stream`);
 
   source.addEventListener("open", () => {
     backoff = 1000;
     err("");
-    conn("live", "live");
+    // A replay says nothing here. The server rebuilds the world from tick 0
+    // before the first frame — a few hundred ms on a default match — and
+    // "live" over a board that has not moved yet would be a lie. The tick
+    // handler reports it when there is something to report.
+    if (!replay) conn("live", "live");
   });
 
   source.addEventListener("init", (ev) => {
@@ -1316,12 +1250,16 @@ function connect() {
     buildLegend();
     // The server's series is authoritative and covers the whole match, so a
     // reconnect adopts it rather than keeping whatever this page observed.
-    seriesReset(init.history);
+    seriesReset(init.history, init.tick_rate, colonyName);
     render();
   });
 
   source.addEventListener("tick", (ev) => {
     snap = JSON.parse(ev.data);
+    if (replay) {
+      from = Number(snap.tick);
+      if (seeking) { seeking = false; conn("live", `replay ×${speed}`); }
+    }
     render();
   });
 
@@ -1352,9 +1290,26 @@ function connect() {
     // probe tells them apart — and stops the retry loop on the two of them that
     // will never succeed. Live match state is in-memory (AGENTS.md), so a
     // bookmarked /match?id= after a restart is the expected way to hit 410.
-    const res = await fetch(`/api/matches/${encodeURIComponent(matchID)}`,
+    //
+    // A replay asks the history endpoint instead, for the same reasons plus
+    // one: /api/matches/{id} reports 410 for every finished match, which is
+    // exactly the match a replay is watching. The history record also carries
+    // the refusal — a build that no longer simulates the same way — which the
+    // stream can only answer with a 409 EventSource will not show us.
+    const res = await fetch(replay
+      ? `/api/history/${encodeURIComponent(matchID)}`
+      : `/api/matches/${encodeURIComponent(matchID)}`,
       { headers: { Accept: "application/json" } }).catch(() => null);
     if (res && res.status === 401) { location.href = "/login"; return; }
+    if (replay && res && res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (body.replayable === false) {
+        over = true;
+        err(body.reason || "this match cannot be replayed by this build");
+        conn("over", "not replayable");
+        return;
+      }
+    }
     if (res && (res.status === 404 || res.status === 410)) {
       over = true;
       const body = await res.json().catch(() => ({}));
@@ -1368,6 +1323,75 @@ function connect() {
     retryTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 15000);
   });
+}
+
+// ---------------------------------------------------------------- replay
+//
+// Every control is a reconnect. Pause closes the EventSource; play, scrub and
+// speed reopen /api/matches/{id}/replay with new from/speed, and the server
+// rebuilds the world from tick 0 to reach the target. That is the design, not
+// a shortcut: the client keeps no clock, no buffer and no playback state, so
+// there is nothing that can fall out of step with the server, and the protocol
+// stays the three events the live stream already sends.
+//
+// The controls sit in the timeline under the arena. Not in #inspector, which is
+// replaceChildren()-ed ten times a second — that would close the speed select
+// under the pointer (docs/engineering-notes.md).
+
+const syncPlay = () => { setText($("rp-play"), source ? "Pause" : "Play"); };
+
+function pause() {
+  if (source) { source.close(); source = null; }
+  clearTimeout(retryTimer);
+  conn("over", "paused");
+  syncPlay();
+}
+
+// reopen is play, seek and speed change alike: one connection, from one tick.
+function reopen(atTick) {
+  if (source) { source.close(); source = null; }
+  clearTimeout(retryTimer);
+  from = Math.max(0, Math.round(atTick));
+  // The end frame set `over`, which stops the retry loop. Scrubbing back out of
+  // it is how a replay gets watched twice.
+  over = false;
+  connect();
+  syncPlay();
+}
+
+// renderSeek tracks the incoming tick, unless the player has the thumb.
+function renderSeek(end) {
+  const seek = $("rp-seek");
+  if (seek.max !== String(end)) seek.max = String(end);
+  if (!dragging) {
+    seek.value = String(snap.tick);
+    setText($("rp-at"), `${mmss(Number(snap.tick))} / ${mmss(end)}`);
+  }
+  syncPlay();
+}
+
+if (replay) {
+  $("replay").hidden = false;
+  setText($("timeline-note"), "a finished match, replayed from its command log");
+  $("rp-play").addEventListener("click", () => {
+    if (source) pause(); else reopen(Number($("rp-seek").value));
+  });
+  // Dragging pauses: incoming ticks write the thumb's position, so a stream
+  // left running would fight the pointer for it.
+  $("rp-seek").addEventListener("input", () => {
+    dragging = true;
+    if (source) pause();
+    setText($("rp-at"), `${mmss(Number($("rp-seek").value))} / ${mmss(Number($("rp-seek").max))}`);
+  });
+  $("rp-seek").addEventListener("change", () => {
+    dragging = false;
+    reopen(Number($("rp-seek").value));
+  });
+  $("rp-speed").addEventListener("change", () => {
+    speed = Number($("rp-speed").value) || 1;
+    if (source) reopen(from); // paused stays paused; the next play uses the new speed
+  });
+  syncPlay();
 }
 
 connect();

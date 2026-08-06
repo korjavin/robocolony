@@ -144,6 +144,7 @@ func routes(a *auth.Handler, lobbies *lobby.Service, database *db.DB, library *s
 	mux.HandleFunc("GET "+auth.LoginPath, loginPage)
 	mux.HandleFunc("GET /lobby", lobbyPage)
 	mux.HandleFunc("GET /match", matchPage)
+	mux.HandleFunc("GET /history", historyPage)
 	mux.HandleFunc("GET /editor", editorPage)
 	mux.HandleFunc("GET /help", helpPage)
 	// Everything under /api needs a session; the static shell does not.
@@ -181,6 +182,12 @@ func lobbyPage(w http.ResponseWriter, r *http.Request) {
 // the session is required by the world stream it subscribes to.
 func matchPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, web.FS, "match.html")
+}
+
+// historyPage lists the matches that have finished. Static like the rest: it
+// gets what it shows from /api/history, which is where the session is required.
+func historyPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, web.FS, "history.html")
 }
 
 // editorPage gives the program and blueprint editor a route of its own. It was
