@@ -23,7 +23,7 @@ func newLibrary(t *testing.T) (*Library, *db.DB) {
 		t.Fatalf("db.Open() = %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	return NewLibrary(database), database
+	return NewLibrary(database, nil), database
 }
 
 func newUser(t *testing.T, database *db.DB, name string) db.User {

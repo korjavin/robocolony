@@ -45,6 +45,14 @@ let acts = new Map();
 let programs = [];
 let blueprints = [];
 let current = null;         // { id, name, program }
+// Versions of the open program, from GET /api/programs/{id}: { version,
+// approved_version, versions[], in_use, in_use_match }. Null until that answer
+// lands, and for a program that has never been saved.
+let meta = null;
+// Whether the rules on screen have been edited since they were last saved. It
+// is a flag rather than a comparison against the library row: an edit is
+// something the player did, and every one of them goes through changed().
+let dirty = false;
 let findings = { errors: [], warnings: [], notes: [] };
 let pending = 0;
 let dryrun = null;          // last /api/programs/dryrun report, or null
@@ -566,7 +574,11 @@ function renderIssues() {
 }
 
 let timer = null;
-function changed() {
+// edited is false when the redraw is not a change to the rules — opening a
+// program, or picking a different blueprint to check them against. Only a real
+// edit makes the open version a draft.
+function changed(edited = true) {
+  if (edited) dirty = true;
   // Any edit invalidates the last dry run: it was measured on a program that no
   // longer exists, and after a reorder its rule numbers point at other rules.
   // The same goes for whatever the last refusal said about it, and for the
@@ -736,8 +748,8 @@ async function tryIt() {
 // Finding a robot to ask about is two reads, once, at load: the running matches
 // from the lobby list, and the first tick frame of each of the ones this player
 // is seated in — the only place a robot's installed program is named. A robot
-// is a candidate when what is installed on it is this library row, which
-// internal/server's installID spells lib-<program>-r<robot>.
+// is a candidate when what is installed on it is this library row, whatever
+// version of it (runsThisProgram).
 //
 // The dry run is not replaced. It stays exactly as it was and its badges are
 // what the cards carry whenever no live robot is running these rules — which is
@@ -762,11 +774,19 @@ const botName = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String
 // something else would be a verdict about another program's ordering.
 //
 // Two ids mean this library row, and the common one is the first: everything a
-// colony produces runs the loadout's "lib-<program>" (internal/lobby/loadout.go)
-// until somebody reprograms one robot, which installs "lib-<program>-r<robot>"
-// (internal/server's installID).
-const runsThisProgram = (b) =>
-  b.program === `lib-${current.id}` || b.program === `lib-${current.id}-r${b.id}`;
+// colony produces runs the loadout's "lib-<program>-v<version>"
+// (internal/lobby's ProgramRuntimeID) until somebody reprograms one robot,
+// which installs that with "-r<robot>" on the end (internal/server's installID).
+//
+// Any version counts, and the version part is optional — a loadout approved
+// before versions existed carries the bare "lib-<program>". The shadow test is
+// a verdict about the ordering of the rules on screen, and a robot running an
+// older version of the same program is still a robot these rules were written
+// for.
+const runsThisProgram = (b) => {
+  const m = /^lib-(\d+)(?:-v\d+)?(?:-r(\d+))?$/.exec(b.program || "");
+  return !!m && Number(m[1]) === current.id && (m[2] === undefined || Number(m[2]) === b.id);
+};
 
 const shadowCandidates = () =>
   (current && current.id > 0 ? liveRobots : []).filter(runsThisProgram);
@@ -1063,11 +1083,117 @@ function open(p) {
   findings = { errors: [], warnings: [], notes: [] };
   picked = -1;
   status("");
-  changed();
+  // Whatever was unsaved belonged to the program being closed. Without this the
+  // next one opens reading DRAFT over rules nobody has touched.
+  dirty = false;
+  changed(false);
+  loadMeta();
+}
+
+// ---------------------------------------------------------------------------
+// Versions (design 1d 645-654, 1e 810-818).
+//
+// A save writes a new version rather than overwriting the last one, and one
+// version is *approved*: the one a robot is handed when it is installed or
+// reprogrammed. The two are the same number until a save lands while robots of
+// yours are running the program — then the save is a draft, and APPROVE is what
+// puts it in front of the next robot to walk home.
+//
+// Nothing here decides any of that. Which version is approved, and how many
+// robots are running which, are both the server's answer (GET /api/programs/N):
+// the live matches are its state, not this page's.
+// ---------------------------------------------------------------------------
+
+// draft is what the badge says DRAFT about: edits nobody has saved, or a saved
+// version nobody has approved.
+const draft = () => dirty || (!!meta && meta.version > meta.approved_version);
+
+const robotCount = (n) => `${n} ROBOT${n === 1 ? "" : "S"}`;
+
+async function loadMeta() {
+  meta = null;
+  renderVersions();
+  if (!current.id) return; // never saved: there is no version to name yet
+  const want = current.id;
+  try {
+    const p = await api("GET", `/api/programs/${want}`);
+    if (!p || current.id !== want) return; // the player moved on while it flew
+    meta = p;
+  } catch { meta = null; } // the editor works without this; the topbar just stays quiet
+  renderVersions();
+}
+
+function renderVersions() {
+  // New, imported or template-started: whatever was read for the last program
+  // is not about this one, and there is nothing yet to read for it.
+  if (!current.id) meta = null;
+  const badge = $("version");
+  badge.hidden = !meta;
+  if (meta) badge.textContent = `v${meta.version}${draft() ? " · DRAFT" : ""}`;
+
+  // The approved version's robots, which is the fact worth the topbar: it is
+  // what an APPROVE would replace.
+  const inuse = meta && meta.in_use ? meta.in_use : 0;
+  $("inuse").textContent = !inuse ? ""
+    : `IN USE BY ${robotCount(inuse)}${meta.in_use_match ? ` IN MATCH #${meta.in_use_match}` : ""}`;
+
+  // APPROVE only when there is something to approve. SAVE keeps its meaning and
+  // its place either way — a two-step save would be a tax on everybody to serve
+  // the one case where a program is already in the field.
+  const ahead = !!meta && meta.version > meta.approved_version;
+  $("approve").hidden = !ahead;
+  $("approve").textContent = ahead ? `APPROVE v${meta.version}` : "";
+  $("approve").title = ahead
+    ? `hand v${meta.version} to robots from the next install on; v${meta.approved_version} is what they get now`
+    : "";
+  // One primary action at a time: whichever button is the next thing to press.
+  $("save").classList.toggle("primary", !ahead);
+
+  const host = $("versions");
+  host.replaceChildren();
+  if (!meta || !meta.versions) {
+    host.append(el("p", { className: "meta", style: "margin:0",
+      textContent: current.id ? "Loading…" : "Save this program to give it a version." }));
+    return;
+  }
+  for (const v of meta.versions) {
+    // Going back to an older version is the reason for keeping them, and the
+    // topbar's APPROVE only ever offers the newest. Each row is the way back.
+    host.append(el("div", { className: "vrow" },
+      el("b", { textContent: `v${v.version}` }),
+      el("span", { className: "meta", textContent: versionNote(v) }),
+      el("span", { className: "grow", style: "flex:1 1 auto" }),
+      v.approved
+        ? el("span", { className: "badge", textContent: "LIVE" })
+        : iconButton("approve", `hand v${v.version} to robots from the next install on`,
+          () => approveVersion(v.version))));
+  }
+}
+
+// versionNote is what became of one version. No outcome statistics: they need
+// per-program match aggregates, which nothing computes yet (rc-pt6.11).
+function versionNote(v) {
+  if (v.robots) {
+    return `${v.robots} robot${v.robots === 1 ? "" : "s"}${v.match ? ` in match #${v.match}` : ""}`;
+  }
+  if (v.approved) return "approved · not in the field";
+  return new Date(v.created_at).toLocaleString();
+}
+
+async function approveVersion(version) {
+  err(""); status("");
+  try {
+    const p = await api("POST", `/api/programs/${current.id}/approve`, { version });
+    if (!p) return;
+    meta = p;
+    status(`approved v${p.approved_version}`);
+    renderVersions();
+  } catch (e) { err(e.message); }
 }
 
 function render() {
   renderLibrary();
+  renderVersions();
   renderCatalogue();
   renderRules();
   renderIssues();
@@ -1164,8 +1290,14 @@ async function save(asCopy) {
     if (!saved) return;
     current = { id: saved.id, name: saved.name, program: structuredClone(saved.program) };
     $("name").value = saved.name;
-    status("saved");
+    dirty = false;
+    // The save's own answer carries the new version and whether it approved
+    // itself; the panel and the "in use by" line need the full read.
+    status(saved.version > saved.approved_version
+      ? `saved v${saved.version} — approve it to hand it to your robots`
+      : "saved");
     await reloadLibrary();
+    await loadMeta();
     render();
   } catch (e) { showRefusal(e); }
 }
@@ -1265,6 +1397,7 @@ $("import").addEventListener("change", async (ev) => {
 });
 
 $("save").addEventListener("click", () => save(false));
+$("approve").addEventListener("click", () => approveVersion(meta.version));
 $("dup").addEventListener("click", () => save(true));
 $("tryit").addEventListener("click", tryIt);
 $("v-cards").addEventListener("click", () => setView("cards"));
@@ -1330,7 +1463,8 @@ $("addrule").addEventListener("click", () => { current.program.rules.push(newRul
 
 $("name").addEventListener("change", () => { current.program.name = $("name").value; render(); });
 
-$("blueprint").addEventListener("change", () => { renderBlueprintMeta(); changed(); });
+// Not an edit: it changes what the rules are checked against, not the rules.
+$("blueprint").addEventListener("change", () => { renderBlueprintMeta(); changed(false); });
 
 $("templates").addEventListener("change", (ev) => {
   const t = lang.templates[Number(ev.target.value)];

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -197,7 +198,7 @@ func TestProgramRoundTrip(t *testing.T) {
 		t.Errorf("ListPrograms() = %+v, want just %d", list, p.ID)
 	}
 
-	updated, err := d.UpdateProgram(ctx, owner.ID, p.ID, "scout", `{"rules":[]}`)
+	updated, err := d.UpdateProgram(ctx, owner.ID, p.ID, "scout", `{"rules":[]}`, true)
 	if err != nil {
 		t.Fatalf("UpdateProgram() = %v", err)
 	}
@@ -218,7 +219,7 @@ func TestProgramRoundTrip(t *testing.T) {
 	if _, err := d.ProgramByID(ctx, other.ID, p.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("ProgramByID(wrong user) = %v, want sql.ErrNoRows", err)
 	}
-	if _, err := d.UpdateProgram(ctx, other.ID, p.ID, "stolen", rules); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := d.UpdateProgram(ctx, other.ID, p.ID, "stolen", rules, true); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("UpdateProgram(wrong user) = %v, want sql.ErrNoRows", err)
 	}
 	if err := d.DeleteProgram(ctx, other.ID, p.ID); !errors.Is(err, sql.ErrNoRows) {
@@ -368,6 +369,89 @@ func TestMigration005PreservesLibraryRows(t *testing.T) {
 	}
 	if rolledBack != rebornBP {
 		t.Errorf("after Down blueprint id = %d, want %d", rolledBack, rebornBP)
+	}
+}
+
+// TestMigration007VersionsExistingPrograms is the upgrade nobody gets to
+// notice: a library written before versions existed must come out the other
+// side as a library of v1s, approved, with the bodies intact. A program whose
+// approved version has no row behind it is a program that reads back fine and
+// cannot be installed on anything.
+func TestMigration007VersionsExistingPrograms(t *testing.T) {
+	ctx := t.Context()
+	sqlDB, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "test.db")+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatalf("sql.Open() = %v", err)
+	}
+	defer sqlDB.Close()
+
+	p, err := goose.NewProvider(goose.DialectSQLite3, sqlDB, migrations.FS)
+	if err != nil {
+		t.Fatalf("NewProvider() = %v", err)
+	}
+	if _, err := p.UpTo(ctx, 6); err != nil {
+		t.Fatalf("UpTo(6) = %v", err)
+	}
+
+	seeded := map[string]string{
+		"scavenger": `{"v":1,"name":"scavenger","rules":[]}`,
+		"scout":     `{"v":1,"name":"scout","rules":[{"when":{"op":"pred","pred":"sees_component"},"then":[]}]}`,
+	}
+	if _, err := sqlDB.ExecContext(ctx,
+		`INSERT INTO users (id, google_sub, email, display_name) VALUES (3, 'sub-1', 'a@example.com', 'Ada')`); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	for name, body := range seeded {
+		if _, err := sqlDB.ExecContext(ctx,
+			`INSERT INTO programs (user_id, name, json) VALUES (3, ?, ?)`, name, body); err != nil {
+			t.Fatalf("seed program %s: %v", name, err)
+		}
+	}
+
+	if _, err := p.Up(ctx); err != nil {
+		t.Fatalf("Up() = %v", err)
+	}
+
+	rows, err := sqlDB.QueryContext(ctx, `
+		SELECT p.name, p.version, p.approved_version, v.version, v.json
+		FROM programs p JOIN program_versions v ON v.program_id = p.id`)
+	if err != nil {
+		t.Fatalf("read migrated programs: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string]string{}
+	for rows.Next() {
+		var (
+			name, body            string
+			head, approved, filed int
+		)
+		if err := rows.Scan(&name, &head, &approved, &filed, &body); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if head != 1 || approved != 1 || filed != 1 {
+			t.Errorf("%s: head v%d, approved v%d, filed v%d; want 1, 1, 1", name, head, approved, filed)
+		}
+		got[name] = body
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if !reflect.DeepEqual(got, seeded) {
+		t.Errorf("filed bodies = %v, want %v", got, seeded)
+	}
+
+	// The rollback drops the table and both columns; the programs themselves are
+	// not the version history's to take with it.
+	if _, err := p.Down(ctx); err != nil {
+		t.Fatalf("Down() = %v", err)
+	}
+	var n int
+	if err := sqlDB.QueryRowContext(ctx, `SELECT count(*) FROM programs`).Scan(&n); err != nil {
+		t.Fatalf("count programs after Down: %v", err)
+	}
+	if n != len(seeded) {
+		t.Errorf("after Down: %d programs, want %d", n, len(seeded))
 	}
 }
 

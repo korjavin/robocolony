@@ -25,13 +25,20 @@ type User struct {
 
 // Program is a saved, ordered rule list from a player's library (design §10.2).
 // JSON is stored verbatim; validation happens before it gets here.
+//
+// JSON is the *head*: the body the editor last saved, which is Version. What a
+// robot is given on install is ApprovedVersion, whose body lives in
+// program_versions and is read with ProgramVersion — the two are the same
+// number until a save leaves a draft ahead of the approval.
 type Program struct {
-	ID        int64
-	UserID    int64
-	Name      string
-	JSON      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID              int64
+	UserID          int64
+	Name            string
+	JSON            string
+	Version         int
+	ApprovedVersion int
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 const userColumns = `id, google_sub, email, display_name, created_at`
@@ -99,14 +106,16 @@ func (d *DB) DeleteSession(ctx context.Context, tokenHash string) error {
 	return nil
 }
 
-const programColumns = `id, user_id, name, json, created_at, updated_at`
+const programColumns = `id, user_id, name, json, version, approved_version, created_at, updated_at`
 
-// CreateProgram saves a new program. A duplicate name for the same user
-// violates a unique index and returns an error.
+// CreateProgram saves a new program as its v1, approved. A duplicate name for
+// the same user violates a unique index and returns an error.
 func (d *DB) CreateProgram(ctx context.Context, userID int64, name, programJSON string) (Program, error) {
-	return scanProgram(d.QueryRowContext(ctx,
-		`INSERT INTO programs (user_id, name, json) VALUES (?, ?, ?) RETURNING `+programColumns,
-		userID, name, programJSON))
+	return d.writeVersion(ctx, func(tx *sql.Tx) (Program, error) {
+		return scanProgram(tx.QueryRowContext(ctx,
+			`INSERT INTO programs (user_id, name, json) VALUES (?, ?, ?) RETURNING `+programColumns,
+			userID, name, programJSON))
+	})
 }
 
 // ProgramByID returns one of the user's own programs, or sql.ErrNoRows.
@@ -138,13 +147,109 @@ func (d *DB) ListPrograms(ctx context.Context, userID int64) ([]Program, error) 
 	return out, nil
 }
 
-// UpdateProgram rewrites one of the user's own programs, or returns
-// sql.ErrNoRows if it does not exist or belongs to someone else.
-func (d *DB) UpdateProgram(ctx context.Context, userID, id int64, name, programJSON string) (Program, error) {
+// UpdateProgram saves a new version of one of the user's own programs and
+// returns the row as it now stands, or sql.ErrNoRows if the program does not
+// exist or belongs to someone else.
+//
+// The head always moves; approve says whether the approval moves with it. A
+// save that does not approve is the design's draft: the editor shows "v8 ·
+// DRAFT" over an approved v7, and robots keep being handed v7 until somebody
+// presses APPROVE.
+func (d *DB) UpdateProgram(ctx context.Context, userID, id int64, name, programJSON string, approve bool) (Program, error) {
+	return d.writeVersion(ctx, func(tx *sql.Tx) (Program, error) {
+		return scanProgram(tx.QueryRowContext(ctx, `
+			UPDATE programs SET
+				name = ?, json = ?, version = version + 1, updated_at = unixepoch(),
+				approved_version = CASE WHEN ? THEN version + 1 ELSE approved_version END
+			WHERE user_id = ? AND id = ?
+			RETURNING `+programColumns, name, programJSON, approve, userID, id))
+	})
+}
+
+// writeVersion runs a write that moves a program's head and files the resulting
+// body in program_versions, in one transaction: a head with no body behind it
+// would be a program that reads back and cannot be installed.
+func (d *DB) writeVersion(ctx context.Context, write func(*sql.Tx) (Program, error)) (Program, error) {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return Program{}, fmt.Errorf("db: save program: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	p, err := write(tx)
+	if err != nil {
+		return Program{}, err // sql.ErrNoRows and the unique-name violation, untouched
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO program_versions (program_id, version, json) VALUES (?, ?, ?)`,
+		p.ID, p.Version, p.JSON); err != nil {
+		return Program{}, fmt.Errorf("db: save program version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Program{}, fmt.Errorf("db: save program: %w", err)
+	}
+	return p, nil
+}
+
+// ApproveProgram marks version as the one robots are given, and returns the row
+// as it now stands. sql.ErrNoRows covers all three ways this can miss: no such
+// program, somebody else's program, or a version that was never saved.
+func (d *DB) ApproveProgram(ctx context.Context, userID, id int64, version int) (Program, error) {
 	return scanProgram(d.QueryRowContext(ctx, `
-		UPDATE programs SET name = ?, json = ?, updated_at = unixepoch()
+		UPDATE programs SET approved_version = ?
 		WHERE user_id = ? AND id = ?
-		RETURNING `+programColumns, name, programJSON, userID, id))
+		  AND EXISTS (SELECT 1 FROM program_versions WHERE program_id = ? AND version = ?)
+		RETURNING `+programColumns, version, userID, id, id, version))
+}
+
+// ProgramVersion returns one stored version's body. Scoped through the program
+// row, so another user's version is sql.ErrNoRows like everything else.
+func (d *DB) ProgramVersion(ctx context.Context, userID, id int64, version int) (string, error) {
+	var body string
+	err := d.QueryRowContext(ctx, `
+		SELECT v.json FROM program_versions v JOIN programs p ON p.id = v.program_id
+		WHERE p.user_id = ? AND p.id = ? AND v.version = ?`, userID, id, version).Scan(&body)
+	return body, err
+}
+
+// ProgramVersionInfo is one row of the editor's VERSIONS panel. The body is not
+// in it: the panel lists what exists, and opening one is a separate ask.
+type ProgramVersionInfo struct {
+	Version   int
+	CreatedAt time.Time
+}
+
+// ListProgramVersions returns a program's versions, newest first.
+//
+// ponytail: no cap, on the row count or the list. A version is a few KB of
+// rules and one save makes one of them, so a program would need thousands of
+// saves to be worth pruning. Add a retention rule — never dropping the approved
+// one — if a library ever gets there.
+func (d *DB) ListProgramVersions(ctx context.Context, userID, id int64) ([]ProgramVersionInfo, error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT v.version, v.created_at FROM program_versions v JOIN programs p ON p.id = v.program_id
+		WHERE p.user_id = ? AND p.id = ? ORDER BY v.version DESC`, userID, id)
+	if err != nil {
+		return nil, fmt.Errorf("db: list program versions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ProgramVersionInfo
+	for rows.Next() {
+		var (
+			v       ProgramVersionInfo
+			created int64
+		)
+		if err := rows.Scan(&v.Version, &created); err != nil {
+			return nil, fmt.Errorf("db: list program versions: %w", err)
+		}
+		v.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db: list program versions: %w", err)
+	}
+	return out, nil
 }
 
 // DeleteProgram removes one of the user's own programs, or returns
@@ -186,7 +291,8 @@ func scanProgram(s scannable) (Program, error) {
 		prog             Program
 		created, updated int64
 	)
-	if err := s.Scan(&prog.ID, &prog.UserID, &prog.Name, &prog.JSON, &created, &updated); err != nil {
+	if err := s.Scan(&prog.ID, &prog.UserID, &prog.Name, &prog.JSON,
+		&prog.Version, &prog.ApprovedVersion, &created, &updated); err != nil {
 		return Program{}, err
 	}
 	prog.CreatedAt = time.Unix(created, 0).UTC()

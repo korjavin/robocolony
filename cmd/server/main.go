@@ -83,7 +83,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              net.JoinHostPort("", cfg.Port),
-		Handler:           routes(authHandler, lobbies, database, server.NewLibrary(database), stopping),
+		Handler:           routes(authHandler, lobbies, database, server.NewLibrary(database, lobbies.Registry()), stopping),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		// No WriteTimeout: the world stream is long-lived SSE (design §4.4).

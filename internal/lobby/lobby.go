@@ -426,20 +426,28 @@ func (s *Service) resolve(ctx context.Context, userID int64, c Choice) (LoadoutE
 	if err := json.Unmarshal([]byte(bpRow.JSON), &stored); err != nil {
 		return LoadoutEntry{}, fmt.Errorf("lobby: blueprint %d: %w", bpRow.ID, err)
 	}
+	// The approved version, not the head: approving a design fields the rules
+	// the player signed off, and a draft saved after this approval must not walk
+	// into the match behind their back.
+	pRow, err := s.db.ProgramByID(ctx, userID, c.ProgramID)
+	if err != nil {
+		return LoadoutEntry{}, notFound(err, "program")
+	}
+	body, err := s.db.ProgramVersion(ctx, userID, c.ProgramID, pRow.ApprovedVersion)
+	if err != nil {
+		return LoadoutEntry{}, notFound(err, "program")
+	}
+
 	entry := LoadoutEntry{
 		BlueprintID: bpRow.ID, BlueprintName: bpRow.Name, Components: stored.Components,
-		ProgramID: c.ProgramID,
+		ProgramID: c.ProgramID, Version: pRow.ApprovedVersion,
 	}
 	bp := entry.blueprint()
 	if err := bp.Validate(); err != nil {
 		return LoadoutEntry{}, errf(http.StatusBadRequest, "blueprint %q: %s", bpRow.Name, err)
 	}
 
-	pRow, err := s.db.ProgramByID(ctx, userID, c.ProgramID)
-	if err != nil {
-		return LoadoutEntry{}, notFound(err, "program")
-	}
-	p, err := prog.Decode([]byte(pRow.JSON))
+	p, err := prog.Decode([]byte(body))
 	if err != nil {
 		return LoadoutEntry{}, fmt.Errorf("lobby: program %d: %w", pRow.ID, err)
 	}
@@ -447,7 +455,7 @@ func (s *Service) resolve(ctx context.Context, userID int64, c Choice) (LoadoutE
 		return LoadoutEntry{}, errf(http.StatusUnprocessableEntity,
 			"%q cannot run on %q: %s", pRow.Name, bpRow.Name, res.Errors[0].Message)
 	}
-	entry.ProgramName, entry.Program = pRow.Name, json.RawMessage(pRow.JSON)
+	entry.ProgramName, entry.Program = pRow.Name, json.RawMessage(body)
 	return entry, nil
 }
 

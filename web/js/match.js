@@ -1782,15 +1782,22 @@ function renderMind() {
 const ruleNo = (i) => String(i + 1).padStart(2, "0");
 
 // The library row a robot's installed program came from. There are two ways it
-// got there and both stamp the id with the library row's number: the loadout a
-// colony started with installs "lib-<program>" on everything it produces
-// (internal/lobby/loadout.go), and a reprogram from this page installs
-// "lib-<program>-r<robot>" on the one robot (internal/server's installID). The
+// got there and both stamp the id with the library row's number and the version
+// installed: the loadout a colony started with installs
+// "lib-<program>-v<version>" on everything it produces (internal/lobby's
+// ProgramRuntimeID), and a reprogram from this page installs that with
+// "-r<robot>" on the end for the one robot (internal/server's installID). The
 // number is an id in the *installer's* library, so it means nothing on another
 // colony's robot — hence the seat check first.
+//
+// The version part is optional and unread: optional because a loadout approved
+// before versions existed, or a command replayed from a log recorded then,
+// carries the bare "lib-<program>"; unread because the link opens the library
+// row and the editor opens the head of it. Reading an old version back is the
+// VERSIONS panel's job, not this link's.
 function libraryProgram(r) {
   if (!r || r.colony !== myColony()) return null;
-  const m = /^lib-(\d+)(?:-r\d+)?$/.exec(r.program || "");
+  const m = /^lib-(\d+)(?:-v\d+)?(?:-r\d+)?$/.exec(r.program || "");
   if (!m) return null;
   return (programs || []).find((p) => String(p.id) === m[1]) || null;
 }

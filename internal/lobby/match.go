@@ -397,6 +397,69 @@ func (r *Registry) Get(id int64) (*Match, bool) {
 	return m, ok
 }
 
+// ProgramUsage is where one version of a library program is running right now:
+// how many of the asking player's live robots have it installed, and which
+// match they are in.
+type ProgramUsage struct {
+	Robots int
+	// Match is the match those robots are in, or 0 when they are spread over
+	// more than one. Match ids start at 1, so 0 is never a real match.
+	Match int64
+}
+
+// ProgramUsage counts the caller's live robots running each version of one
+// library program, across every running match.
+//
+// Read-only and scoped to the caller's own colonies: it answers "what would I
+// disturb by changing this program?", which is a question about the asker's
+// robots. Every other colony's robots are none of their business, and counting
+// them would leak what an opponent has fielded.
+//
+// Destroyed robots are removed from the world (sim.Match), so what is counted
+// here is by construction the live ones.
+func (r *Registry) ProgramUsage(userID, programID int64) map[int]ProgramUsage {
+	r.mu.Lock()
+	live := make([]*Match, 0, len(r.matches))
+	for _, m := range r.matches {
+		live = append(live, m)
+	}
+	r.mu.Unlock() // never hold the registry lock while taking a match's
+
+	out := map[int]ProgramUsage{}
+	for _, m := range live {
+		if m.Finished() {
+			continue // a finished match's robots are a record, not a fielded colony
+		}
+		// Colonies are fixed when the match starts, so this needs no lock.
+		seats := map[sim.ColonyID]bool{}
+		for _, c := range m.Colonies {
+			if c.UserID == userID {
+				seats[c.ID] = true
+			}
+		}
+		if len(seats) == 0 {
+			continue // not their match: no stream to open, nothing to count
+		}
+		m.Read(func(w *sim.World, _ *prog.Runtime) {
+			for _, rb := range w.Robots {
+				id, version, ok := ProgramRef(rb.ProgramID)
+				if !ok || id != programID || !seats[rb.Colony] {
+					continue
+				}
+				u := out[version]
+				u.Robots++
+				if u.Robots == 1 {
+					u.Match = m.ID
+				} else if u.Match != m.ID {
+					u.Match = 0
+				}
+				out[version] = u
+			}
+		})
+	}
+	return out
+}
+
 // drive is the per-match tick loop. A step that overruns its 100ms budget drops
 // the tick rather than queueing it: the simulation falls behind wall time under
 // load instead of spiralling into a backlog it can never work off.
