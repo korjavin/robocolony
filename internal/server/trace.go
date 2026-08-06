@@ -47,6 +47,18 @@ type TraceHistory struct {
 	// ever be, and "recording from here" would be a lie: a frozen world takes
 	// no more decisions. Design §12 P2 keeps a finished match inspectable.
 	Final bool `json:"final,omitempty"`
+
+	// Explain is the condition-level trace of the robot's most recent decision:
+	// every condition in the language with its truth value, and every rule with
+	// its verdict. Absent until the watch this poll starts has seen the robot
+	// decide once.
+	//
+	// One current table rather than one per event: Events is a 128-tick window
+	// and a truth table on each would multiply this response by the size of the
+	// catalogue for a reader who can only look at one tick at a time. The
+	// events carry Matched, which is the same information at rule grain, for
+	// every tick in the window.
+	Explain *Explanation `json:"explain,omitempty"`
 }
 
 // TraceEvent is one tick of one robot's evaluation.
@@ -136,6 +148,13 @@ func (h *Robots) TraceOf(matchID int64, robotID int, since uint64) (TraceHistory
 		out.Watching = watching
 		for _, e := range events {
 			out.Events = append(out.Events, traceEvent(e))
+		}
+		// Sent whole on every poll, not filtered by since: it is the current
+		// state of the robot's mind, not a log, and a client that skipped a
+		// poll still needs it.
+		if ex, ok := rt.Explanation(robotID); ok {
+			dto := explanation(ex)
+			out.Explain = &dto
 		}
 		if out.Final {
 			// A frozen world records nothing, so a new watch here would only

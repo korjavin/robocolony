@@ -43,6 +43,9 @@ func (h *Robots) Routes(mux *http.ServeMux, requireAuth func(http.Handler) http.
 	// Not a command: the trace history of design §10.10, which shares this
 	// path shape and this handler's registry. See trace.go.
 	mux.Handle("GET /api/matches/{id}/robots/{robotId}/trace", requireAuth(http.HandlerFunc(h.handleTrace)))
+	// Not a command either, despite the POST: the editor's shadow test carries
+	// a draft program in the body and changes nothing. See explain.go.
+	mux.Handle("POST /api/matches/{id}/robots/{robotId}/shadow", requireAuth(http.HandlerFunc(h.handleShadow)))
 }
 
 // RobotState is what a command reports back: enough for the inspector to show
