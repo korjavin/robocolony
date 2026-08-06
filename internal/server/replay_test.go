@@ -1,11 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -199,6 +203,122 @@ func TestReplayRefusesAForeignRecord(t *testing.T) {
 	n, _ := resp.Body.Read(body)
 	if n == 0 {
 		t.Error("the refusal has no body for the UI to show")
+	}
+}
+
+// lengthen rewrites a finished match's stored duration so its rebuild is
+// thousands of ticks instead of ten. The budget and the client hang-up only mean
+// anything on a rebuild that takes measurable time, and running a real
+// ten-minute match in a test is not on. The seed, the members and the log are
+// untouched, so it rebuilds the recorded world — only its end tick moves out.
+func lengthen(t *testing.T, database *db.DB, id int64, durationSec int) {
+	t.Helper()
+	row, err := database.LobbyByID(t.Context(), id)
+	if err != nil {
+		t.Fatalf("LobbyByID() = %v", err)
+	}
+	var set map[string]any
+	if err := json.Unmarshal([]byte(row.SettingsJSON), &set); err != nil {
+		t.Fatalf("decode settings = %v", err)
+	}
+	set["duration_sec"] = durationSec
+	raw, err := json.Marshal(set)
+	if err != nil {
+		t.Fatalf("encode settings = %v", err)
+	}
+	// Raw SQL: UpdateLobbySettings only touches an open lobby, and this one is
+	// finished on purpose.
+	if _, err := database.ExecContext(t.Context(),
+		`UPDATE lobbies SET settings_json = ? WHERE id = ?`, string(raw), id); err != nil {
+		t.Fatalf("lengthen the match = %v", err)
+	}
+}
+
+// replayRequest drives the handler on the calling goroutine with a recorder, so
+// a test can watch what it wrote after a context that did not survive the
+// rebuild. httptest.ResponseRecorder is an http.Flusher, which is all the
+// handler needs.
+func replayRequest(t *testing.T, svc *lobby.Service, ctx context.Context, id int64) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/matches/x/replay?from=99999", nil).WithContext(ctx)
+	req.SetPathValue("id", strconv.FormatInt(id, 10))
+	rec := httptest.NewRecorder()
+	Replay(svc, nil)(rec, req)
+	return rec
+}
+
+// captureErrors redirects the default logger for the length of one test and
+// reports what was logged at error level.
+func captureErrors(t *testing.T) *lockedBuffer {
+	t.Helper()
+	buf := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestReplayOverBudgetIs503: the rebuild is bounded by a deadline, and when it
+// runs out the server declines the work rather than pretending something broke.
+// The deadline here comes off the request rather than off lobby's own budget,
+// which is unexported — it is the same context and the same error, since
+// Service.Replay's budget is derived from this one and the shorter deadline
+// wins.
+func TestReplayOverBudgetIs503(t *testing.T) {
+	svc, database, id := finishedMatch(t)
+	lengthen(t, database, id, 600) // 6000 ticks to rebuild
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	rec := replayRequest(t, svc, ctx, id)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a replay that ran out of budget = %d, want 503", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
+		t.Error("a refused replay opened a stream anyway")
+	}
+	if body := rec.Body.String(); strings.Contains(body, "event:") {
+		t.Errorf("a refused replay wrote stream frames: %q", body)
+	}
+}
+
+// TestReplayClientDisconnectIsNotAnError: a browser that closes the tab mid
+// rebuild cancels the request context. Nothing is broken, nobody is listening,
+// and it must not turn into a 500 or an error in the log — the server would
+// otherwise page someone every time a spectator changed their mind.
+func TestReplayClientDisconnectIsNotAnError(t *testing.T) {
+	svc, database, id := finishedMatch(t)
+	lengthen(t, database, id, 600)
+	logged := captureErrors(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	time.AfterFunc(5*time.Millisecond, cancel) // well inside the rebuild
+	rec := replayRequest(t, svc, ctx, id)
+
+	if rec.Code >= 500 {
+		t.Errorf("a client that hung up got a %d", rec.Code)
+	}
+	if got := logged.String(); got != "" {
+		t.Errorf("a client that hung up was logged as an error: %s", got)
 	}
 }
 

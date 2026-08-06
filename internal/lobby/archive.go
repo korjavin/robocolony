@@ -132,10 +132,12 @@ func (s *Service) HistoryOf(ctx context.Context, id int64) (HistoryDetail, error
 //
 // It is O(target tick), and since rc-8hu dropped maxDurationSec there is no
 // ceiling on match duration and therefore none on this: a match ten times the
-// default length costs ten times as much to scrub in. The upgrade path when
-// that shows up is a warm session cached per (user, match) with a TTL, so a
-// pause/resume or a forward seek reuses the world instead of rebuilding it. Not
-// worth the eviction rules until a long match actually exists.
+// default length costs ten times as much to scrub in. replayBudget is what
+// stops that from being unbounded work on a request goroutine. The upgrade path
+// when the budget starts firing on matches people actually play is a warm
+// session cached per (user, match) with a TTL, so a pause/resume or a forward
+// seek reuses the world instead of rebuilding it. Not worth the eviction rules
+// until a long match actually exists.
 func (s *Service) Replay(ctx context.Context, id int64, from uint64) (*Match, error) {
 	rec, err := s.finishedRecord(ctx, id)
 	if err != nil {
@@ -163,11 +165,28 @@ func (s *Service) Replay(ctx context.Context, id int64, from uint64) (*Match, er
 	if end := set.durationTicks(); from > end {
 		from = end
 	}
-	if err := m.ReplayTo(from); err != nil {
+	// The one bound on the rebuild. A tick cap would not be one: a bigger board
+	// is slower per tick, so only the clock bounds how long the goroutine is
+	// occupied. It doubles as the hang-up path — the caller's ctx is the
+	// parent, so a client that goes away stops the loop through the same check.
+	ctx, cancel := context.WithTimeout(ctx, replayBudget)
+	defer cancel()
+	if err := m.ReplayTo(ctx, from); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
+
+// replayBudget is a ceiling on how long one request goroutine may be occupied
+// rebuilding, not a latency target: the honest number for a default match is a
+// fraction of a second (TestRebuildCost logs 0.23-0.32s for a full 600s match
+// on a free core, and up to 6.9s on an oversubscribed one). 30s is set well
+// clear of that so it cannot fire on a legitimate default match on a loaded
+// box; what it refuses is the match long enough that rebuilding it is an
+// unbounded cost per scrub.
+//
+// A var so a test can shrink it. Nothing writes it outside tests.
+var replayBudget = 30 * time.Second
 
 // finishedRecord reads the record of a match that is over. A record without
 // finished_at belongs to a match that is still running, whose endpoint is the
