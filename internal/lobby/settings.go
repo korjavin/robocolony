@@ -90,6 +90,11 @@ const (
 // The floor clears every downstream constraint: Generate caps colonies at
 // width*height/16, so the smallest preset still seats 64 colonies against a
 // maxPlayers of 8.
+//
+// Never resize a preset without bumping the replay fingerprint (persist.go): a
+// settings row records the preset by *name*, so a retune silently resizes the
+// world every in-flight match created on that preset replays into. The
+// fingerprint mini-match runs on the default and would not notice.
 var arenaPresets = map[string]int{"XS": 32, "S": 48, "M": 64, "L": 96, "XL": 128}
 
 // defaultArena is what an unset Arena resolves to, and the only size this game
