@@ -397,10 +397,13 @@ function inCone(heading, dx, dy) {
 // pickup rule rather than by sight. The overlay card's count, the camera's
 // bands and the contacts list all go through it, so none of them can describe a
 // different shape from the one drawVision paints below.
+// Chebyshev distance: the one distance the whole simulation is written in —
+// sight, radar, pickup and the base check all measure with it.
+const cheb = (r, o) => Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
+
 function sees(r, o) {
-  const dx = o.x - r.x, dy = o.y - r.y;
-  const d = Math.max(Math.abs(dx), Math.abs(dy));
-  return d > 0 && d <= VISION_RANGE && inCone(r.heading, dx, dy);
+  const d = cheb(r, o);
+  return d > 0 && d <= VISION_RANGE && inCone(r.heading, o.x - r.x, o.y - r.y);
 }
 
 // seesRobot is the rest of sim.World.look, and the reason it exists as its own
@@ -535,7 +538,7 @@ function radarList(kind) {
 // component the robot is standing on is not something its radar reports.
 const radarSees = (r, o, kind, range) => {
   if (kind !== "parts-radar" && o.colony === r.colony) return false;
-  const d = Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
+  const d = cheb(r, o);
   return d > 0 && d <= range;
 };
 
@@ -748,7 +751,31 @@ function drawPOV(r) {
 // reach. What counts as a contact is radarSees, the same predicate the count on
 // the overlay card and the rows below use.
 
+// keepNearest inserts one candidate into a fixed, distance-ordered buffer and
+// drops whatever falls off the end. Both pools below are smaller than the
+// number of contacts a busy tick can produce, and sim hands a rule its
+// sightings nearest-first (sortSightings) — so a panel that filled its pool in
+// world order would routinely hide the one contact the robot is about to act
+// on behind the "and N more". The buffer is preallocated and its entries are
+// written in place: this runs ten times a second.
+//
+// Insertion into eight or twelve slots, rather than a sort: a sort would
+// allocate an array every frame to order a handful of things.
+function keepNearest(buf, n, d, src, o) {
+  if (n === buf.length && d >= buf[n - 1].d) return n;
+  let i = n < buf.length ? n : buf.length - 1;
+  while (i > 0 && buf[i - 1].d > d) {
+    buf[i].d = buf[i - 1].d; buf[i].src = buf[i - 1].src; buf[i].o = buf[i - 1].o;
+    i--;
+  }
+  buf[i].d = d; buf[i].src = src; buf[i].o = o;
+  return Math.min(n + 1, buf.length);
+}
+
+const slot = () => ({ d: 0, src: 0, o: null });
+
 const DIAL_MARKS = 12; // a pool: a dial with more dots than this reads as fog
+const dialPick = Array.from({ length: DIAL_MARKS }, slot);
 const dialMarks = [];
 for (let i = 0; i < DIAL_MARKS; i++) {
   const m = document.createElementNS(SVGNS, "circle");
@@ -763,18 +790,22 @@ function renderDial(r) {
   const st = r ? robotStyle(r) : UNKNOWN_STYLE;
   let n = 0;
   if (r && st.radar) {
-    const list = radarList(st.radarOf) || [];
+    // The nearest contacts, not the first ones in the snapshot: a dial that
+    // dropped the close one and kept a far one would point the eye the wrong
+    // way. See keepNearest.
+    for (const o of radarList(st.radarOf) || []) {
+      if (radarSees(r, o, st.radarOf, st.radar)) n = keepNearest(dialPick, n, cheb(r, o), 0, o);
+    }
     const f = DELTA[r.heading % 8];
     // A diagonal heading's vector is not a unit one, so both components are
     // divided by its length; without that a contact dead ahead would plot at
     // 1.41× its range on half the facings.
     const norm = Math.hypot(f[0], f[1]);
     const s = 42 / st.radar; // 42 is the outer ring in the markup's viewBox
-    for (const o of list) {
-      if (n >= DIAL_MARKS) break;
-      if (!radarSees(r, o, st.radarOf, st.radar)) continue;
+    for (let i = 0; i < n; i++) {
+      const o = dialPick[i].o;
       const dx = o.x - r.x, dy = o.y - r.y;
-      const m = dialMarks[n++];
+      const m = dialMarks[i];
       m.setAttribute("cx", (50 + (dx * -f[1] + dy * f[0]) / norm * s).toFixed(1));
       m.setAttribute("cy", (50 - (dx * f[0] + dy * f[1]) / norm * s).toFixed(1));
       m.style.fill = st.radarOf === "parts-radar"
@@ -828,9 +859,8 @@ function contactPut(i, ch, colour, who, where, note) {
 // the compass direction of the offset. atan2(dx, -dy) is the angle clockwise
 // from north, which is exactly how sim.Heading is numbered.
 function rangeDir(r, o) {
-  const dx = o.x - r.x, dy = o.y - r.y;
-  const i = (Math.round(Math.atan2(dx, -dy) / (Math.PI / 4)) + 8) % 8;
-  return `${Math.max(Math.abs(dx), Math.abs(dy))} ${HEADINGS[i]}`;
+  const i = (Math.round(Math.atan2(o.x - r.x, r.y - o.y) / (Math.PI / 4)) + 8) % 8;
+  return `${cheb(r, o)} ${HEADINGS[i]}`;
 }
 
 // sim.pickUp / interactRange: a component is collectable at Chebyshev 1, and
@@ -839,19 +869,19 @@ function rangeDir(r, o) {
 // writes a caption; the server owns whether the pickup happens.
 const INTERACT_RANGE = 1;
 
+// What a row is about. The list is ordered by range across all three, which is
+// both how sim hands a rule its sightings and how design 1b's own example reads
+// (1 NW, then 2 N, then 4 NE).
+const SRC_PART = 0, SRC_ENEMY = 1, SRC_RADAR = 2;
+const contactPick = Array.from({ length: CONTACT_ROWS }, slot);
+
 function renderContacts(r) {
-  let n = 0;
+  let n = 0, kept = 0;
   const st = r ? robotStyle(r) : UNKNOWN_STYLE;
   if (r) {
     for (const l of snap.loose) {
       if (!sees(r, l)) continue;
-      if (n < CONTACT_ROWS) {
-        const near = Math.max(Math.abs(l.x - r.x), Math.abs(l.y - r.y)) <= INTERACT_RANGE;
-        contactPut(n, "◆", kindColor(l.variant), compName(l.variant), rangeDir(r, l),
-          !near ? "seen — too far to take"
-            : st.hands ? "in reach — the manipulator can take it"
-              : "in reach, but this robot has no manipulator");
-      }
+      kept = keepNearest(contactPick, kept, cheb(r, l), SRC_PART, l);
       n++;
     }
     // Enemies only, because that is all forward vision reports: a friendly in
@@ -860,35 +890,43 @@ function renderContacts(r) {
     // loud rather than left as an absence.
     for (const o of snap.robots) {
       if (!seesRobot(r, o)) continue;
-      if (n < CONTACT_ROWS) {
-        contactPut(n, "▮", `var(${colonyVar(o.colony)})`, `${shortID(o)} ${o.archetype || ""}`,
-          rangeDir(r, o), `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
-      }
+      kept = keepNearest(contactPick, kept, cheb(r, o), SRC_ENEMY, o);
       n++;
     }
-    // Radar last, and only what sight did not already report: one contact
-    // listed twice would read as two of them. The de-duplication is per radar,
-    // because it is per *kind* — sight reports components and enemy robots, so
-    // those two can repeat, but it never reports a base, and a base radar's
-    // contact in front of the robot must still be listed.
+    // Radar too, but only what sight did not already report: one contact listed
+    // twice would read as two of them. The de-duplication is per radar, because
+    // it is per *kind* — sight reports components and enemy robots, so those
+    // two can repeat, but it never reports a base, and a base radar's contact
+    // in front of the robot must still be listed.
     if (st.radar) {
       for (const o of radarList(st.radarOf) || []) {
         if (!radarSees(r, o, st.radarOf, st.radar)) continue;
         if (st.radarOf === "parts-radar" ? sees(r, o)
           : st.radarOf === "enemy-robot-radar" && seesRobot(r, o)) continue;
-        if (n < CONTACT_ROWS) {
-          const who = st.radarOf === "parts-radar" ? compName(o.variant)
-            : st.radarOf === "enemy-robot-radar" ? shortID(o)
-              : `${colonyName(o.colony)} base`;
-          contactPut(n, "◇", st.radarOf === "parts-radar"
-            ? kindColor(o.variant) : `var(${colonyVar(o.colony)})`,
-          who, rangeDir(r, o), "radar only — not in the cone");
-        }
+        kept = keepNearest(contactPick, kept, cheb(r, o), SRC_RADAR, o);
         n++;
       }
     }
   }
-  for (let i = n; i < CONTACT_ROWS; i++) contactRows[i].node.hidden = true;
+  for (let i = 0; i < kept; i++) {
+    const p = contactPick[i], o = p.o;
+    if (p.src === SRC_PART) {
+      contactPut(i, "◆", kindColor(o.variant), compName(o.variant), rangeDir(r, o),
+        p.d > INTERACT_RANGE ? "seen — too far to take"
+          : st.hands ? "in reach — the manipulator can take it"
+            : "in reach, but this robot has no manipulator");
+    } else if (p.src === SRC_ENEMY) {
+      contactPut(i, "▮", `var(${colonyVar(o.colony)})`, `${shortID(o)} ${o.archetype || ""}`,
+        rangeDir(r, o), `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
+    } else {
+      contactPut(i, "◇",
+        st.radarOf === "parts-radar" ? kindColor(o.variant) : `var(${colonyVar(o.colony)})`,
+        st.radarOf === "parts-radar" ? compName(o.variant)
+          : st.radarOf === "enemy-robot-radar" ? shortID(o) : `${colonyName(o.colony)} base`,
+        rangeDir(r, o), "radar only — not in the cone");
+    }
+  }
+  for (let i = kept; i < CONTACT_ROWS; i++) contactRows[i].node.hidden = true;
 
   const none = $("contacts-none");
   none.hidden = n > 0;
@@ -901,10 +939,7 @@ function renderContacts(r) {
 
 // Within sight's reach but not necessarily in its wedge: the range half of
 // sees(), which is what "a turn away" means.
-const nearby = (r, o) => {
-  const d = Math.max(Math.abs(o.x - r.x), Math.abs(o.y - r.y));
-  return d > 0 && d <= VISION_RANGE;
-};
+const nearby = (r, o) => cheb(r, o) > 0 && cheb(r, o) <= VISION_RANGE;
 
 // The blind spot, counted rather than asserted (design 1b 416-419). The static
 // copy in match.html says what the 270° is; this says what is standing in it
