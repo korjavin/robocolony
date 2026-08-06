@@ -227,6 +227,16 @@ type Status struct {
 	Robots    int `json:"robots"`
 	Inventory int `json:"inventory"`
 	Score     int `json:"score"`
+
+	// Kills, Losses and TicksActive are sim.Stats (rc-pt6.10), and the reason
+	// the standing survives the match: they are counted by the simulation for
+	// the whole match, so unlike the event-derived attribution in Combat they
+	// are never short. The live wire has carried them since rc-pt6.8
+	// (server.ColonyStats); this is the same three numbers on the half of the
+	// standing that gets persisted.
+	Kills       int    `json:"kills"`
+	Losses      int    `json:"losses"`
+	TicksActive uint64 `json:"ticks_active"`
 }
 
 // Info reports the match metadata under the lock.
@@ -265,6 +275,7 @@ func (m *Match) Info() Info {
 			for _, e := range b.SortedInventory() {
 				st.Inventory += e.Count
 			}
+			st.Kills, st.Losses, st.TicksActive = b.Stats.Kills, b.Stats.Losses, b.Stats.TicksActive
 		}
 		info.Colonies[i] = st
 	}

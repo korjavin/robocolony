@@ -41,9 +41,20 @@ var (
 // series behind the graph. Both are the shapes the live match already serves —
 // Info is GET /api/matches/{id}, History rides the stream's init frame — so the
 // history page renders them with the code it already has.
+//
+// Combat (rc-pt6.10) is the third: kills, losses and who did the killing. It is
+// the one part that is not also on the live wire in this shape, because it is
+// the one part a finished match cannot re-derive — the event feed it comes from
+// is rebuilt only by a replay, and a replay is exactly what a stale fingerprint
+// refuses (events.go says so from the other side).
+//
+// A summary written before rc-pt6.10 decodes with a zero Combat and zero
+// Kills/Losses on its Status rows, which is the honest answer for a match this
+// build has no attribution for. Nothing added here is required to decode.
 type Summary struct {
 	Info    Info    `json:"info"`
 	History History `json:"history"`
+	Combat  Combat  `json:"combat"`
 }
 
 // HistoryEntry is one row of GET /api/history: the standing, and enough to
