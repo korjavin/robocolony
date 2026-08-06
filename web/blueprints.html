@@ -7,99 +7,136 @@
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
-  :root { --page: 84rem; }
+  /* The configurator is an instrument, not a document (design 1f): it takes the
+     viewport and its three columns scroll, not the page. What the robot is made
+     of, what it will look like in the arena, and what that costs it — in that
+     order, because the third column is the point and it must never drop below
+     the fold on a wide screen. */
+  :root { --page: none; }
 
-  /* Three columns: what the robot is made of, what it will look like in the
-     arena, and what that costs it. The consequence column is the point of the
-     page, so it never drops below the fold on a wide screen and it is the
-     first thing under the bays on a narrow one. */
-  .cfg { display: grid; grid-template-columns: 20rem minmax(0, 1fr) 22rem; gap: 1.5rem; align-items: start; }
-  @media (max-width: 72rem) { .cfg { grid-template-columns: 1fr; } }
+  main { display: grid; grid-template-rows: 48px 1fr; min-height: 0; }
 
-  /* Section headings on this page are labels, not prose headings: the shared
-     .label rule says it, and h2 borrows it so the markup stays a heading. */
-  h2 {
-    font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--fg-2); font-weight: 500; margin: 1.5rem 0 .5rem;
+  /* App bar: which design is open, and everything that opens or saves one. The
+     page's old h1 and its two paragraphs of preamble collapse into this row —
+     an instrument says what it is in its title bar. */
+  .appbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
+    padding: 0 16px; height: 48px; border-bottom: 1px solid var(--line-1);
+    overflow-x: auto; white-space: nowrap;
   }
-  h2:first-child { margin-top: 0; }
+  .appbar > * { flex-shrink: 0; }
+  .appbar .grow { flex: 1 1 auto; }
+  .appbar .bpname { font-size: 13px; font-weight: 700; }
+  .appbar select, .appbar input[type=text] { font-size: 12px; padding: .15rem .4rem; }
+  .appbar button:not(.btn) { font-size: 12px; padding: .15rem .55rem; }
+  .appbar .err { min-height: 0; font-size: 12px; font-weight: 400; white-space: normal; }
 
-  /* A bay is one installed component: what kind of slot it fills, what it is,
-     and what it cost. Empty bays are drawn too — a slot you have not spent is
-     a decision, not an absence, and it is drawn in the dashed idiom the rest
-     of the app uses for "nothing here yet". */
+  /* Two equal content columns and a fixed rail, design 1f: the parts and the
+     picture get the room they can use, the numbers need exactly one column and
+     jitter if they are given a proportional one. */
+  .cfg { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 400px; min-height: 0; }
+  .cfg > .pane {
+    min-width: 0; min-height: 0; overflow-y: auto; padding: 16px 20px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .cfg > .mid { background: var(--bg-1); border-left: 1px solid var(--line-2); }
+  .cfg > .rail { border-left: 1px solid var(--line-1); }
+  .cfg hr { margin: 4px 0; }
+
+  /* Below the split there is no instrument left to fill: the shell stops owning
+     the viewport and the whole thing scrolls as one page. The consequence rail
+     comes first under the bays — it is what the page is for; the silhouette is
+     the receipt and can wait. */
+  @media (max-width: 76rem) {
+    body.shell { height: auto; overflow: visible; display: block; }
+    nav.site { height: auto; flex-wrap: wrap; padding: .5rem 1rem; }
+    main { display: block; }
+    .appbar { height: auto; flex-wrap: wrap; white-space: normal; padding: .5rem 1rem; }
+    .cfg { display: flex; flex-direction: column; }
+    .cfg > .pane { overflow: visible; border: 0; border-top: 1px solid var(--line-1); }
+    .cfg > .rail { order: 1; }
+    .cfg > .mid { order: 2; }
+  }
+
+  /* A bay is one installed component: which slot it fills, what it is, what it
+     cost, and the one sentence the server already says about it. Empty bays are
+     drawn too — a slot you have not spent is a decision, not an absence, and it
+     is drawn in the dashed idiom the rest of the app uses for "nothing yet". */
+  #bays { display: flex; flex-direction: column; gap: 10px; }
   .bay {
     border: 1px solid var(--line-1); box-shadow: var(--shadow-1);
-    background: var(--bg-elev); padding: 8px 11px; margin: 0 0 10px;
-    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--bg-elev); padding: 11px 13px;
+    display: flex; flex-direction: column; gap: 5px;
   }
-  .bay .swatch { flex: 0 0 auto; width: 6px; align-self: stretch; }
-  .bay .body { flex: 1 1 auto; min-width: 0; }
-  .bay .kind {
-    display: block; font-size: 10px; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--fg-2);
-  }
-  .bay .what { font-weight: 700; font-size: 14px; }
-  /* Its own line: a part name and its price on one line wrap in the middle of
-     the name the moment the column narrows. */
-  .bay .cost { display: block; font-size: 12px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .bay .top { display: flex; align-items: baseline; gap: 8px; }
+  .bay .grow { flex: 1 1 auto; }
+  .bay .drop { padding: 0 6px; font-size: 12px; }
+  .bay .what { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .bay .what b { font-size: 14px; }
+  .bay .cost { font-size: 12px; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+  .bay .says { font-size: 11px; color: var(--fg-2); }
   .bay.empty {
     border-style: dashed; border-color: var(--line-2);
     box-shadow: none; background: none; color: var(--fg-3);
   }
-  .bay.empty .what { font-weight: 400; font-style: italic; font-size: 13px; }
-  .bay button { flex: 0 0 auto; padding: 1px 7px; font-size: 12px; }
+  .bay.empty .what { font-size: 13px; font-style: italic; }
 
-  .palette { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 0 10px; }
-  .palette .kindname {
-    flex-basis: 100%; font-size: 10px; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--fg-2); margin-top: 6px;
-  }
+  .palette { display: flex; flex-wrap: wrap; gap: 5px; }
+  .palette .kindname { flex-basis: 100%; margin-top: 6px; }
   .palette button { padding: 2px 8px; font-size: 12px; }
 
-  /* Meters. Both are a hard-ruled track, and both carry the number in words
-     above them: a bar nobody can read a value off is a decoration.
-     These predate the design system's .meter and .seg in app.css, which mean
-     different things (a one-line ranked bar, a segmented control). The pinned
-     display and border below are what keeps those global rules from reaching
-     in; rc-pt6.3 rebuilds this page against the primitives and drops them. */
-  .meter { display: block; margin: 2px 0 4px; }
-  .meter .head { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: 12px; }
-  .meter .head b { font-size: 13px; font-variant-numeric: tabular-nums; }
-  .track { display: flex; height: 14px; border: 1px solid var(--line-1); background: var(--bg-1); }
-  .track .unit { display: flex; border-right: 1px solid var(--line-1); }
-  .track .unit:last-child { border-right: 0; }
-  .track .seg { min-width: 1px; border: 0; }
+  /* The two gauges. Both are a hard-ruled track carrying the number in words
+     above it: a bar nobody can read a value off is a decoration.
+     Page-local names on purpose. app.css's .meter is one row of a ranked bar
+     chart and its .seg is a segmented control; neither of these is either, so
+     they are named for what they are rather than pinned against those rules. */
+  .gauge .head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: .5rem; font-size: 12px; margin-bottom: 6px;
+  }
+  .gauge .head b { font-size: 13px; font-variant-numeric: tabular-nums; }
+  .gauge .track { display: flex; height: 14px; border: 1px solid var(--line-1); background: var(--bg-1); }
+  .gauge .unit { display: flex; border-right: 1px solid var(--line-1); }
+  .gauge .unit:last-child { border-right: 0; }
+  .gauge .part { min-width: 1px; }
   /* Ticks-per-cell is a count, not a proportion, so it is drawn as that many
      blocks rather than as a fraction of a scale nobody has. */
-  .ticks { display: flex; gap: 3px; flex-wrap: wrap; }
-  .ticks i { width: 12px; height: 14px; border: 1px solid var(--line-1); background: var(--fg-0); }
+  .gauge .ticks { display: flex; gap: 3px; flex-wrap: wrap; }
+  .gauge .ticks i { width: 12px; height: 14px; border: 1px solid var(--line-1); background: var(--fg-0); }
+  .gauge .meta { margin-top: 5px; }
 
   /* The consequence column. One sentence per line, no bullets, no colour: they
      are all equally true, and colouring three of them teaches a player to read
      only those. */
-  #consequences p { margin: 9px 0; font-size: 12px; display: flex; gap: 9px; }
+  #consequences { display: flex; flex-direction: column; gap: 9px; }
+  #consequences p { margin: 0; font-size: 12px; display: flex; gap: 9px; }
   #consequences p::before { content: "→"; font-weight: 700; color: var(--fg-2); }
 
   /* The viewBox is in cells, so every stroke here is non-scaling: a 1px line
      stays 1px whether the design carries a 6-cell wedge or a 28-cell radar.
      Dash lengths stay in cells on purpose — one dash is one cell of reach. */
-  .silwrap { border: 1px solid var(--line-1); background: var(--terrain-open); padding: 16px; }
-  .silhouette { display: block; width: 100%; max-width: 22rem; margin: 0 auto; }
+  .silwrap {
+    border: 1px solid var(--line-1); background: var(--terrain-open); padding: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .silhouette { display: block; width: 100%; max-width: 20rem; }
   .silhouette * { vector-effect: non-scaling-stroke; }
   .silhouette .hull { stroke: #000; stroke-width: 1.5; }
   .silhouette .ring { fill: none; stroke: var(--kind-radar); stroke-width: 1.5; stroke-dasharray: 1 1; }
   .silhouette .wedge { fill: var(--colony-0); opacity: .28; }
   .silhouette .wedge-edge { fill: none; stroke: var(--colony-0); stroke-width: 1.5; stroke-dasharray: 1 .6; }
 
-  .fit { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
-  .fit .no { color: var(--fg-3); }
-  .fit .why { color: var(--fg-2); }
-
-  .bar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+  /* Both label/value grids on this page are app.css's .checklist. The
+     silhouette's keys are names of marks on the drawing, so they are set as
+     labels; the compatibility list's are glyphs and are left alone. */
+  #sil-desc > :nth-child(odd) { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  /* A program that will not run dims its glyph and nothing else: the name is
+     the thing the player has to go and fix, so it stays readable. */
+  #fit .no { color: var(--fg-3); }
+  #fit .why { color: var(--fg-2); }
 </style>
 </head>
-<body>
+<body class="shell">
   <nav class="site" aria-label="Site">
     <a class="brand" href="/">robocolony</a>
     <a href="/lobby">Lobbies</a>
@@ -112,71 +149,75 @@
     <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
   </nav>
 
-  <h1>Blueprint configurator</h1>
-  <p class="tag">Every part costs budget and adds mass, and mass is speed. What
-  the parts buy is on the right, in sentences: that column is the design, and
-  the silhouette is the receipt &mdash; it is the shape the arena will actually
-  draw.
-  <br>Approving a design freezes a copy of the parts list, so editing a library
-  row later cannot reach a lobby that already approved it or a match running on
-  it &mdash; what it can reach is a program that needed the radar you just took
-  off, and the compatibility column below says so before you save. Approve what
-  you want your base to build on the <a href="/lobby">lobbies page</a>.</p>
-
-  <p class="err" id="err"></p>
-
-  <div class="bar">
-    <label>Library <select id="library"></select></label>
-    <button id="edit" title="change the selected design in place">Edit</button>
-    <button id="copy" title="start a new design from the selected one, leaving it alone">Copy</button>
-    <button id="del" title="delete the selected design from your library">Delete</button>
-    <button id="clear">Start empty</button>
-  </div>
-
-  <div class="cfg">
-    <div>
-      <h2>Bays</h2>
-      <div id="bays"></div>
-
-      <h2>Add a part</h2>
-      <p class="meta">Exactly one locomotion unit and one armored body; at most
-      one radar and two weapons. A manipulator is what lets a robot pick
-      anything up.</p>
-      <div class="palette" id="palette"></div>
+  <main>
+    <div class="appbar">
+      <span class="label">Blueprints &rarr;</span>
+      <span class="bpname" id="bpname"></span>
+      <select id="library" title="open a saved design"></select>
+      <button id="edit" title="change the selected design in place">Edit</button>
+      <button id="copy" title="start a new design from the selected one, leaving it alone">Copy</button>
+      <button id="del" title="delete the selected design from your library">Delete</button>
+      <button id="clear" title="start from an empty parts list">Start empty</button>
+      <span class="err" id="err"></span>
+      <span class="meta" id="status"></span>
+      <span class="grow"></span>
+      <input type="text" id="name" maxlength="64" placeholder="name" size="16"
+             title="the design's name — this is what a lobby lists it under">
+      <button class="btn sm primary" id="save">Save blueprint</button>
     </div>
 
-    <div>
-      <h2>Silhouette &mdash; as the arena draws it</h2>
-      <div class="silwrap">
-        <svg class="silhouette" id="silhouette" viewBox="-32 -32 64 64" role="img"
-             aria-labelledby="sil-desc"></svg>
-      </div>
-      <p class="meta" id="sil-desc"></p>
+    <div class="cfg">
+      <section class="pane">
+        <div class="label">Bays</div>
+        <div id="bays"></div>
 
-      <h2>Program compatibility</h2>
-      <p class="meta">Every program in your library, checked against this
-      hardware. A dead rule is legal and will simply never fire.</p>
-      <div class="fit" id="fit"></div>
+        <div class="label">Add a part</div>
+        <p class="meta" style="margin:0">Exactly one locomotion unit and one
+        armored body; at most one sensor and two weapons. A manipulator is what
+        lets a robot pick anything up.</p>
+        <div class="palette" id="palette"></div>
+      </section>
+
+      <section class="pane mid">
+        <div class="label">Silhouette &middot; as the arena draws it</div>
+        <div class="silwrap">
+          <svg class="silhouette" id="silhouette" viewBox="-32 -32 64 64" role="img"></svg>
+        </div>
+        <div class="checklist" id="sil-desc"></div>
+
+        <hr class="rule-dashed">
+
+        <div class="label">Program compatibility</div>
+        <p class="meta" style="margin:0">Every program in your library, checked
+        against this hardware. A dead rule is legal and will simply never
+        fire.</p>
+        <div class="checklist" id="fit"></div>
+      </section>
+
+      <aside class="pane rail">
+        <div class="label">Budget</div>
+        <div class="gauge" id="budget"></div>
+
+        <div class="label">Mass &rarr; speed</div>
+        <div class="gauge" id="speed"></div>
+
+        <hr class="rule-double">
+
+        <div class="label">Consequences</div>
+        <div id="consequences"></div>
+
+        <hr class="rule-double">
+
+        <div class="label">What saving does</div>
+        <p class="meta" style="margin:0">Approving a design freezes a copy of the
+        parts list, so editing a library row later cannot reach a lobby that
+        already approved it or a match running on it &mdash; what it can reach is
+        a program that needed the sensor you just took off, and the
+        compatibility column says so before you save. Approve what you want your
+        base to build on the <a href="/lobby">lobbies page</a>.</p>
+      </aside>
     </div>
-
-    <div>
-      <h2>Budget</h2>
-      <div class="meter" id="budget"></div>
-
-      <h2>Mass &rarr; speed</h2>
-      <div class="meter" id="speed"></div>
-
-      <h2>Consequences</h2>
-      <div id="consequences"></div>
-
-      <h2>Save</h2>
-      <div class="bar">
-        <input type="text" id="name" maxlength="64" placeholder="name" size="16">
-        <button class="btn sm primary" id="save">Save blueprint</button>
-      </div>
-      <p class="meta" id="status"></p>
-    </div>
-  </div>
+  </main>
 
 <script type="module" src="/js/blueprints.js"></script>
 </body>
