@@ -24,10 +24,91 @@ import (
 // sentence in the browser would go quietly wrong the day it did.
 
 // BlueprintPreview is the configurator's whole answer for one parts list: the
-// numbers, what they mean, and which of the caller's programs will run on it.
+// numbers, what they mean, which of the caller's programs will run on it, and
+// what one more part off the catalogue would do to all of it.
 type BlueprintPreview struct {
 	BlueprintStats
 	Programs []ProgramFit `json:"programs"`
+	Marginal []Marginal   `json:"marginal"`
+}
+
+// Marginal prices one catalogue row against the design on screen. A part's cost
+// is not its mass, it is what its mass does to *this* robot: the same laser is
+// free on a light scavenger and costs a whole robot off the opening fleet on a
+// heavy gunner, and the catalogue row can say neither.
+//
+// Every row is answered in one request. The configurator used to ask
+// /api/blueprints/preview once per hypothetical, which is a round trip per
+// palette button per keystroke — a stampede, not a preview.
+type Marginal struct {
+	Variant int    `json:"variant"`
+	OK      bool   `json:"ok"`              // §6.3 allows the part list with this added
+	Error   string `json:"error,omitempty"` // and if it does not, why
+
+	// What the design becomes with it fitted. Both are the rail's two gauges
+	// one part further on; Fleet is 0 for a design the starting budget cannot
+	// field at all, which is the budget half of "does this fit".
+	TicksPerCell int `json:"ticks_per_cell"`
+	Fleet        int `json:"fleet"`
+
+	// Unlocks is how many rows of the rule language this part switches on:
+	// predicates and actions whose required hardware the design would then
+	// carry. It is what the *language* opens up, not a verdict on the player's
+	// saved programs — that would be a prog.Validate pass over the library per
+	// catalogue row, and this block is answered on every keystroke.
+	Unlocks int `json:"unlocks"`
+}
+
+// marginals answers every catalogue row at once. Adding a component never
+// removes one, so Unlocks cannot go negative.
+func marginals(bp sim.Blueprint) []Marginal {
+	budget := lobby.DefaultStartingBudget()
+	lang := prog.Language()
+	have := languageRows(lang, bp)
+	cat := sim.Catalogue()
+	out := make([]Marginal, 0, len(cat))
+	for _, c := range cat {
+		with := sim.Blueprint{Components: append(append(make([]sim.Variant, 0, len(bp.Components)+1),
+			bp.Components...), c.Variant)}
+		m := Marginal{Variant: int(c.Variant), OK: true, Unlocks: languageRows(lang, with) - have}
+		if err := with.Validate(); err != nil {
+			// An illegal design has no pace and no fleet — §6.3 has not decided
+			// what it is. The reason is the whole answer the palette needs.
+			m.OK, m.Error = false, err.Error()
+		} else {
+			m.TicksPerCell = sim.TicksPerCell(with, sim.Open)
+			m.Fleet = lobby.StartingFleet(with, budget)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// languageRows counts the predicates and actions this hardware can satisfy.
+// The Needs lists are prog's own (catalogue.go), so a predicate that grows a
+// hardware requirement is priced here with no change to this function.
+func languageRows(lang prog.Catalogue, bp sim.Blueprint) int {
+	n := 0
+	for _, p := range lang.Predicates {
+		if carries(bp, p.Needs) {
+			n++
+		}
+	}
+	for _, a := range lang.Actions {
+		if carries(bp, a.Needs) {
+			n++
+		}
+	}
+	return n
+}
+
+func carries(bp sim.Blueprint, needs []sim.ComponentKind) bool {
+	for _, k := range needs {
+		if !bp.Has(k) {
+			return false
+		}
+	}
+	return true
 }
 
 // ProgramFit is one library program judged against the design on screen.

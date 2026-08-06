@@ -64,6 +64,24 @@ match from seed + command log alone. **Player loadouts only**: the built-in huma
 kit and every AI profile keep their fixed openings, which is what the AI ladder
 measured below was tuned against.
 
+**Approval stays a lobby-only act; the library gets no default loadout**
+(2026-08-06, rc-eid). Design 1F draws a "BASE WILL BUILD" panel on the
+configurator, and the honest reading of the model is that there is nothing to
+draw: approval lives on the `lobby_members` row, so a design has no "approved"
+state outside a lobby. The alternative — a default loadout on the library that
+seats a new lobby — was rejected: it puts approval in two places and needs a
+migration, to answer a question the page can answer read-only. The configurator
+instead reports the seats the player already holds: "approved in 2 open lobbies
+of yours", from `GET /api/lobbies` and the loadout already on the caller's own
+member row.
+
+It matches on the **parts list, not the library id**, because the approval is a
+frozen snapshot: a design edited since approval is approved under its old parts
+list, and saying "your base builds this" of the parts on screen would be false.
+The panel also states no order, because there is none — `startingRoster` draws
+each robot uniformly from the approvals that still fit the budget, and design
+1F's ordered queue would be a promise the simulation does not make.
+
 ## Measurements behind the balance decisions
 
 **Scoring** — 112 matches (16 seeds × 7 matchups × 6000 ticks), sweeping the

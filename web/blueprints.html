@@ -81,9 +81,28 @@
   }
   .bay.empty .what { font-size: 13px; font-style: italic; }
 
-  .palette { display: flex; flex-wrap: wrap; gap: 5px; }
-  .palette .kindname { flex-basis: 100%; margin-top: 6px; }
-  .palette button { padding: 2px 8px; font-size: 12px; }
+  /* One part per row, because each row now carries a sentence: what adding it
+     would do to the design on screen. A wrapped grid of chips cannot hold that,
+     and the sentence is the reason the palette exists. */
+  .palette { display: flex; flex-direction: column; gap: 3px; }
+  .palette .kindname { margin-top: 6px; }
+  .palette button {
+    display: flex; align-items: baseline; gap: 10px; width: 100%;
+    text-align: left; padding: 3px 8px; font-size: 12px;
+  }
+  .palette .say {
+    margin-left: auto; font-size: 11px; color: var(--fg-2);
+    font-variant-numeric: tabular-nums; text-align: right;
+  }
+  /* A part §6.3 refuses: dimmed, still clickable, and the reason is the row. */
+  .palette button.no { color: var(--fg-3); }
+  .palette button.no .say { color: var(--fg-3); }
+
+  /* Approvals: a read-only report of the seats the player already holds. Plain
+     paragraphs, no list markers and no numbers — the base draws from its
+     approvals at random, and a numbered list would promise an order. */
+  #approvals { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+  #approvals p { margin: 0; }
 
   /* The two gauges. Both are a hard-ruled track carrying the number in words
      above it: a bar nobody can read a value off is a decoration.
@@ -173,8 +192,11 @@
 
         <div class="label">Add a part</div>
         <p class="meta" style="margin:0">Exactly one locomotion unit and one
-        armored body; at most one sensor and two weapons. A manipulator is what
-        lets a robot pick anything up.</p>
+        armored body; at most one sensor and two weapons. Each row is priced
+        against the design on screen, not off the catalogue: what fitting it
+        would cost this robot in pace and in robots the starting budget opens
+        with, and how many predicates and actions it switches on. Hover a row
+        for its own price in budget and mass.</p>
         <div class="palette" id="palette"></div>
       </section>
 
@@ -205,6 +227,11 @@
 
         <div class="label">Consequences</div>
         <div id="consequences"></div>
+
+        <hr class="rule-double">
+
+        <div class="label">Will your base build it</div>
+        <div id="approvals"></div>
 
         <hr class="rule-double">
 
