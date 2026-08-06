@@ -843,10 +843,15 @@ func (l *Library) handlePreviewBlueprint(w http.ResponseWriter, r *http.Request)
 	// installed on it. Only asked once the parts list is legal — prog.Validate
 	// against a blueprint §6.3 rejects would report the missing locomotion as
 	// a program fault.
-	out := BlueprintPreview{BlueprintStats: stats}
+	bp := sim.Blueprint{Components: toVariants(body.Components)}
+	// What one more part would do, for every catalogue row at once: the palette
+	// prices itself against this design rather than against the price list. It
+	// is answered for an illegal parts list too — adding the missing locomotion
+	// is exactly the part that fixes one.
+	out := BlueprintPreview{BlueprintStats: stats, Marginal: marginals(bp)}
 	if stats.OK {
 		user, _ := auth.UserFrom(r.Context())
-		fits, err := l.programFit(r.Context(), user.ID, sim.Blueprint{Components: toVariants(body.Components)})
+		fits, err := l.programFit(r.Context(), user.ID, bp)
 		if err != nil {
 			writeErr(w, r, err)
 			return

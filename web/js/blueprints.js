@@ -53,8 +53,7 @@ let picked = [];        // the design on screen, as variant ids in slot order
 let editing = 0;        // library id the draft writes back to, 0 = a new design
 let preview = null;     // the last /api/blueprints/preview answer
 let previewFor = null;  // the parts list that answer describes
-let hypo = {};          // kind -> the preview for "and the cheapest one of these"
-let hypoFor = null;     // the parts list those answers are hypotheticals of
+let lobbies = [];       // GET /api/lobbies, for the approvals panel
 let timer = null;
 
 const key = () => picked.join(",");
@@ -89,16 +88,38 @@ function unspent() {
   return Math.max(0, preview.budget - Math.max(preview.fleet, 1) * preview.value);
 }
 
-const deadTotal = (p) => ((p && p.programs) || []).reduce((n, x) => n + x.dead, 0);
+// ---------------------------------------------------------------------------
+// The marginal answer
+//
+// What a part costs is not what its catalogue row says: the same laser is free
+// on a light scavenger and takes a whole robot off the opening fleet on a heavy
+// gunner. The server prices every catalogue row against the exact parts list on
+// screen and sends the lot on the preview (internal/server/blueprint.go), so
+// this file looks the answer up rather than asking again per row.
+// ---------------------------------------------------------------------------
 
-// How many rules the cheapest part in this bay would switch on: the drop in the
-// server's own dead-predicate count between this design and that one. Only
-// meaningful when both are legal — the answer for an illegal design is not
-// "four more rules", it is the §6.3 error the budget gauge is already showing.
-function unlocks(kind) {
-  const h = hypoFor === key() ? hypo[kind] : null;
-  if (!h || !h.ok || !preview || !preview.ok) return 0;
-  return Math.max(0, deadTotal(preview) - deadTotal(h));
+const marginal = (variant) =>
+  ((preview && preview.marginal) || []).find((m) => m.variant === variant) || null;
+
+// One verdict per part, said in one place so the palette and the empty bays
+// cannot drift apart. "Fits" is not "cheaper than the leftover" — the leftover
+// is not saved (it is base inventory), so what a part really costs is whether
+// the starting budget still opens with as many robots once it is fitted.
+function verdict(m) {
+  if (!m.ok) return m.error;
+  if (m.fleet === 0) return "over budget";
+  if (preview && preview.ok && m.fleet < preview.fleet) return `${m.fleet} robots, not ${preview.fleet}`;
+  return "fits";
+}
+
+// The whole marginal line: whether it fits, the pace it leaves, and how many
+// rows of the rule language it switches on. Every number is the server's.
+function priced(m) {
+  if (!m.ok) return m.error;
+  const t = m.ticks_per_cell;
+  const pace = preview && t === preview.ticks_per_cell ? `still ${t}` : `→ ${t}`;
+  const line = `${verdict(m)} · ${pace} tick${t === 1 ? "" : "s"}/cell`;
+  return m.unlocks > 0 ? `${line} · ${m.unlocks} rule${m.unlocks === 1 ? "" : "s"} unlock` : line;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,21 +208,31 @@ function emptyBay(kind) {
 function emptyLine(kind, cheapest) {
   if (!cheapest) return "nothing in the catalogue fits";
   const left = unspent();
-  const fits = cheapest.value <= left
-    ? `a ${cheapest.name} fits`
-    : `the cheapest ${kindLabel(kind)} is a ${cheapest.name}, at ${cheapest.value}`;
-  const n = unlocks(kind);
-  return `${left} budget left — ${fits}` +
-    (n > 0 ? `, and ${n} rule${n === 1 ? "" : "s"} unlock` : "");
+  const m = marginal(cheapest.variant);
+  if (!m) return `${left} budget left — the cheapest ${kindLabel(kind)} is a ${cheapest.name}, at ${cheapest.value}`;
+  return `${left} budget left — a ${cheapest.name}: ${priced(m)}`;
 }
 
+// The palette prices itself against the design on screen rather than off the
+// catalogue: a row says what adding *it* would do to *this* robot. The catalogue
+// price stays on the button's title — it is the number a player checks, not the
+// one they decide on.
+//
+// A part §6.3 refuses is dimmed and still clickable: the reason is the answer,
+// and taking the click away would leave the player guessing which of the parts
+// already fitted is in the way.
 function renderPalette() {
   const host = $("palette");
   host.replaceChildren();
+  if (!lang) return;
   for (const kind of kinds()) {
     host.append(el("span", { className: "label kindname", textContent: kindLabel(kind) }));
     for (const c of lang.components.filter((x) => x.kind === kind)) {
-      const b = el("button", { textContent: `+ ${c.name}`, title: `${c.value} budget · ${c.mass} mass` });
+      const m = marginal(c.variant);
+      const price = `${c.value} budget · ${c.mass} mass`;
+      const b = el("button", { className: m && !m.ok ? "no" : "", title: price },
+        el("span", { textContent: `+ ${c.name}` }),
+        el("span", { className: "say", textContent: m ? priced(m) : price }));
       b.addEventListener("click", () => { picked.push(c.variant); refresh(); });
       host.append(b);
     }
@@ -266,7 +297,7 @@ function renderSpeed() {
   const ticks = el("div", { className: "ticks" });
   for (let i = 0; i < Math.min(t, 16); i++) ticks.append(el("i"));
   const cand = nextPart();
-  const h = cand && hypoFor === key() ? hypo[cand.kind] : null;
+  const h = cand && marginal(cand.variant);
   host.append(
     el("div", { className: "head" },
       el("span", { textContent: `${preview.mass} mass` }),
@@ -278,9 +309,9 @@ function renderSpeed() {
     el("div", { className: "meta", textContent:
       `Speed ${preview.speed} on open ground. Every part you add is mass, and mass is blocks.` }),
   );
-  // Design 1f: what the next part would cost in pace, before it is bought. The
-  // server priced it — see reload() — because the §6.4 speed model is not
-  // arithmetic this file may repeat.
+  // Design 1f: what the next part would cost in pace, before it is bought. It
+  // rides the preview with every other row's price, because the §6.4 speed model
+  // is not arithmetic this file may repeat.
   if (h && h.ok) {
     host.append(el("div", { className: "meta", textContent:
       h.ticks_per_cell === t
@@ -326,6 +357,73 @@ function renderFit() {
     if (!p.ok) line.append(el("span", { className: "why", textContent: ` — ${p.blocked}` }));
     else if (p.dead > 0) line.append(el("span", { className: "why", textContent: ` — ${p.dead} dead rule${p.dead === 1 ? "" : "s"}: hardware this design does not carry` }));
     host.append(line);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// What your base will build
+//
+// Approval is a lobby-only act: it lives on the lobby_members row as a frozen
+// snapshot of the parts list, not as a property of the library
+// (internal/lobby/loadout.go). There is no "approved" state a design has outside
+// a lobby, so this panel is read-only and does no more than report the seats the
+// player already holds.
+//
+// It matches on the parts list rather than on the library id, because that is
+// what the base builds: approving freezes a copy, so a design edited since is
+// approved under its old parts list and the honest answer is to say so.
+//
+// It implies no order on purpose. startingRoster draws each robot uniformly
+// from every approval that still fits the budget (loadout.go), and a numbered
+// list here would be a promise the simulation does not make.
+// ---------------------------------------------------------------------------
+
+// Two parts lists are the same design to the base if they hold the same parts;
+// slot order is not something the simulation reads.
+const partsKey = (list) => [...list].sort((a, b) => a - b).join(",");
+
+// My seat is the only one carrying a loadout — LobbyView.forUser clears every
+// other member's, so nothing here has to know who I am.
+const mySeat = (l) => (l.members || []).find((m) => m.loadout);
+
+function renderApprovals() {
+  const host = $("approvals");
+  host.replaceChildren();
+  if (picked.length === 0) {
+    host.append(el("p", { className: "meta", textContent: "An empty parts list is not a design yet." }));
+    return;
+  }
+  const mine = partsKey(picked);
+  const builds = [], stale = [];
+  for (const l of lobbies) {
+    const seat = mySeat(l);
+    const entries = (seat && seat.loadout.entries) || [];
+    if (entries.some((e) => partsKey(e.components) === mine)) builds.push(l);
+    else if (editing && entries.some((e) => e.blueprint_id === editing)) stale.push(l);
+  }
+  const links = (list) => list.flatMap((l, i) =>
+    [i ? el("span", { textContent: ", " }) : null, el("a", { href: "/lobby", textContent: l.name })]);
+
+  if (builds.length > 0) {
+    host.append(el("p", {},
+      el("span", { textContent: `Approved in ${builds.length} open ${builds.length === 1 ? "lobby" : "lobbies"} of yours: ` }),
+      ...links(builds)));
+    host.append(el("p", { className: "meta", textContent:
+      "Every robot the starting budget opens with is drawn from your approvals at random, " +
+      "so an approved design has no place in a queue — only a share of the draw." }));
+  } else {
+    host.append(el("p", { className: "meta" },
+      el("span", { textContent: "No open lobby of yours approves this parts list. Approval is per lobby, " +
+        "not a property of the design — approve it on the " }),
+      el("a", { href: "/lobby", textContent: "lobbies page" }),
+      el("span", { textContent: " and your base there will build it." })));
+  }
+  if (stale.length > 0) {
+    host.append(el("p", { className: "meta" },
+      el("span", { textContent: "Approved under an earlier parts list in " }),
+      ...links(stale),
+      el("span", { textContent: ": approving freezes a copy, so the base there still builds that one " +
+        "until you approve this design again." })));
   }
 }
 
@@ -401,6 +499,8 @@ function renderSilhouette() {
 function refresh() {
   showName();
   renderBays();
+  renderPalette();
+  renderApprovals();
   renderBudget();
   renderSpeed();
   renderConsequences();
@@ -426,22 +526,6 @@ async function reload(k) {
     preview = res;
     previewFor = k;
     err("");
-    refresh();
-
-    // And then, the same question about the design one part further on. Two
-    // panels need it — what the next part does to the pace, and how many rules
-    // an empty bay would unlock — and both answers are the server's, not this
-    // file's. One extra round trip per empty bay, once per settled edit; the
-    // guard in refresh() is what keeps that from repeating.
-    const empties = emptyKinds();
-    const answers = await Promise.all(empties.map((kind) => {
-      const c = cheapestOf(kind);
-      return c ? api("POST", "/api/blueprints/preview", { components: [...picked, c.variant] }) : null;
-    }));
-    if (k !== key()) return;
-    hypo = {};
-    empties.forEach((kind, i) => { if (answers[i]) hypo[kind] = answers[i]; });
-    hypoFor = k;
     refresh();
   } catch (e) { err(e.message); }
 }
@@ -534,8 +618,11 @@ $("save").addEventListener("click", async () => {
     if (!lang) return;
     $("name").maxLength = lang.limits.max_name_len;
     blueprints = (await api("GET", "/api/blueprints")).blueprints;
+    // Which of the caller's lobbies approve the design on screen. Read once:
+    // nothing on this page can change an approval, and a lobby list that failed
+    // to load costs the page one panel rather than the configurator.
+    lobbies = ((await api("GET", "/api/lobbies").catch(() => null)) || {}).lobbies || [];
     renderLibrary();
-    renderPalette();
     if (blueprints.length > 0) {
       $("library").value = String(blueprints[0].id);
       load(blueprints[0], false);
