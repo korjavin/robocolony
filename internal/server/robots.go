@@ -299,23 +299,30 @@ func commandTarget(r *http.Request) (db.User, int64, int, error) {
 // commands specifically: internal/server is a shared package and this is not a
 // general-purpose error type.
 type cmdError struct {
-	code   int
-	msg    string
+	code int
+	msg  string
+	// key and args are the translatable form of msg, exactly as on statusError:
+	// the format string is the key, the arguments fill it. See statusError for
+	// the ceiling on untyped args.
+	key    string
+	args   []any
 	issues []prog.Issue
 }
 
 func (e cmdError) Error() string { return e.msg }
 
 func errf(code int, format string, a ...any) error {
-	return cmdError{code: code, msg: fmt.Sprintf(format, a...)}
+	return cmdError{code: code, msg: fmt.Sprintf(format, a...), key: format, args: wireArgs(a)}
 }
 
 // validationError reports design §10.10's blocking issues, so the editor can
 // point at the offending rules instead of showing one flattened string.
 func validationError(res prog.Result) error {
+	const msg = "the program is not valid for this robot's blueprint"
 	return cmdError{
 		code:   http.StatusBadRequest,
-		msg:    "the program is not valid for this robot's blueprint",
+		msg:    msg,
+		key:    msg,
 		issues: res.Errors,
 	}
 }
@@ -334,9 +341,9 @@ func writeCmdErr(w http.ResponseWriter, r *http.Request, err error) {
 		if len(ce.issues) > 0 {
 			body["issues"] = ce.issues
 		}
-		writeCmdJSON(w, ce.code, body)
+		writeCmdJSON(w, ce.code, withKey(body, ce.key, ce.args))
 		return
 	}
 	slog.Error("robot command failed", "method", r.Method, "path", r.URL.Path, "err", err)
-	writeCmdJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	writeCmdJSON(w, http.StatusInternalServerError, withKey(map[string]any{"error": internalErrorMsg}, internalErrorMsg, nil))
 }
