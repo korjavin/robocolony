@@ -235,10 +235,10 @@
   </main>
 
 <script type="module">
-// Translation keys are the English source strings themselves; the German behind
-// them lives in js/lang/de/lobby.json. `lang` is imported for one thing only —
-// ordinals, which German writes as "1." and English as "1st", and which no
-// frame string can paper over.
+// t("...") keys are the English source strings themselves; the German behind
+// them lives in js/lang/de/lobby.json, and the markup above opts in with
+// data-i18n. `lang` is imported for one thing only — ordinals, which German
+// writes as "1." and English as "1st", and which no frame string can paper over.
 import { t, lang } from "/js/i18n.js";
 
 const $ = (id) => document.getElementById(id);
@@ -408,7 +408,7 @@ function stats(colonies) {
   return box;
 }
 
-// The trailing "" is the action column: no header, and no key either — an empty
+// The trailing "" is the action column: no header, so no t() either — an empty
 // string is not a translatable one.
 const OPEN_COLS = [t("Lobby"), t("Host"), t("Seats"), t("Duration"), t("AI"), ""];
 
@@ -582,7 +582,7 @@ function renderAI(profiles) {
     head.append(el("span", "nm", p.toUpperCase()));
     if (AI_UNARMED.has(p)) head.append(el("span", "badge dashed", t("unarmed")));
     if (seatedAI === p) head.append(el("span", "badge solid", t("selected")));
-    b.append(head, el("div", "why", AI_WHY[p] || t("An AI colony on the %s rung of the ladder.").replace("%s", p)));
+    b.append(head, el("div", "why", AI_WHY[p] || t("An AI colony on the ladder's %s rung.").replace("%s", p)));
     b.addEventListener("click", () => { seatedAI = seatedAI === p ? null : p; renderAI(profiles); });
     box.append(b);
   }
@@ -696,8 +696,8 @@ function loadoutPicker(l, seat) {
 
   // The equal-budget half of §2.1 step 4. Say it here rather than let a player
   // wonder why approving a gunner opened with two robots instead of three. One
-  // literal rather than the three it used to be concatenated from: a key is a
-  // whole string or nothing can check it.
+  // t() over the whole sentence rather than the three literals it used to be
+  // concatenated from: a key is a whole string or nothing can check it.
   wrap.append(el("div", "meta", t("The colony starts with the first approved design, as many as the starting budget buys — every colony gets the same budget, so an armed body means fewer robots. The rest are for the base to build.")));
   return wrap;
 }
