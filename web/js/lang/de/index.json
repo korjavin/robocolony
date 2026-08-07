@@ -3,7 +3,7 @@
   "You are not the commander.": "Du bist nicht der Kommandant.",
   "You design the robots and write the rules they follow. Then they compete without you — including while you are logged out. Nothing on this screen steers anything.": "Du baust die Roboter und schreibst die Regeln, denen sie folgen. Danach treten sie ohne dich an — auch während du abgemeldet bist. Nichts auf diesem Bildschirm steuert irgendetwas.",
 
-  "Assemble a blueprint": "Bau einen Bauplan",
+  "Assemble a blueprint": "Stell einen Bauplan zusammen",
   "Parts compete for one budget and add mass that slows the robot down.": "Bauteile konkurrieren um ein Budget und bringen Masse mit, die den Roboter langsamer macht.",
   "Write a priority list": "Schreib eine Prioritätenliste",
   "Every robot re-decides every tick. The first rule that matches takes the tick.": "Jeder Roboter entscheidet in jedem Tick neu. Die erste Regel, die passt, bekommt den Tick.",
@@ -11,7 +11,7 @@
   "Two robots walking past each other facing the wrong way is not a bug. It is the game.": "Zwei Roboter, die mit der falschen Blickrichtung aneinander vorbeilaufen, sind kein Fehler. Das ist das Spiel.",
 
   "Pre-alpha.": "Pre-Alpha.",
-  "Playable end to end, but young: balance still moves. A restart resumes the matches that were running; a deploy that changes the simulation ends them instead.": "Von vorne bis hinten spielbar, aber jung: die Balance bewegt sich noch. Ein Neustart nimmt laufende Matches wieder auf; ein Deploy, der die Simulation ändert, beendet sie stattdessen.",
+  "Playable end to end, but young: balance still moves. A restart resumes the matches that were running; a deploy that changes the simulation ends them instead.": "Durchgehend spielbar, aber jung: die Balance bewegt sich noch. Ein Neustart nimmt laufende Matches wieder auf; ein Deploy, der die Simulation ändert, beendet sie stattdessen.",
 
   "You do not have to write anything yet": "Du musst noch nichts schreiben",
   "A colony that has approved nothing opens with the built-in starter kit. It is unarmed, and against the aggressive AI it usually dies — which is the moment to open the editor.": "Eine Kolonie, die nichts freigegeben hat, startet mit dem eingebauten Starter-Kit. Es ist unbewaffnet und stirbt gegen die aggressive KI meistens — genau das ist der Moment, den Editor zu öffnen.",
@@ -22,7 +22,7 @@
   "A crop of the arena: a scavenger with its vision wedge lit up, a second scavenger cornered by an enemy gunner beside the home base and its guard, and a loose radar component lying on open ground.": "Ein Ausschnitt der Arena: ein Scavenger mit ausgeleuchtetem Sichtkegel, ein zweiter Scavenger, den ein feindlicher Gunner neben der Heimatbasis und ihrem Wächter in die Enge treibt, und eine herumliegende Radar-Komponente auf offenem Gelände.",
 
   "Two senses, drawn differently": "Zwei Sinne, unterschiedlich gezeichnet",
-  "A robot sees 90° and six cells in front of its nose, and nothing else — that is the lit wedge below. Radar, if you paid the mass for it, answers in every direction, out of a box wider than this whole crop, so the match view is where you watch one get drawn. If a robot did not perceive a thing, no rule of yours can react to it.": "Ein Roboter sieht 90° und sechs Zellen vor seiner Nase, sonst nichts — das ist der ausgeleuchtete Kegel unten. Radar antwortet, wenn du die Masse dafür bezahlt hast, in alle Richtungen, aus einem Kasten breiter als dieser ganze Ausschnitt; gezeichnet siehst du eines deshalb erst in der Match-Ansicht. Was ein Roboter nicht wahrgenommen hat, darauf kann keine deiner Regeln reagieren.",
+  "A robot sees 90° and six cells in front of its nose, and nothing else — that is the lit wedge below. Radar, if you paid the mass for it, answers in every direction, out of a box wider than this whole crop, so the match view is where you watch one get drawn. If a robot did not perceive a thing, no rule of yours can react to it.": "Ein Roboter sieht 90° und sechs Zellen vor seiner Nase, sonst nichts — das ist der ausgeleuchtete Kegel unten. Radar antwortet, wenn du die Masse dafür bezahlt hast, in alle Richtungen, aus einem Kasten, der breiter ist als dieser ganze Ausschnitt; gezeichnet siehst du so einen deshalb erst in der Match-Ansicht. Was ein Roboter nicht wahrgenommen hat, darauf kann keine deiner Regeln reagieren.",
   "Sight · 90° × 6 cells · forward only": "Sicht · 90° × 6 Zellen · nur nach vorn",
   "Radar · 16–28 cells · omnidirectional": "Radar · 16–28 Zellen · rundum",
 
