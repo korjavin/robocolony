@@ -8,6 +8,14 @@
 // written out as text with the same per-rule verdicts in the gutter. The text
 // is generated from the rules and never parsed back, so switching views cannot
 // rewrite anything.
+//
+// The chrome is localized (web/js/i18n.js); the rule language is not. Condition
+// names, action names, operators, WHEN/THEN and everything the code view writes
+// are what the player types and reads as code, so they stay English in every
+// locale — a translated sees_enemy is a bug, not a feature. `locale` is the
+// chosen language, and it is only used to date-format.
+import { t, lang as locale } from "/js/i18n.js";
+
 const $ = (id) => document.getElementById(id);
 function el(tag, props = {}, ...kids) {
   const n = document.createElement(tag);
@@ -89,7 +97,7 @@ function catSelect(specs, value, onChange) {
   }
   sel.value = value ?? "";
   if (sel.value !== (value ?? "")) {
-    sel.prepend(el("option", { value: value ?? "", textContent: `${value} (unknown)` }));
+    sel.prepend(el("option", { value: value ?? "", textContent: `${value} (${t("unknown")})` }));
     sel.value = value ?? "";
   }
   sel.addEventListener("change", () => onChange(sel.value));
@@ -105,7 +113,7 @@ function argInput(spec, value, onChange) {
     min: point ? 1 : 0,
     max: point ? lang.mem_points : 100,
     value: value ?? (point ? 1 : 0),
-    title: point ? `memory point 1..${lang.mem_points}` : "percent 0..100",
+    title: point ? t("memory point 1..%s").replace("%s", lang.mem_points) : t("percent 0..100"),
   });
   inp.addEventListener("change", () => onChange(Number(inp.value)));
   return inp;
@@ -141,10 +149,12 @@ function renderCond(node, replace, remove) {
   const arg = argInput(spec, node.arg, (v) => { node.arg = v; changed(); });
   if (arg) row.append(arg);
   if (spec && spec.needs && spec.needs.length) {
-    row.append(badge(`needs ${spec.needs.join(" + ")}`));
+    // The component kinds are the language's own names for hardware: only the
+    // label around them is translated.
+    row.append(badge(t("needs %s").replace("%s", spec.needs.join(" + "))));
   }
   row.append(...wrapButtons(node, replace), notButton(node, replace));
-  if (remove) row.append(iconButton("✕", "remove this condition", remove));
+  if (remove) row.append(iconButton("✕", t("remove this condition"), remove));
   if (spec && spec.desc) row.append(el("p", { className: "help", textContent: spec.desc }));
   return row;
 }
@@ -154,13 +164,16 @@ function renderCond(node, replace, remove) {
 // whichever end the player starts from — and, because a NOT draws as its own
 // labelled box, the two are visibly different pictures rather than a precedence
 // rule to remember (design §10.10).
+//
+// AND, OR and NOT are the operators the program is written in, so the buttons
+// keep their names in every locale; only the tooltips are translated.
 const wrapButtons = (node, replace) => [
-  iconButton("AND", "wrap this condition in an ALL group", () => replace({ op: "and", of: [node, firstPred()] })),
-  iconButton("OR", "wrap this condition in an ANY group", () => replace({ op: "or", of: [node, firstPred()] })),
+  iconButton("AND", t("wrap this condition in an ALL group"), () => replace({ op: "and", of: [node, firstPred()] })),
+  iconButton("OR", t("wrap this condition in an ANY group"), () => replace({ op: "or", of: [node, firstPred()] })),
 ];
 
 const notButton = (node, replace) =>
-  iconButton("NOT", "invert this condition: true exactly when it is false",
+  iconButton("NOT", t("invert this condition: true exactly when it is false"),
     () => replace({ op: "not", of: [node] }));
 
 // renderNot draws the negation as a box of its own around its single operand.
@@ -169,14 +182,14 @@ const notButton = (node, replace) =>
 function renderNot(node, replace, remove) {
   const box = el("div", { className: "group not" });
   const head = el("div", { className: "row" },
-    el("span", { className: "glabel", textContent: "NOT — true when the condition inside is false" }),
+    el("span", { className: "glabel", textContent: t("NOT — true when the condition inside is false") }),
     // These wrap the NOT itself, giving "(NOT A) AND B". Pressing AND on the
     // condition *inside* the box gives "NOT (A AND B)" instead — two different
     // boxes on screen, which is the whole point of drawing it this way.
     ...wrapButtons(node, replace),
-    iconButton("unwrap", "drop the NOT and keep the condition inside",
+    iconButton(t("unwrap"), t("drop the NOT and keep the condition inside"),
       () => replace(node.of[0] || firstPred())));
-  if (remove) head.append(iconButton("✕", "remove this condition", remove));
+  if (remove) head.append(iconButton("✕", t("remove this condition"), remove));
   const kids = el("div", { className: "kids" },
     renderCond(node.of[0] ?? firstPred(), (next) => { node.of = [next]; changed(); }, null));
   box.append(head, kids);
@@ -187,17 +200,19 @@ function renderGroup(node, replace, remove) {
   const box = el("div", { className: "group" });
   const head = el("div", { className: "row" });
   const op = el("select");
-  op.append(el("option", { value: "and", textContent: "ALL of" }),
-            el("option", { value: "or", textContent: "ANY of" }));
+  // "ALL of" / "ANY of" are how the cards say and/or; the program itself is
+  // still written with the operators, so these two are prose and translate.
+  op.append(el("option", { value: "and", textContent: t("ALL of") }),
+            el("option", { value: "or", textContent: t("ANY of") }));
   op.value = node.op;
   op.addEventListener("change", () => { node.op = op.value; changed(); });
-  head.append(el("span", { className: "glabel", textContent: "match" }), op,
-    iconButton("+ condition", "add a condition to this group", () => { node.of.push(firstPred()); changed(); }),
-    iconButton("+ group", "add a nested group", () => { node.of.push({ op: "and", of: [firstPred()] }); changed(); }),
-    iconButton("unwrap", "replace this group with its first condition",
+  head.append(el("span", { className: "glabel", textContent: t("match") }), op,
+    iconButton(t("+ condition"), t("add a condition to this group"), () => { node.of.push(firstPred()); changed(); }),
+    iconButton(t("+ group"), t("add a nested group"), () => { node.of.push({ op: "and", of: [firstPred()] }); changed(); }),
+    iconButton(t("unwrap"), t("replace this group with its first condition"),
       () => replace(node.of[0] || firstPred())),
     notButton(node, replace));
-  if (remove) head.append(iconButton("✕", "remove this group", remove));
+  if (remove) head.append(iconButton("✕", t("remove this group"), remove));
   const kids = el("div", { className: "kids" });
   node.of.forEach((kid, i) => {
     kids.append(renderCond(kid,
@@ -239,10 +254,13 @@ function renderCatalogue() {
       for (const s of rows) host.append(chip(kind, s, have));
     }
   };
-  section("pred", "conditions", lang.catalogue.predicates);
-  section("act", "actions", lang.catalogue.actions);
+  // The group names inside each section are the server catalogue's own
+  // (vision, movement, …) and stay as they come.
+  section("pred", t("conditions"), lang.catalogue.predicates);
+  section("act", t("actions"), lang.catalogue.actions);
   if (!host.children.length) {
-    host.append(el("p", { className: "meta", textContent: `Nothing in the language matches “${q}”.` }));
+    host.append(el("p", { className: "meta",
+      textContent: t("Nothing in the language matches %s.").replace("%s", `“${q}”`) }));
   }
 }
 
@@ -251,9 +269,11 @@ function chip(kind, spec, have) {
   const c = el("div", {
     className: `chip${unmet ? " unmet" : ""}`,
     draggable: true,
+    // spec.label and spec.desc are the server's catalogue text: the language
+    // documents itself, and rc-mjj.9 is where that gets a locale.
     title: `${spec.label} — ${spec.desc}`
-      + (unmet ? `\n\nNeeds ${spec.needs.join(" + ")}; this blueprint carries none.` : "")
-      + "\n\nClick to add it as a new rule, or drag it onto one.",
+      + (unmet ? "\n\n" + t("Needs %s; this blueprint carries none.").replace("%s", spec.needs.join(" + ")) : "")
+      + "\n\n" + t("Click to add it as a new rule, or drag it onto one."),
   }, el("span", { className: "handle", textContent: "⣿" }),
      el("span", { className: "id", textContent: spec.id }));
   c.addEventListener("dragstart", (ev) => {
@@ -274,7 +294,7 @@ function addFromCatalogue(kind, spec, i) {
   err("");
   if (!rules[i]) {
     if (rules.length >= lang.limits.max_rules) {
-      err(`a program holds at most ${lang.limits.max_rules} rules`);
+      err(t("a program holds at most %s rules").replace("%s", lang.limits.max_rules));
       return;
     }
     rules.push(kind === "pred"
@@ -283,7 +303,7 @@ function addFromCatalogue(kind, spec, i) {
   } else if (kind === "pred") {
     rules[i].when = { op: "and", of: [rules[i].when, predNode(spec)] };
   } else if (rules[i].then.length >= lang.limits.max_actions_per_rule) {
-    err(`a rule holds at most ${lang.limits.max_actions_per_rule} actions`);
+    err(t("a rule holds at most %s actions").replace("%s", lang.limits.max_actions_per_rule));
     return;
   } else {
     rules[i].then.push(actNode(spec));
@@ -300,12 +320,12 @@ function renderRules() {
   host.replaceChildren();
   const rules = current.program.rules;
   if (rules.length === 0) {
-    host.append(el("p", { className: "meta", textContent: "No rules yet. Drag a condition in, add one, or start from a template." }));
+    host.append(el("p", { className: "meta", textContent: t("No rules yet. Drag a condition in, add one, or start from a template.") }));
   }
   rules.forEach((rule, i) => host.append(renderRule(rule, i, rules.length)));
   $("addrule").disabled = rules.length >= lang.limits.max_rules;
   $("rulecount").textContent = String(rules.length);
-  $("ruleinfo").textContent = `${rules.length} rules`;
+  $("ruleinfo").textContent = t("%s rules").replace("%s", rules.length);
 }
 
 // topRule is the rule the last dry run spent most of its decisions in — the one
@@ -328,12 +348,14 @@ function renderRule(rule, i, total) {
   const wins = shadow ? shadow.rule === i : topRule() === i;
   const card = el("div", { className: `rule${wins ? " wins" : ""}${dead ? " dead" : ""}` });
 
+  // WHEN and THEN are the rule language, not labels about it: the code view
+  // writes the same two words, and they stay English in every locale.
   const body = el("div", { className: "body" },
     el("div", { className: "kw", textContent: "WHEN" }),
     renderCond(rule.when, (next) => { rule.when = next; changed(); }, null),
     el("div", { className: "kw", textContent: "THEN" }));
   rule.then.forEach((action, j) => body.append(renderAction(rule, action, j)));
-  body.append(iconButton("+ action", "add an action to this rule",
+  body.append(iconButton(t("+ action"), t("add an action to this rule"),
     () => { rule.then.push({ do: lang.catalogue.actions[0].id }); changed(); },
     rule.then.length >= lang.limits.max_actions_per_rule));
   const sfx = summaryRow(rule, i);
@@ -345,9 +367,9 @@ function renderRule(rule, i, total) {
   // crowding the sentence.
   const verdict = el("div", { className: "verdict" },
     el("div", { className: "ctl" },
-      iconButton("▲", "raise priority", () => move(i, -1), i === 0),
-      iconButton("▼", "lower priority", () => move(i, 1), i === total - 1),
-      iconButton("✕", "delete this rule", () => { current.program.rules.splice(i, 1); changed(); })));
+      iconButton("▲", t("raise priority"), () => move(i, -1), i === 0),
+      iconButton("▼", t("lower priority"), () => move(i, 1), i === total - 1),
+      iconButton("✕", t("delete this rule"), () => { current.program.rules.splice(i, 1); changed(); })));
   // A live verdict is about this robot, this tick; the dry run's badges are the
   // fallback for a program no robot is running yet.
   const live = shadowVerdict(i);
@@ -357,7 +379,7 @@ function renderRule(rule, i, total) {
   card.append(el("div", { className: "gutter" },
     // Padded, so the column stays one width down a list of ten or more and the
     // numbers read as the priorities they are rather than as a count.
-    el("span", { className: "prio", textContent: String(i + 1).padStart(2, "0"), title: `priority ${i + 1}` }),
+    el("span", { className: "prio", textContent: String(i + 1).padStart(2, "0"), title: t("priority %s").replace("%s", i + 1) }),
     dragHandle(card, i)), body, verdict);
   makeDropTarget(card, i);
   return card;
@@ -374,13 +396,14 @@ function summaryRow(rule, i) {
   if (!sfx.length && !fired) return null;
   return el("div", { className: "sfx" },
     sfx.length ? el("span", {
-      textContent: `side effect · ${sfx.map((a) => a.do).join(", ")}`,
-      title: "these run and evaluation continues down the rule list",
+      // The action ids are the language; only the label in front of them moves.
+      textContent: t("side effect · %s").replace("%s", sfx.map((a) => a.do).join(", ")),
+      title: t("these run and evaluation continues down the rule list"),
     }) : null,
     el("span", { className: "grow" }),
     fired ? el("span", {
-      textContent: `fired ${fired.fired}× in the last dry run`,
-      title: `first at tick ${fired.first_tick}`,
+      textContent: t("fired %s× in the last dry run").replace("%s", fired.fired),
+      title: t("first at tick %s").replace("%s", fired.first_tick),
     }) : null);
 }
 
@@ -397,16 +420,16 @@ function renderAction(rule, action, j) {
   if (arg) row.append(arg);
   if (spec) {
     row.append(badge(
-      spec.primary ? "ends the tick" : "side effect, keeps checking",
+      spec.primary ? t("ends the tick") : t("side effect, keeps checking"),
       spec.primary
-        ? "a primary action finishes the rule list for this tick"
-        : "memory writes and broadcasts run and evaluation continues down the list",
+        ? t("a primary action finishes the rule list for this tick")
+        : t("memory writes and broadcasts run and evaluation continues down the list"),
     ));
   }
   if (spec && spec.needs && spec.needs.length) {
-    row.append(badge(`needs ${spec.needs.join(" + ")}`));
+    row.append(badge(t("needs %s").replace("%s", spec.needs.join(" + "))));
   }
-  row.append(iconButton("✕", "remove this action", () => { rule.then.splice(j, 1); changed(); }));
+  row.append(iconButton("✕", t("remove this action"), () => { rule.then.splice(j, 1); changed(); }));
   if (spec && spec.desc) row.append(el("p", { className: "help", textContent: spec.desc }));
   return row;
 }
@@ -434,7 +457,7 @@ let drag = null; // { kind: "rule", i } | { kind: "pred" | "act", spec }
 function dragHandle(card, i) {
   const h = el("span", {
     className: "handle", textContent: "⣿", draggable: true,
-    title: "drag to reorder — or use ▲ ▼, which the keyboard can reach",
+    title: t("drag to reorder — or use ▲ ▼, which the keyboard can reach"),
   });
   h.addEventListener("dragstart", (ev) => {
     drag = { kind: "rule", i };
@@ -533,7 +556,7 @@ function issueLine(is) {
     at < 0 ? null : el("div", { className: "detail", textContent: is.message.slice(at).replace(/^\W+/, "") }));
   if (is.rule >= 0) {
     row.classList.add("jump");
-    row.title = `go to rule ${is.rule + 1}`;
+    row.title = t("go to rule %s").replace("%s", is.rule + 1);
     row.addEventListener("click", () => revealRule(is.rule));
   }
   return row;
@@ -561,16 +584,16 @@ function renderIssues() {
   for (const is of allIssues()) host.append(issueLine(is));
   if (!allIssues().length) {
     host.append(el("p", { className: "meta", style: "padding:.6rem .9rem;margin:0",
-      textContent: "Nothing to say about this program." }));
+      textContent: t("Nothing to say about this program.") }));
   }
   const n = findings.errors.length;
   const w = findings.warnings.length;
   $("counts").replaceChildren(
-    el("span", { className: `badge${n ? " solid" : ""}`, textContent: `${n} errors` }),
-    el("span", { className: "badge dashed", textContent: `${w} warnings` }));
+    el("span", { className: `badge${n ? " solid" : ""}`, textContent: t("%s errors").replace("%s", n) }),
+    el("span", { className: "badge dashed", textContent: t("%s warnings").replace("%s", w) }));
   $("save").disabled = n > 0;
   $("dup").disabled = n > 0;
-  $("save").title = n > 0 ? "fix the errors first; warnings do not block saving" : "";
+  $("save").title = n > 0 ? t("fix the errors first; warnings do not block saving") : "";
 }
 
 let timer = null;
@@ -632,12 +655,14 @@ async function validate() {
 function dryRunBadges(i) {
   if (!dryrun || !dryrun.never_fired.includes(i)) return [];
   return [el("span", {
-    className: "badge solid", textContent: "never fired",
-    title: "in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held",
+    className: "badge solid", textContent: t("never fired"),
+    title: t("in the dry run this rule never matched — an earlier rule took every tick it wanted, or its condition never held"),
   })];
 }
 
-const when = (ev) => (ev.count > 0 ? `${ev.count}×, first at tick ${ev.first_tick}` : "never");
+const when = (ev) => (ev.count > 0
+  ? t("%s×, first at tick %n").replace("%s", ev.count).replace("%n", ev.first_tick)
+  : t("never"));
 
 // The report is figures first and prose second: which rule is running this
 // robot is a comparison, and a comparison is a set of bars, not a sentence.
@@ -645,15 +670,16 @@ function renderDryRun() {
   const host = $("dryrun");
   host.replaceChildren();
   if (!dryrun) {
-    $("dryhead").textContent = "Dry run";
-    host.append(el("p", { className: "meta", textContent: "Not run yet." }));
+    $("dryhead").textContent = t("Dry run");
+    host.append(el("p", { className: "meta", textContent: t("Not run yet.") }));
     return;
   }
   const d = dryrun;
   // The heading says which robot the numbers are about and on which seed, so a
   // report read on its own is never a report about the wrong blueprint.
   const bp = blueprints.find((x) => x.id === blueprintID());
-  $("dryhead").textContent = `Dry run · ${bp ? bp.name : "blueprint"} · seed ${d.seed}`;
+  $("dryhead").textContent = t("Dry run · %s · seed %n")
+    .replace("%s", bp ? bp.name : t("blueprint")).replace("%n", d.seed);
   // Four figures: what it was given, what it produced, what it wasted, whether
   // it lived. Everything else the report knows is said in the notes below,
   // where it can be said in a sentence instead of as a number without a unit.
@@ -661,46 +687,56 @@ function renderDryRun() {
   const fig = (k, v, title) => figs.append(
     el("span", { className: "k", textContent: k, title: title || "" }),
     el("span", { textContent: String(v) }));
-  fig("ticks simulated", d.ticks);
-  fig("parts deposited", d.deposited.count);
-  fig("ticks idle", d.idle.count, "decisions in which no rule took the tick");
-  fig("survived", d.survived ? `✓ ${d.health}/${d.max_health} hp` : `✗ tick ${d.destroyed_tick}`);
+  fig(t("ticks simulated"), d.ticks);
+  fig(t("parts deposited"), d.deposited.count);
+  fig(t("ticks idle"), d.idle.count, t("decisions in which no rule took the tick"));
+  fig(t("survived"), d.survived
+    ? `✓ ${d.health}/${d.max_health} hp`
+    : t("✗ tick %s").replace("%s", d.destroyed_tick));
   host.append(figs);
 
   // Share of decisions, per rule, biggest first — plus what nothing matched,
   // because the ticks no rule wanted are the ones that cost the match.
   const rows = [...(d.rules || [])].sort((a, b) => b.fired - a.fired);
   if (rows.length && d.decisions > 0) {
-    host.append(el("div", { className: "label", style: "margin:.8rem 0 .3rem", textContent: "rule firing share" }));
+    host.append(el("div", { className: "label", style: "margin:.8rem 0 .3rem", textContent: t("rule firing share") }));
     for (const r of rows) host.append(shareBar(String(r.rule + 1), r.fired, d.decisions));
-    if (d.idle.count > 0) host.append(shareBar("—", d.idle.count, d.decisions, "no rule matched"));
+    if (d.idle.count > 0) host.append(shareBar("—", d.idle.count, d.decisions, t("no rule matched")));
   }
 
   const notes = [];
-  if (d.acted.count === 0) notes.push(`Never acted: in ${d.decisions} decisions no rule ever took a tick.`);
+  if (d.acted.count === 0) {
+    notes.push(t("Never acted: in %s decisions no rule ever took a tick.").replace("%s", d.decisions));
+  }
   if (d.never_fired.length > 0) {
-    notes.push(`Rules that never fired: ${d.never_fired.map((i) => i + 1).join(", ")} — marked on the cards.`);
+    notes.push(t("Rules that never fired: %s — marked on the cards.")
+      .replace("%s", d.never_fired.map((i) => i + 1).join(", ")));
   }
   if (d.attacked.count > 0) {
-    notes.push(`Attacked ${when(d.attacked)} — ${d.hit.count} of those took health off it`
-      + `${d.kills > 0 ? `, destroying ${d.kills}` : ""}.`);
+    notes.push(t("Attacked %s — %n of those took health off it")
+      .replace("%s", when(d.attacked)).replace("%n", d.hit.count)
+      + (d.kills > 0 ? t(", destroying %s").replace("%s", d.kills) : "") + ".");
   }
-  if (!d.survived) notes.push("Nothing after the tick it was destroyed on is your program.");
-  if (d.idle.count > 0 && d.idle_reason) notes.push(`Last idle reason: ${d.idle_reason}.`);
-  for (const t of notes) host.append(el("p", { className: "meta", style: "margin:.5rem 0 0", textContent: t }));
+  if (!d.survived) notes.push(t("Nothing after the tick it was destroyed on is your program."));
+  // The reason itself is the evaluator's own wording, which rc-mjj.9 localizes.
+  if (d.idle.count > 0 && d.idle_reason) {
+    notes.push(t("Last idle reason: %s.").replace("%s", d.idle_reason));
+  }
+  for (const note of notes) host.append(el("p", { className: "meta", style: "margin:.5rem 0 0", textContent: note }));
 
   host.append(el("p", {
     className: "meta", style: "margin:.6rem 0 0",
-    textContent: `${d.width}×${d.height} practice arena. One unarmed scout `
-      + "that calls out enemies it sees, against one hostile sparring partner that hunts you on "
-      + "radar — so combat, defensive and signal rules all have something to match. "
-      + "Two runs of the same program are always comparable; this is a smoke test, not a match.",
+    // One plain literal per call, however long: a key assembled from pieces is
+    // a key nothing can check German exists behind.
+    textContent: t("%s×%n practice arena.").replace("%s", d.width).replace("%n", d.height) + " "
+      + t("One unarmed scout that calls out enemies it sees, against one hostile sparring partner that hunts you on radar — so combat, defensive and signal rules all have something to match. Two runs of the same program are always comparable; this is a smoke test, not a match."),
   }));
 }
 
 function shareBar(n, count, total, title) {
   const pct = Math.round((count / total) * 100);
-  return el("div", { className: `share${count ? "" : " zero"}`, title: title || `${count} of ${total} decisions` },
+  const how = title || t("%s of %n decisions").replace("%s", count).replace("%n", total);
+  return el("div", { className: `share${count ? "" : " zero"}`, title: how },
     el("span", { className: "n", textContent: n }),
     el("div", { className: "track" }, el("div", { className: "fill", style: `width:${pct}%` })),
     el("span", { className: "pct", textContent: `${pct}%` }));
@@ -835,12 +871,13 @@ function renderShadowPicker() {
   sel.replaceChildren();
   sel.disabled = cands.length === 0;
   if (!cands.length) {
-    sel.append(el("option", { value: "", textContent: "no live robot" }));
+    sel.append(el("option", { value: "", textContent: t("no live robot") }));
     return;
   }
-  sel.append(el("option", { value: "", textContent: "shadow test off" }));
+  sel.append(el("option", { value: "", textContent: t("shadow test off") }));
   for (const b of cands) {
-    sel.append(el("option", { value: botKey(b), textContent: `${b.name} · match ${b.match}` }));
+    sel.append(el("option", { value: botKey(b),
+      textContent: t("%s · match %n").replace("%s", b.name).replace("%n", b.match) }));
   }
   // Whatever the player chose stays chosen, and "off" is a choice: this runs on
   // every edit, and re-picking a robot here would quietly turn the test back on
@@ -866,44 +903,48 @@ async function runShadow() {
   const seq = ++shadowSeq;
   shadow = null;
   shadowNote = "";
-  const t = shadowTarget();
-  if (!t) {
+  // `bot`, not `t`: t is the translator, and a local of that name would shadow
+  // it out of every string in this function.
+  const bot = shadowTarget();
+  if (!bot) {
     if (!shadowCandidates().length) {
       shadowNote = current && current.id > 0
-        ? "no live robot is running this program"
-        : "save these rules and install them to shadow-test them";
+        ? t("no live robot is running this program")
+        : t("save these rules and install them to shadow-test them");
     }
     return;
   }
   try {
-    const res = await api("POST", `/api/matches/${t.match}/robots/${t.id}/shadow`,
+    const res = await api("POST", `/api/matches/${bot.match}/robots/${bot.id}/shadow`,
       { program: current.program });
-    if (seq !== shadowSeq || !res || res.robot !== t.id) return;
+    if (seq !== shadowSeq || !res || res.robot !== bot.id) return;
     shadow = res;
   } catch (e) {
     if (seq !== shadowSeq) return;
     // 422: the draft does not fit that robot's blueprint, which is the same
     // refusal an install would give. 404: the robot has been destroyed since
     // the picker was built.
+    // Genitive rephrased: an apostrophe cannot appear in a key, because the
+    // guard reads the keys back out of the source with a regex.
     shadowNote = e.status === 422
-      ? `these rules do not fit ${t.name}'s blueprint`
-      : `${t.name}: ${e.message}`;
+      ? t("these rules do not fit the blueprint of %s").replace("%s", bot.name)
+      : `${bot.name}: ${e.message}`;
   }
 }
 
 function renderShadowHead() {
   const head = $("shadowhead");
-  const t = shadowTarget();
-  if (!shadow || !t) { head.textContent = shadowNote; head.title = ""; return; }
+  const bot = shadowTarget();
+  if (!shadow || !bot) { head.textContent = shadowNote; head.title = ""; return; }
   // Design's "SHADOW TEST: S-04 @ TICK 3720", plus the one thing evaluating
   // from outside a tick cannot know (ShadowResult.SignalsAssumedAbsent): a
   // tick's signals are delivered and consumed inside sim's Step, so there is no
   // inbox out here and the communication conditions are answered as if none
   // arrived.
-  head.textContent = `shadow test · ${t.name} @ tick ${shadow.tick}`
-    + (shadow.signals_assumed_absent ? " · signals assumed absent" : "");
-  head.title = "what these rules would decide against this robot's senses this tick."
-    + " Nothing is installed: the robot goes on running the program it has.";
+  head.textContent = t("shadow test · %s @ tick %n").replace("%s", bot.name).replace("%n", shadow.tick)
+    + (shadow.signals_assumed_absent ? " · " + t("signals assumed absent") : "");
+  head.title = t("what these rules would decide against what this robot senses this tick.")
+    + " " + t("Nothing is installed: the robot goes on running the program it has.");
 }
 
 // The four verdicts of design 1d, in the server's own words
@@ -918,27 +959,26 @@ function shadowVerdict(i) {
   if (v.verdict === "shadowed") {
     return el("span", {
       className: "badge dashed",
-      textContent: `✓ WOULD MATCH · SHADOWED BY ${ruleNo(v.shadowed_by)}`,
-      title: `its conditions hold, but rule ${ruleNo(v.shadowed_by)} took the tick before this rule`
-        + " was reached. Raise it above that rule to let it run.",
+      textContent: t("✓ WOULD MATCH · SHADOWED BY %s").replace("%s", ruleNo(v.shadowed_by)),
+      title: t("its conditions hold, but rule %s took the tick before this rule was reached. Raise it above that rule to let it run.")
+        .replace("%s", ruleNo(v.shadowed_by)),
     });
   }
   if (v.verdict === "won") {
     return el("span", {
-      className: "badge solid", textContent: "✓ WINS",
-      title: "the first rule whose conditions hold, so it takes this tick",
+      className: "badge solid", textContent: t("✓ WINS"),
+      title: t("the first rule whose conditions hold, so it takes this tick"),
     });
   }
   if (v.verdict === "ran") {
     return el("span", {
-      className: "badge dashed", textContent: "✓ WOULD MATCH",
-      title: "its conditions hold and it holds only side effects, so it runs and"
-        + " evaluation carries on down the list",
+      className: "badge dashed", textContent: t("✓ WOULD MATCH"),
+      title: t("its conditions hold and it holds only side effects, so it runs and evaluation carries on down the list"),
     });
   }
   return el("span", {
-    className: "meta", textContent: "✗ NOT MET",
-    title: "its conditions did not hold against this robot's senses this tick",
+    className: "meta", textContent: t("✗ NOT MET"),
+    title: t("its conditions did not hold against what this robot senses this tick"),
   });
 }
 
@@ -1026,8 +1066,13 @@ function renderCode() {
     host.append(row);
   });
   const n = findings.errors.length;
-  $("codestatus").textContent = `schema v${lang.schema_version} · ${n ? `${n} errors` : "valid"}`;
-  $("selhead").textContent = picked < 0 ? "Selection" : `Selection · line ${picked + 1}`;
+  // "schema v1" names the wire format the file carries, so it reads the same in
+  // both languages; the verdict after it is prose.
+  $("codestatus").textContent = `schema v${lang.schema_version} · `
+    + (n ? t("%s errors").replace("%s", n) : t("valid"));
+  $("selhead").textContent = picked < 0
+    ? t("Selection")
+    : t("Selection · line %s").replace("%s", picked + 1);
 }
 
 // The documentation is the catalogue's own Desc, served by the server beside the
@@ -1040,7 +1085,7 @@ function renderCodeDoc(line) {
     host.append(el("div", { style: "margin:0 0 .6rem" },
       el("code", { textContent: id }),
       el("p", { className: "meta", style: "margin:.2rem 0 0",
-        textContent: spec ? spec.desc : "not in this build's catalogue." })));
+        textContent: spec ? spec.desc : t("not in the catalogue of this build.") })));
   }
 }
 
@@ -1064,15 +1109,19 @@ function renderLibrary() {
   sel.replaceChildren();
   // An unsaved program is a row of its own: the picker always shows what is on
   // screen, rather than pointing at whichever saved program it started from.
-  if (current.id === 0) sel.append(el("option", { value: "0", textContent: `${$("name").value || current.name} (unsaved)` }));
+  if (current.id === 0) {
+    sel.append(el("option", { value: "0",
+      textContent: `${$("name").value || current.name} (${t("unsaved")})` }));
+  }
   for (const p of programs) {
-    sel.append(el("option", { value: String(p.id), textContent: `${p.name} · ${p.program.rules.length} rules` }));
+    sel.append(el("option", { value: String(p.id),
+      textContent: t("%s · %n rules").replace("%s", p.name).replace("%n", p.program.rules.length) }));
   }
   if (!programs.length && current.id !== 0) {
     // Reachable only if a read ever comes back empty: the library seeds the
     // three worked programs whenever it has none, so a player cannot strand
     // themselves by deleting everything.
-    sel.append(el("option", { value: "0", textContent: "empty — start from a template" }));
+    sel.append(el("option", { value: "0", textContent: t("empty — start from a template") }));
   }
   sel.value = String(current.id);
 }
@@ -1108,7 +1157,9 @@ function open(p) {
 // version nobody has approved.
 const draft = () => dirty || (!!meta && meta.version > meta.approved_version);
 
-const robotCount = (n) => `${n} ROBOT${n === 1 ? "" : "S"}`;
+// Two keys rather than one plus a suffix: a language whose plural is not "add
+// an s" needs both halves of the sentence, not a rule about English.
+const robotCount = (n) => (n === 1 ? t("%s ROBOT") : t("%s ROBOTS")).replace("%s", n);
 
 async function loadMeta() {
   meta = null;
@@ -1129,22 +1180,24 @@ function renderVersions() {
   if (!current.id) meta = null;
   const badge = $("version");
   badge.hidden = !meta;
-  if (meta) badge.textContent = `v${meta.version}${draft() ? " · DRAFT" : ""}`;
+  if (meta) badge.textContent = `v${meta.version}` + (draft() ? " · " + t("DRAFT") : "");
 
   // The approved version's robots, which is the fact worth the topbar: it is
   // what an APPROVE would replace.
   const inuse = meta && meta.in_use ? meta.in_use : 0;
   $("inuse").textContent = !inuse ? ""
-    : `IN USE BY ${robotCount(inuse)}${meta.in_use_match ? ` IN MATCH #${meta.in_use_match}` : ""}`;
+    : t("IN USE BY %s").replace("%s", robotCount(inuse))
+      + (meta.in_use_match ? " " + t("IN MATCH #%s").replace("%s", meta.in_use_match) : "");
 
   // APPROVE only when there is something to approve. SAVE keeps its meaning and
   // its place either way — a two-step save would be a tax on everybody to serve
   // the one case where a program is already in the field.
   const ahead = !!meta && meta.version > meta.approved_version;
   $("approve").hidden = !ahead;
-  $("approve").textContent = ahead ? `APPROVE v${meta.version}` : "";
+  $("approve").textContent = ahead ? t("APPROVE v%s").replace("%s", meta.version) : "";
   $("approve").title = ahead
-    ? `hand v${meta.version} to robots from the next install on; v${meta.approved_version} is what they get now`
+    ? t("hand v%s to robots from the next install on; v%n is what they get now")
+      .replace("%s", meta.version).replace("%n", meta.approved_version)
     : "";
   // One primary action at a time: whichever button is the next thing to press.
   $("save").classList.toggle("primary", !ahead);
@@ -1153,7 +1206,7 @@ function renderVersions() {
   host.replaceChildren();
   if (!meta || !meta.versions) {
     host.append(el("p", { className: "meta", style: "margin:0",
-      textContent: current.id ? "Loading…" : "Save this program to give it a version." }));
+      textContent: current.id ? t("Loading…") : t("Save this program to give it a version.") }));
     return;
   }
   for (const v of meta.versions) {
@@ -1164,8 +1217,9 @@ function renderVersions() {
       el("span", { className: "meta", textContent: versionNote(v) }),
       el("span", { className: "grow", style: "flex:1 1 auto" }),
       v.approved
-        ? el("span", { className: "badge", textContent: "LIVE" })
-        : iconButton("approve", `hand v${v.version} to robots from the next install on`,
+        ? el("span", { className: "badge", textContent: t("LIVE") })
+        : iconButton(t("approve"),
+          t("hand v%s to robots from the next install on").replace("%s", v.version),
           () => approveVersion(v.version))));
   }
 }
@@ -1174,10 +1228,13 @@ function renderVersions() {
 // per-program match aggregates, which nothing computes yet (rc-pt6.11).
 function versionNote(v) {
   if (v.robots) {
-    return `${v.robots} robot${v.robots === 1 ? "" : "s"}${v.match ? ` in match #${v.match}` : ""}`;
+    return (v.robots === 1 ? t("%s robot") : t("%s robots")).replace("%s", v.robots)
+      + (v.match ? " " + t("in match #%s").replace("%s", v.match) : "");
   }
-  if (v.approved) return "approved · not in the field";
-  return new Date(v.created_at).toLocaleString();
+  if (v.approved) return t("approved · not in the field");
+  // The date is formatted in the chosen language, not the browser's: the page
+  // it sits on is already German by then.
+  return new Date(v.created_at).toLocaleString(locale);
 }
 
 async function approveVersion(version) {
@@ -1186,7 +1243,7 @@ async function approveVersion(version) {
     const p = await api("POST", `/api/programs/${current.id}/approve`, { version });
     if (!p) return;
     meta = p;
-    status(`approved v${p.approved_version}`);
+    status(t("approved v%s").replace("%s", p.approved_version));
     renderVersions();
   } catch (e) { err(e.message); }
 }
@@ -1253,11 +1310,13 @@ function statLine(s) {
   const cell = (label, value, title) =>
     el("span", { className: "stat", title },
       el("b", { textContent: String(value) }), el("span", { textContent: label }));
+  // The design reference is a citation, not prose, and a bracket inside a
+  // translated key is a key nothing can read back out: it is appended, not keyed.
   row.append(
-    cell("health", s.health, "derived from the armored body (design §6.1)"),
-    cell("speed", s.speed, "effective speed: locomotion base speed minus the mass penalty (design §6.4)"),
-    cell("mass", s.mass, "total component mass — this is what the speed model taxes"),
-    cell("value", s.value, "total component value, which is what the fleet score counts (design §9)"),
+    cell(t("health"), s.health, t("derived from the armored body") + " (design §6.1)"),
+    cell(t("speed"), s.speed, t("effective speed: locomotion base speed minus the mass penalty") + " (design §6.4)"),
+    cell(t("mass"), s.mass, t("total component mass — this is what the speed model taxes")),
+    cell(t("value"), s.value, t("total component value, which is what the fleet score counts") + " (design §9)"),
   );
   return row;
 }
@@ -1294,8 +1353,8 @@ async function save(asCopy) {
     // The save's own answer carries the new version and whether it approved
     // itself; the panel and the "in use by" line need the full read.
     status(saved.version > saved.approved_version
-      ? `saved v${saved.version} — approve it to hand it to your robots`
-      : "saved");
+      ? t("saved v%s — approve it to hand it to your robots").replace("%s", saved.version)
+      : t("saved"));
     await reloadLibrary();
     await loadMeta();
     render();
@@ -1329,7 +1388,7 @@ function exportProgram() {
     { type: "application/json" }));
   el("a", { href: url, download: `${fileStem(name)}.json` }).click();
   URL.revokeObjectURL(url);
-  status(`exported ${fileStem(name)}.json`);
+  status(t("exported %s").replace("%s", `${fileStem(name)}.json`));
 }
 
 // renderable checks only the shape this editor draws. It is not validation —
@@ -1360,21 +1419,26 @@ async function importProgram(file) {
   try {
     doc = JSON.parse(await file.text());
   } catch (e) {
-    err(`${file.name} is not valid JSON: ${e.message}`);
+    err(t("%s is not valid JSON: %n").replace("%s", file.name).replace("%n", e.message));
     return;
   }
   const v = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc.v ?? lang.schema_version) : null;
+  // The field names are the file format, so they are substituted in rather than
+  // written into the key — a translator cannot reach them, which is the point.
   if (v === null || !Array.isArray(doc.rules)) {
-    err(`${file.name} is not a program: a program is a JSON object with a "rules" list.`);
+    err(t("%s is not a program: a program is a JSON object with a %n list.")
+      .replace("%s", file.name).replace("%n", `"rules"`));
     return;
   }
   // An unknown version is refused, never guessed at: "v" exists for exactly this.
   if (v !== lang.schema_version) {
-    err(`${file.name} is a version ${v} program and this build reads version ${lang.schema_version}.`);
+    err(t("%s is a version %n program and this build reads version %v.")
+      .replace("%s", file.name).replace("%n", v).replace("%v", lang.schema_version));
     return;
   }
   if (!doc.rules.every(renderableRule)) {
-    err(`${file.name} is malformed: every rule needs a "when" condition and a "then" action list.`);
+    err(t("%s is malformed: every rule needs a %n condition and a %v action list.")
+      .replace("%s", file.name).replace("%n", `"when"`).replace("%v", `"then"`));
     return;
   }
   const name = String(doc.name || fileStem(file.name.replace(/\.json$/i, "")))
@@ -1385,7 +1449,7 @@ async function importProgram(file) {
   $("name").value = name;
   findings = { errors: [], warnings: [], notes: [] };
   changed(); // → /api/programs/validate against the selected blueprint
-  status(`imported ${file.name} — review it, then Save`);
+  status(t("imported %s — review it, then Save").replace("%s", file.name));
 }
 
 $("export").addEventListener("click", exportProgram);
@@ -1443,7 +1507,7 @@ $("library").addEventListener("change", () => {
 $("del").addEventListener("click", async () => {
   err("");
   if (current.id === 0) { current = blank(); $("name").value = current.name; changed(); return; }
-  if (!confirm(`Delete "${current.name}"?`)) return;
+  if (!confirm(t("Delete %s?").replace("%s", `"${current.name}"`))) return;
   try {
     await api("DELETE", `/api/programs/${current.id}`);
     current = blank();
@@ -1467,15 +1531,15 @@ $("name").addEventListener("change", () => { current.program.name = $("name").va
 $("blueprint").addEventListener("change", () => { renderBlueprintMeta(); changed(false); });
 
 $("templates").addEventListener("change", (ev) => {
-  const t = lang.templates[Number(ev.target.value)];
+  const tpl = lang.templates[Number(ev.target.value)];
   ev.target.value = "";
-  if (!t) return;
+  if (!tpl) return;
   // Templates carry the blueprint they were written for: the §10.7 scavenger
   // needs a parts radar, the §10.9 responder needs a weapon.
-  const bp = blueprints.find((b) => b.name === t.blueprint);
+  const bp = blueprints.find((b) => b.name === tpl.blueprint);
   if (bp) { $("blueprint").value = String(bp.id); renderBlueprintMeta(); }
-  current = { id: 0, name: t.name, program: structuredClone(t.program) };
-  $("name").value = t.name;
+  current = { id: 0, name: tpl.name, program: structuredClone(tpl.program) };
+  $("name").value = tpl.name;
   changed();
 });
 
@@ -1486,8 +1550,10 @@ lang = await api("GET", "/api/language");
 if (lang) {
   for (const s of lang.catalogue.predicates) preds.set(s.id, s);
   for (const s of lang.catalogue.actions) acts.set(s.id, s);
-  lang.templates.forEach((t, i) => {
-    $("templates").append(el("option", { value: String(i), textContent: `${t.name} (${t.section})` }));
+  // The template names and their design sections are the server's, and a
+  // section number is the same in every language.
+  lang.templates.forEach((tpl, i) => {
+    $("templates").append(el("option", { value: String(i), textContent: `${tpl.name} (${tpl.section})` }));
   });
   $("name").maxLength = lang.limits.max_name_len;
 

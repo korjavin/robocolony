@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Program editor &mdash; robocolony</title>
+<title data-i18n>Program editor &mdash; robocolony</title>
 <link rel="icon" href="data:,"><!-- there is no favicon; without this the console carries a 404 -->
 <link rel="stylesheet" href="/css/app.css">
 <style>
@@ -243,9 +243,13 @@
               border-right: 1px solid var(--line-2); }
   .code .mk.fired { color: var(--fg-0); font-weight: 700; }
   .code .tx { padding: 0 1rem; white-space: pre-wrap; }
+  /* Wraps rather than clips: the bar is a row of whole phrases, and a language
+     that says "Priorität erhöhen" where English says "Raise priority" runs it
+     off the end of a narrow pane. */
   .statusbar {
     border-top: 1px solid var(--line-1); background: var(--bg-0);
     padding: 7px 16px; display: flex; gap: 16px; align-items: center;
+    flex-wrap: wrap; row-gap: 4px;
     font-size: 11px; color: var(--fg-2);
   }
   .legend { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; }
@@ -268,25 +272,26 @@
 
   <main>
     <div class="appbar">
-      <span class="label">PROGRAMS &rarr;</span>
-      <select id="library" title="open a saved program"></select>
+      <span class="label" data-i18n>PROGRAMS &rarr;</span>
+      <select id="library" title="open a saved program" data-i18n-attr="title"></select>
       <input type="text" id="name" maxlength="64" placeholder="program name" size="22"
-             title="the program's name — this is what a robot is given in a match">
+             title="the program's name — this is what a robot is given in a match"
+             data-i18n-attr="placeholder,title">
       <!-- Which version is on screen, and whether it is ahead of the one robots
            are given (design 1d 645-647). DRAFT means exactly that: unsaved
            edits, or a saved version nobody has approved yet. -->
       <span class="badge dashed" id="version" hidden></span>
       <span class="meta" id="inuse"></span>
-      <span class="badge dashed" id="ruleinfo">0 rules</span>
+      <span class="badge dashed" id="ruleinfo" data-i18n>0 rules</span>
       <span class="err" id="err"></span>
       <span class="meta" id="status"></span>
       <span class="grow"></span>
-      <div class="toggle" role="group" aria-label="View">
-        <button id="v-cards" aria-pressed="true" title="edit the rules as cards">CARDS</button>
-        <button id="v-code" aria-pressed="false" title="read the whole program as text">CODE</button>
+      <div class="toggle" role="group" aria-label="View" data-i18n-attr="aria-label">
+        <button id="v-cards" aria-pressed="true" title="edit the rules as cards" data-i18n data-i18n-attr="title">CARDS</button>
+        <button id="v-code" aria-pressed="false" title="read the whole program as text" data-i18n-attr="title">CODE</button>
       </div>
-      <button id="tryit" class="btn sm" title="run this program for a few hundred ticks in a practice arena (Ctrl/&#8984;+Enter)">DRY RUN</button>
-      <button id="save" class="btn sm primary">SAVE</button>
+      <button id="tryit" class="btn sm" title="run this program for a few hundred ticks in a practice arena (Ctrl/&#8984;+Enter)" data-i18n data-i18n-attr="title">DRY RUN</button>
+      <button id="save" class="btn sm primary" data-i18n>SAVE</button>
       <!-- Only when a saved version is ahead of the approved one. Saving is
            still one button on the common path: a save with nothing of yours in
            the field approves itself, and this never appears. -->
@@ -296,36 +301,35 @@
     <div class="panes">
       <aside class="rail">
         <div class="blk">
-          <h2>Program</h2>
+          <h2 data-i18n>Program</h2>
           <div class="bar">
-            <button id="new">New</button>
-            <button id="dup">Save as copy</button>
-            <button id="del">Delete</button>
-            <button id="export" title="download this program as a JSON file you can keep, post or share">Export</button>
-            <label class="filebtn" title="load a program from a JSON file — it is checked against the selected blueprint before it can be saved">Import<input type="file" id="import" accept="application/json,.json"></label>
+            <button id="new" data-i18n>New</button>
+            <button id="dup" data-i18n>Save as copy</button>
+            <button id="del" data-i18n>Delete</button>
+            <button id="export" title="download this program as a JSON file you can keep, post or share" data-i18n data-i18n-attr="title">Export</button>
+            <label class="filebtn" title="load a program from a JSON file — it is checked against the selected blueprint before it can be saved" data-i18n-attr="title"><span data-i18n>Import</span><input type="file" id="import" accept="application/json,.json"></label>
           </div>
-          <select id="templates" style="margin-top:.4rem"><option value="">Start from a template&hellip;</option></select>
+          <select id="templates" style="margin-top:.4rem"><option value="" data-i18n>Start from a template&hellip;</option></select>
         </div>
 
         <div class="blk">
-          <h2>Blueprint</h2>
+          <h2 data-i18n>Blueprint</h2>
           <select id="blueprint"></select>
           <div class="meta" id="bpmeta"></div>
-          <p class="meta" style="margin:.4rem 0 0">Programs are checked against the
-          robot they will run on: no radar, no radar actions. Designing the robot
-          is its own page: the <a href="/blueprints">blueprint configurator</a>.</p>
+          <!-- Split into marked children rather than marked whole: the key is an
+               element's entire text, and the link is a child of this one. -->
+          <p class="meta" style="margin:.4rem 0 0"><span data-i18n>Programs are checked against the robot they will run on: no radar, no radar actions.</span> <span data-i18n>Designing the robot is its own page: the</span> <a href="/blueprints" data-i18n>blueprint configurator</a>.</p>
         </div>
 
         <!-- The catalogue is the parts bin: drag a row onto a rule to add it
              there, or onto the end of the list to start a new rule. -->
         <div class="blk cat">
-          <h2>Catalogue</h2>
-          <input type="text" id="filter" placeholder="filter conditions and actions&hellip;">
+          <h2 data-i18n>Catalogue</h2>
+          <input type="text" id="filter" placeholder="filter conditions and actions&hellip;" data-i18n-attr="placeholder">
           <div id="catalogue"></div>
-          <p class="meta" style="border-top:1px dashed var(--line-2);padding-top:.5rem;margin-top:.7rem">
-          Greyed rows need hardware this blueprint does not carry. They stay
-          draggable &mdash; testing a sensor you do not have is legal, just
-          pointless.</p>
+          <!-- One line, not three: the key is the element's textContent verbatim,
+               so a wrapped sentence would carry the source indentation into it. -->
+          <p class="meta" style="border-top:1px dashed var(--line-2);padding-top:.5rem;margin-top:.7rem" data-i18n>Greyed rows need hardware this blueprint does not carry. They stay draggable &mdash; testing a sensor you do not have is legal, just pointless.</p>
         </div>
       </aside>
 
@@ -335,44 +339,42 @@
            screen. -->
       <section class="mid" id="cardsview">
         <header class="panehead">
-          <span class="label">Rules &middot; <span id="rulecount">0</span></span>
-          <span class="meta">Evaluated top to bottom &middot; first match takes the tick</span>
+          <span class="label"><span data-i18n>Rules</span> &middot; <span id="rulecount">0</span></span>
+          <span class="meta" data-i18n>Evaluated top to bottom &middot; first match takes the tick</span>
           <span class="grow"></span>
           <!-- The live shadow test (design 1d 696-758). The picker holds the
                robots of your own colonies that are running this program right
                now; picking one replaces the dry run's badges with what the
                server says these rules would decide against that robot's senses
                this tick. It installs nothing. -->
-          <select id="shadowbot" title="try these rules against a live robot's senses — nothing is installed"></select>
+          <select id="shadowbot" title="try these rules against a live robot's senses — nothing is installed" data-i18n-attr="title"></select>
           <span class="meta" id="shadowhead"></span>
-          <a href="/help" target="_blank" class="meta">Rule language guide &nearr;</a>
+          <a href="/help" target="_blank" class="meta" data-i18n>Rule language guide &nearr;</a>
         </header>
         <div class="scroll">
           <div id="rules"></div>
-          <div id="droprow"><button id="addrule">Add rule</button><span>or drop a condition here</span></div>
+          <div id="droprow"><button id="addrule" data-i18n>Add rule</button><span data-i18n>or drop a condition here</span></div>
         </div>
       </section>
 
       <aside class="side" id="checksview">
         <header class="panehead">
-          <span class="label">Checks</span>
+          <span class="label" data-i18n>Checks</span>
           <span class="grow"></span>
           <span id="counts"></span>
         </header>
         <div class="scroll">
           <div id="issues"></div>
           <div class="blk">
-            <h2 id="dryhead">Dry run</h2>
-            <p class="meta">A few hundred ticks in a practice arena before
-            anything carries this into a match. A rule that never fired is marked
-            on its own card.</p>
+            <h2 id="dryhead" data-i18n>Dry run</h2>
+            <p class="meta" data-i18n>A few hundred ticks in a practice arena before anything carries this into a match. A rule that never fired is marked on its own card.</p>
             <div id="dryrun"></div>
           </div>
           <!-- Every version this program has had, newest first (design 1e
                810-818). LIVE marks the one a robot is given when it is
                installed; a version with robots in the field says where. -->
           <div class="blk">
-            <h2>Versions</h2>
+            <h2 data-i18n>Versions</h2>
             <div id="versions"></div>
           </div>
         </div>
@@ -387,10 +389,10 @@
              keys do to it. -->
         <footer class="statusbar">
           <span class="badge dashed" id="codestatus"></span>
-          <span>Read-only &mdash; the cards are the editor</span>
+          <span data-i18n>Read-only &mdash; the cards are the editor</span>
           <span class="grow" style="flex:1 1 auto"></span>
-          <span class="kbd">Ctrl/&#8984;+&crarr;</span><span>Dry run</span>
-          <span class="kbd">Alt+&uarr;</span><span>Raise priority</span>
+          <span class="kbd">Ctrl/&#8984;+&crarr;</span><span data-i18n>Dry run</span>
+          <span class="kbd">Alt+&uarr;</span><span data-i18n>Raise priority</span>
         </footer>
       </section>
 
@@ -400,27 +402,25 @@
              otherwise (design 1e 878-882) — the wording covers both rather than
              changing under the reader. -->
         <div class="blk">
-          <h2>Gutter</h2>
+          <h2 data-i18n>Gutter</h2>
           <div class="legend">
-            <span>&#10003;</span><span>took this tick in the shadow test &mdash; or fired in the last dry run</span>
-            <span>~</span><span>would match, but a rule above it took the tick first</span>
-            <span>&#10007;</span><span>conditions not met &mdash; or never fired in the dry run</span>
-            <span>!</span><span>a check has something to say about this rule</span>
-            <span>&middot;</span><span>no shadow test and no dry run yet</span>
+            <span>&#10003;</span><span data-i18n>took this tick in the shadow test &mdash; or fired in the last dry run</span>
+            <span>~</span><span data-i18n>would match, but a rule above it took the tick first</span>
+            <span>&#10007;</span><span data-i18n>conditions not met &mdash; or never fired in the dry run</span>
+            <span>!</span><span data-i18n>a check has something to say about this rule</span>
+            <span>&middot;</span><span data-i18n>no shadow test and no dry run yet</span>
           </div>
         </div>
         <div class="blk">
-          <h2 id="selhead">Selection</h2>
-          <div id="codedoc" class="meta">Pick a line to read what it means.</div>
-          <p class="meta" style="margin:.6rem 0 0">Documentation comes from the
-          server catalogue, so it cannot drift from the evaluator.</p>
+          <h2 id="selhead" data-i18n>Selection</h2>
+          <div id="codedoc" class="meta" data-i18n>Pick a line to read what it means.</div>
+          <p class="meta" style="margin:.6rem 0 0" data-i18n>Documentation comes from the server catalogue, so it cannot drift from the evaluator.</p>
         </div>
         <div class="blk">
-          <h2>Nothing matched</h2>
-          <p class="meta">There is no <code>otherwise</code>: a robot whose rules
-          all miss stands still for the tick. The last rule is your fallback, so
-          give it a condition that is always true &mdash; standing still is how
-          colonies lose.</p>
+          <h2 data-i18n>Nothing matched</h2>
+          <!-- The keyword is the language, not prose: it stays outside the two
+               marked spans, which is why the sentence is split at all. -->
+          <p class="meta"><span data-i18n>There is no</span> <code>otherwise</code>: <span data-i18n>a robot whose rules all miss stands still for the tick. The last rule is your fallback, so give it a condition that is always true &mdash; standing still is how colonies lose.</span></p>
         </div>
       </aside>
     </div>
