@@ -25,6 +25,7 @@
 //     inventing a name would be a lie with a tooltip.
 
 import { colonyVar, seriesReset, mmss } from "./graph.js";
+import { t } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -48,14 +49,20 @@ async function api(path) {
 // known once a match is selected. A list row has neither, only seconds.
 const clock = (secs) => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 // The server sends RFC3339; the reader is in some other timezone than the box.
-const when = (s) => (s ? new Date(s).toLocaleString() : "");
-const day = (s) => (s ? new Date(s).toLocaleDateString(undefined,
+// The locale is the page's language, not the browser's: a German page that dated
+// its rows "Aug 7" would be half-translated. i18n.js has already written it.
+const locale = () => document.documentElement.lang;
+const when = (s) => (s ? new Date(s).toLocaleString(locale()) : "");
+const day = (s) => (s ? new Date(s).toLocaleDateString(locale(),
   { month: "short", day: "numeric" }) : "");
 const lengthOf = (m) => clock(Math.round(m.end_tick / (m.tick_rate || 10)));
 const nameOf = (m) => (id) =>
-  m.colonies.find((c) => c.id === id)?.display_name || `colony ${id}`;
+  m.colonies.find((c) => c.id === id)?.display_name || t("colony %s").replace("%s", id);
+// English needs the suffix table; German is a full stop after any number, so the
+// suffixes are four one-character keys rather than a rule the dictionary cannot
+// hold.
 const ordinal = (n) => {
-  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  const s = [t("th"), t("st"), t("nd"), t("rd")], v = n % 100;
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
@@ -111,16 +118,23 @@ function thisMatchStats(m, seat) {
   const worst = c?.killed_by?.[0];
   const best = busiest(c?.kills_per);
   const lead = place > 1
-    ? `LEAD ${rows[0].score - seat.score}`
-    : (rows.length > 1 ? `AHEAD BY ${seat.score - rows[1].score}` : "UNCONTESTED");
+    ? t("LEAD %n").replace("%n", rows[0].score - seat.score)
+    : (rows.length > 1
+      ? t("AHEAD BY %n").replace("%n", seat.score - rows[1].score)
+      : t("UNCONTESTED"));
   return [
-    stat("Robots fielded", seat.robots,
-      peak ? `PEAK ${peak.peak} AT ${mmss(peak.tick)}` : ""),
-    stat("Losses", seat.losses,
-      worst ? `${worst.losses} TO R-${worst.robot} · ${nameOf(m)(worst.colony)}` : ""),
-    stat("Kills", seat.kills,
-      best ? `${best.n} IN MINUTE ${String(best.minute).padStart(2, "0")}` : ""),
-    stat("Score", seat.score, `${ordinal(place)} OF ${rows.length} · ${lead}`),
+    stat(t("Robots fielded"), seat.robots,
+      peak ? t("PEAK %n AT %t").replace("%n", peak.peak).replace("%t", mmss(peak.tick)) : ""),
+    stat(t("Losses"), seat.losses,
+      // The colony's display name is the player's: substitute it with a function
+      // so a name holding $& is not read as a replacement pattern.
+      worst ? t("%n TO R-%r · %c").replace("%n", worst.losses).replace("%r", worst.robot)
+        .replace("%c", () => nameOf(m)(worst.colony)) : ""),
+    stat(t("Kills"), seat.kills,
+      best ? t("%n IN MINUTE %m").replace("%n", best.n)
+        .replace("%m", String(best.minute).padStart(2, "0")) : ""),
+    stat(t("Score"), seat.score,
+      t("%p OF %n").replace("%p", ordinal(place)).replace("%n", rows.length) + ` · ${lead}`),
   ];
 }
 
@@ -133,14 +147,19 @@ function rangeStats(mine) {
   const sum = (f) => mine.reduce((n, x) => n + f(x), 0);
   const max = (f) => mine.reduce((n, x) => Math.max(n, f(x)), 0);
   const wins = mine.filter((x) => placeOf(x.m, x.seat) === 1).length;
+  // Whole sentences per plural, not a spliced suffix: German pluralises the noun
+  // the dictionary holds, not the letters English adds to it.
+  const fielded = mine.length === 1
+    ? t("AT THE FINAL TICK OF %n MATCH")
+    : t("AT THE FINAL TICK OF %n MATCHES");
   return [
-    stat("Robots fielded", sum((x) => x.seat.robots),
-      `AT THE FINAL TICK OF ${mine.length} MATCH${mine.length === 1 ? "" : "ES"}`),
-    stat("Losses", sum((x) => x.seat.losses),
-      `WORST ${max((x) => x.seat.losses)} IN ONE MATCH`),
-    stat("Kills", sum((x) => x.seat.kills),
-      `BEST ${max((x) => x.seat.kills)} IN ONE MATCH`),
-    stat("Score", sum((x) => x.seat.score), `WON ${wins} OF ${mine.length}`),
+    stat(t("Robots fielded"), sum((x) => x.seat.robots), fielded.replace("%n", mine.length)),
+    stat(t("Losses"), sum((x) => x.seat.losses),
+      t("WORST %n IN ONE MATCH").replace("%n", max((x) => x.seat.losses))),
+    stat(t("Kills"), sum((x) => x.seat.kills),
+      t("BEST %n IN ONE MATCH").replace("%n", max((x) => x.seat.kills))),
+    stat(t("Score"), sum((x) => x.seat.score),
+      t("WON %w OF %n").replace("%w", wins).replace("%n", mine.length)),
   ];
 }
 
@@ -159,15 +178,15 @@ function renderStats() {
   const box = $("stats");
   const note = $("stats-note");
   box.replaceChildren();
-  const scope = " The charts and the standing below are always the match you"
-    + " picked.";
+  const scope = " " + t("The charts and the standing below are always the match you picked.");
   if (range === "match") {
     const m = matches.find((x) => x.id === selected);
     const seat = m && seatOf(m);
-    if (!m) { note.textContent = "No match has finished yet."; return; }
+    if (!m) { note.textContent = t("No match has finished yet."); return; }
     if (!seat) {
-      note.textContent = `You did not play ${m.name}, so there are no numbers of`
-        + " yours in it. Its standing and its charts are below.";
+      // One literal, however long: a concatenation is a key nothing can check.
+      note.textContent = t("You did not play %s, so there are no numbers of yours in it. Its standing and its charts are below.")
+        .replace("%s", () => m.name);
       return;
     }
     box.append(...thisMatchStats(m, seat));
@@ -175,14 +194,22 @@ function renderStats() {
     return;
   }
   const mine = played();
-  const over = range === "30d" ? "in the last 30 days" : "on record";
+  // The range is part of the sentence, not a phrase dropped into a slot: German
+  // puts "in den letzten 30 Tagen" where English puts it last.
+  const days = range === "30d";
   if (mine.length === 0) {
-    note.textContent = `You have not played a finished match ${over}.`;
+    note.textContent = days
+      ? t("You have not played a finished match in the last 30 days.")
+      : t("You have not played a finished match on record.");
     return;
   }
   box.append(...rangeStats(mine));
-  note.textContent = `Your totals over ${mine.length} match`
-    + `${mine.length === 1 ? "" : "es"} ${over}.` + scope;
+  const totals = mine.length === 1
+    ? (days ? t("Your totals over %n match in the last 30 days.")
+      : t("Your totals over %n match on record."))
+    : (days ? t("Your totals over %n matches in the last 30 days.")
+      : t("Your totals over %n matches on record."));
+  note.textContent = totals.replace("%n", mine.length) + scope;
 }
 
 // ----------------------------------------------------------------- the charts
@@ -200,9 +227,8 @@ function renderBars(m) {
   const bucket = detail?.combat?.bucket_ticks || 0;
   if (!c || !bucket || (!c.losses_per?.length && !c.kills_per?.length)) {
     note.textContent = seat
-      ? "This match was recorded before the build that stores kills and losses,"
-        + " so there is nothing to chart."
-      : "You did not play this match.";
+      ? t("This match was recorded before the build that stores kills and losses, so there is nothing to chart.")
+      : t("You did not play this match.");
     return;
   }
   const kills = c.kills_per || [];
@@ -213,8 +239,12 @@ function renderBars(m) {
   for (let i = 0; i < n; i++) {
     const k = kills[i] || 0, l = losses[i] || 0;
     const col = el("div");
-    col.title = `Minute ${i + 1}: ${k} kill${k === 1 ? "" : "s"}, `
-      + `${l} loss${l === 1 ? "" : "es"}`;
+    // Two counted nouns in one tooltip: each plural is its own key and the frame
+    // joins them, rather than four keys for the four combinations.
+    col.title = t("Minute %m: %k, %l")
+      .replace("%m", i + 1)
+      .replace("%k", (k === 1 ? t("%n kill") : t("%n kills")).replace("%n", k))
+      .replace("%l", (l === 1 ? t("%n loss") : t("%n losses")).replace("%n", l));
     const bar = (cls, v) => {
       const d = el("div", cls);
       d.style.height = `${top ? (v / top) * 80 : 0}%`;
@@ -225,10 +255,12 @@ function renderBars(m) {
     box.append(col);
   }
   const dropped = c.losses - losses.reduce((a, b) => a + b, 0);
-  note.textContent = `One bar per ${mmss(bucket)} of match time.`
+  note.textContent = t("One bar per %s of match time.").replace("%s", mmss(bucket))
     + (dropped > 0
-      ? ` ${dropped} of ${c.losses} losses happened before the match's event feed`
-        + " reached this far back, so they are not in the bars."
+      // No apostrophe in a key: the guard cannot tell one from a quote, so the
+      // sentence loses "the match's" rather than the check.
+      ? " " + t("%d of %n losses happened before the event feed reached this far back, so they are not in the bars.")
+        .replace("%d", dropped).replace("%n", c.losses)
       : "");
 }
 
@@ -243,8 +275,8 @@ function renderKilledBy(m) {
   const c = seat && combatOf(seat.id);
   if (!c) {
     note.textContent = seat
-      ? "No attribution was stored for this match."
-      : "You did not play this match.";
+      ? t("No attribution was stored for this match.")
+      : t("You did not play this match.");
     return;
   }
   const ranked = c.killed_by || [];
@@ -262,15 +294,15 @@ function renderKilledBy(m) {
   const attributed = ranked.reduce((n, a) => n + a.losses, 0);
   if (ranked.length === 0) {
     note.textContent = c.losses
-      ? `${c.losses} robots lost, none of them to an attacker the event feed`
-        + " still remembers."
-      : "Nothing of yours was destroyed.";
+      ? t("%n robots lost, none of them to an attacker the event feed still remembers.")
+        .replace("%n", c.losses)
+      : t("Nothing of yours was destroyed.");
     return;
   }
-  note.textContent = "The attacker is a robot id and its colony: which blueprint"
-    + " it was is not recorded yet."
+  note.textContent = t("The attacker is a robot id and its colony: which blueprint it was is not recorded yet.")
     + (c.losses > attributed
-      ? ` ${c.losses - attributed} of ${c.losses} losses have no attacker on record.`
+      ? " " + t("%d of %n losses have no attacker on record.")
+        .replace("%d", c.losses - attributed).replace("%n", c.losses)
       : "");
 }
 
@@ -279,14 +311,17 @@ function renderKilledBy(m) {
 // The standing is the list row's colonies — lobby.Status plus the design §9
 // score — with parts collected taken from the last sample of the series, which
 // is the same number the graph's "parts collected" line ends on.
+// The table is `tab`, not `t`: the translator is named t now and a local of
+// that name would shadow it.
 function renderStanding(m, d) {
-  const t = $("standing");
-  t.replaceChildren();
+  const tab = $("standing");
+  tab.replaceChildren();
   const head = document.createElement("tr");
-  for (const c of ["#", "Colony", "Score", "Robots", "Kills", "Losses", "Stock", "Parts"]) {
+  for (const c of ["#", t("Colony"), t("Score"), t("Robots"), t("Kills"),
+    t("Losses"), t("Stock"), t("Parts")]) {
     head.append(el("th", null, c));
   }
-  t.append(head);
+  tab.append(head);
 
   const rows = standing(m);
   rows.forEach((c, i) => {
@@ -302,31 +337,30 @@ function renderStanding(m, d) {
     // strokes and the match view's map read.
     sw.style.background = `var(${colonyVar(c.id)})`;
     who.append(sw, document.createTextNode(c.display_name + (c.ai ? ` (${c.ai})` : "")));
-    if (tr.className === "win") who.append(el("span", "badge", "winner"));
+    if (tr.className === "win") who.append(el("span", "badge", t("winner")));
     tr.append(who, el("td", "num", String(c.score)), el("td", "num", String(c.robots)),
       el("td", "num", String(c.kills || 0)), el("td", "num", String(c.losses || 0)),
       el("td", "num", String(c.inventory)), el("td", "num", String(parts)));
-    t.append(tr);
+    tab.append(tr);
   });
 }
 
 // The design's MATCH HISTORY table, which is also the picker: when, which
 // lobby, and where you came — against /api/me, so "place" means your place.
 function renderList() {
-  const t = $("matches");
-  t.replaceChildren();
+  const tab = $("matches");
+  tab.replaceChildren();
   if (matches.length === 0) {
     const tr = document.createElement("tr");
-    const td = el("td", "meta", "No match has finished yet. Start one from the"
-      + " lobbies page — it lands here when it ends.");
+    const td = el("td", "meta", t("No match has finished yet. Start one from the lobbies page — it lands here when it ends."));
     td.colSpan = 3;
     tr.append(td);
-    t.append(tr);
+    tab.append(tr);
     return;
   }
   const head = document.createElement("tr");
-  for (const c of ["When", "Lobby", "Place"]) head.append(el("th", null, c));
-  t.append(head);
+  for (const c of [t("When"), t("Lobby"), t("Place")]) head.append(el("th", null, c));
+  tab.append(head);
   for (const m of matches) {
     const tr = document.createElement("tr");
     if (m.id === selected) tr.className = "on";
@@ -340,13 +374,14 @@ function renderList() {
     const cell = el("td", null, place);
     if (seat && placeOf(m, seat) === 1) cell.className = "first";
     const at = el("td", null, day(m.finished_at));
-    at.title = `${when(m.finished_at)} · ${lengthOf(m)} long`;
+    at.title = `${when(m.finished_at)} · `
+      + t("%s long").replace("%s", lengthOf(m));
     // One handler on the row: the whole row is the target for a pointer, and a
     // click on the button — which is what a keyboard and a screen reader reach,
     // and where the accessible name is — bubbles into it.
     tr.addEventListener("click", () => select(m));
     tr.append(at, lobby, cell);
-    t.append(tr);
+    tab.append(tr);
   }
 }
 
@@ -359,24 +394,24 @@ function renderWatch(m, d) {
   box.replaceChildren();
   head.replaceChildren();
   if (d.replayable) {
-    const a = el("a", "btn primary", `Watch ${m.name}`);
+    const a = el("a", "btn primary", t("Watch %s").replace("%s", () => m.name));
     a.href = `/match?id=${encodeURIComponent(m.id)}&replay=1`;
-    box.append(a, el("p", "meta", "Plays back in the match view, with a scrubber,"
-      + " pause and speed. Seeking rebuilds the world from the start, so it takes"
-      + " a moment."));
+    box.append(a, el("p", "meta", t("Plays back in the match view, with a scrubber, pause and speed. Seeking rebuilds the world from the start, so it takes a moment.")));
     // The design opens the replay at the tick under the cursor. The match view
     // has no tick in its URL, so this opens at the start — the seek is the
     // scrubber's job until it does.
-    const open = el("a", null, "Open the replay");
+    const open = el("a", null, t("Open the replay"));
     open.href = a.href;
-    head.append(open, document.createTextNode(" — from the start"));
+    head.append(open, document.createTextNode(" " + t("— from the start")));
     return;
   }
-  const b = el("button", "btn", "Watch");
+  const b = el("button", "btn", t("Watch"));
   b.type = "button";
   b.disabled = true;
+  // d.reason is the server's sentence and reaches the player in English; rc-mjj.9
+  // owns the server side.
   box.append(b, el("p", "meta", d.reason
-    || "This match cannot be replayed by the build running now."));
+    || t("This match cannot be replayed by the build running now.")));
 }
 
 async function select(m) {
@@ -386,8 +421,9 @@ async function select(m) {
   renderList();
   err("");
   $("detail-name").textContent = m.name;
-  $("detail-when").textContent = `${when(m.started_at)} · ${lengthOf(m)} of match time`
-    + ` · ${m.end_tick} ticks at ${m.tick_rate || 10}/s`;
+  $("detail-when").textContent = `${when(m.started_at)} · `
+    + t("%s of match time").replace("%s", lengthOf(m)) + " · "
+    + t("%n ticks at %r/s").replace("%n", m.end_tick).replace("%r", m.tick_rate || 10);
   let d = null;
   try { d = await api(`/api/history/${encodeURIComponent(m.id)}`); }
   catch (e) { err(e.message); return; }
