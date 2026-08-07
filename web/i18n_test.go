@@ -15,10 +15,22 @@ package web_test
 //
 // Regex over the embedded bytes rather than an HTML parser: the markup is
 // hand-written in eight files that nav_test.go already keeps regular, and a
-// parser would be a dependency bought to check nine lines of JSON.
+// parser would be a dependency bought to check nine lines of JSON. Where a
+// regex genuinely cannot do the job — finding the end of a t( argument, and
+// telling a comment from code — the scan is written by hand instead
+// (i18nArg, i18nStrip); adding a parser to buy that back is not the trade.
+//
+// What the guard must NOT do is decide English prose for us. Three separate
+// executors reworded copy to get past it (rc-mjj.10): an apostrophe, a
+// parenthesis, a line wrap and a comment are all ordinary English, and a key
+// is checked, not rationed. So: whitespace is collapsed the same way the
+// runtime collapses it, the argument is scanned as a string, only the
+// delimiter itself is forbidden inside a literal, and comments are stripped
+// before anything is scanned. TestTheGuardItself holds each of those.
 
 import (
 	"encoding/json"
+	"fmt"
 	"html"
 	"io/fs"
 	"maps"
@@ -40,36 +52,164 @@ var (
 	// read back out of it.
 	i18nTagRe  = regexp.MustCompile(`<[a-zA-Z][^>]*\sdata-i18n-attr="([^"]*)"[^>]*>`)
 	i18nAttrRe = regexp.MustCompile(`([a-zA-Z-]+)="([^"]*)"`)
-	// Every t(...) call, argument and all. A key that is not a plain literal
-	// cannot be checked from out here, so such a call is reported rather than
-	// skipped — otherwise it is exactly the shape of drift that walks past the
-	// guard. The leading class keeps someObject.t(x) out.
-	i18nCallRe = regexp.MustCompile(`(^|[^\w$.])t\(([^)]*)\)`)
+	// Where a t(...) call starts. The argument is walked by hand from here
+	// (i18nArg) rather than captured, because no regex can see that a ) or a ,
+	// inside a string literal is text. The leading class keeps someObject.t(x)
+	// out.
+	i18nCallRe = regexp.MustCompile(`(^|[^\w$.])t\(`)
+	// HTML comments, and inline scripts so JS comment rules apply to their
+	// bodies and not to the markup around them.
+	i18nHTMLCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
+	i18nScriptRe      = regexp.MustCompile(`(?s)(<script[^>]*>)(.*?)(</script>)`)
 )
 
+// i18nKey is the string the runtime will actually look up: web/js/i18n.js
+// collapses every run of whitespace in an element's text to one space, so a
+// paragraph wrapped for the width of the source file keys off the same string
+// as one written on a single line. The two collapses have to agree exactly.
+func i18nKey(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// i18nArg returns the source text between a t('s parentheses, having started
+// just past the open paren. Quotes are honoured, so a ) or a , inside a literal
+// is not the end of anything.
+func i18nArg(src string) (string, bool) {
+	depth := 1
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; c {
+		case '"', '\'', '`':
+			j, ok := i18nCloseQuote(src, i)
+			if !ok {
+				return "", false // unterminated literal: the call never closes
+			}
+			i = j
+		case '(':
+			depth++
+		case ')':
+			if depth--; depth == 0 {
+				return src[:i], true
+			}
+		}
+	}
+	return "", false
+}
+
+// i18nCloseQuote finds the literal's closing delimiter, given the index of its
+// opening one. Escapes are skipped, so \" does not close a " literal.
+func i18nCloseQuote(src string, open int) (int, bool) {
+	for i := open + 1; i < len(src); i++ {
+		switch src[i] {
+		case '\\':
+			i++
+		case src[open]:
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// i18nStripJS blanks // and /* */ comments. String and template literals are
+// copied through untouched: a // inside one is a URL far more often than it is
+// a comment, and a comment that happens to mention t() is not a call.
+//
+// Regex literals are not tracked, which is a lexer's job and not worth one
+// here: JS itself reads a leading // or /* as a comment, so the only way to
+// hide a bare // in a regex is inside a character class, and the only /* is a
+// closing / followed by a multiplication. Both would strip to end of line —
+// which loses a t() call rather than inventing one, and a lost call shows up
+// as its dictionary entry going stale on the next run.
+func i18nStripJS(src string) string {
+	var b strings.Builder
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; {
+		case c == '"' || c == '\'' || c == '`':
+			j, ok := i18nCloseQuote(src, i)
+			if !ok { // unterminated: copy the rest verbatim rather than guess
+				b.WriteString(src[i:])
+				return b.String()
+			}
+			b.WriteString(src[i : j+1])
+			i = j
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			b.WriteByte('\n') // keep the line structure the error messages read
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return b.String()
+			}
+			b.WriteByte(' ') // a block comment separates whatever it sat between
+			i += 2 + end + 1
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// i18nStrip removes the comments from a source file before anything is scanned
+// out of it, so a comment mentioning t() or data-i18n is documentation and not
+// a finding. JS rules apply to a .js file whole and to an .html file only
+// inside its <script> elements — markup prose is full of apostrophes, and
+// letting the JS scanner loose on it would have every one of them open a string.
+// One pass, so neither rule runs over the other's text: an HTML comment written
+// inside a JS string stays in the string, and a // in markup prose stays prose.
+func i18nStrip(name, src string) string {
+	if !strings.HasSuffix(name, ".html") {
+		return i18nStripJS(src)
+	}
+	var b strings.Builder
+	at := 0
+	for _, m := range i18nScriptRe.FindAllStringSubmatchIndex(src, -1) {
+		b.WriteString(i18nHTMLCommentRe.ReplaceAllString(src[at:m[0]], ""))
+		b.WriteString(src[m[2]:m[3]])              // <script ...>
+		b.WriteString(i18nStripJS(src[m[4]:m[5]])) // its body
+		b.WriteString(src[m[6]:m[7]])              // </script>
+		at = m[1]
+	}
+	b.WriteString(i18nHTMLCommentRe.ReplaceAllString(src[at:], ""))
+	return b.String()
+}
+
 // i18nLiteral reads the key out of a t(...) argument, or says why it cannot.
-func i18nLiteral(t *testing.T, src, arg string) (string, bool) {
+// The key is the *runtime* string, so the source text has to be the runtime
+// string too: an escape or a ${} makes them differ, and the delimiter appearing
+// inside means the literal ended before the argument did. Every other
+// character, apostrophes and parentheses included, is ordinary text.
+func i18nLiteral(t i18nReporter, src, arg string) (string, bool) {
 	a := strings.TrimSpace(arg)
-	if len(a) >= 2 && strings.ContainsAny(a[:1], "\"'`") && a[len(a)-1] == a[0] &&
-		!strings.ContainsAny(a[1:len(a)-1], "\"'`\\$") {
-		return a[1 : len(a)-1], true
+	if len(a) >= 2 && strings.ContainsAny(a[:1], "\"'`") && a[len(a)-1] == a[0] {
+		body := a[1 : len(a)-1]
+		ok := !strings.ContainsAny(body, "\\\n"+a[:1])
+		if a[0] == '`' {
+			ok = ok && !strings.Contains(body, "${")
+		}
+		if ok {
+			return body, true
+		}
 	}
 	t.Errorf("%s: t(%s) — the key has to be a plain string literal, or nothing can check that\n"+
 		"German exists behind it. Translate the literal and build the rest of the string around it.", src, a)
 	return "", false
 }
 
-// i18nKeys is every English string page asks to have translated: its own
-// markup, its inline scripts, and the modules it loads.
-func i18nKeys(t *testing.T, page string) map[string]bool {
-	t.Helper()
+// i18nReporter is *testing.T, narrowed to what the scanners use so the guard's
+// own self-check can hand them a collector and assert on what they said.
+type i18nReporter interface {
+	Errorf(format string, args ...any)
+}
+
+// i18nMarkupKeys reads the keys out of a page's markup: data-i18n elements and
+// the attributes data-i18n-attr names. The source is expected to be stripped of
+// comments already.
+func i18nMarkupKeys(t i18nReporter, page, src string) map[string]bool {
 	keys := map[string]bool{}
-	src := pageHTML(t, page)
 
 	// The runtime keys off el.textContent and getAttribute, both of which the
 	// parser has already decoded, so &amp; here is & there.
 	for _, m := range i18nTextRe.FindAllStringSubmatch(src, -1) {
-		key := strings.TrimSpace(html.UnescapeString(m[1]))
+		key := i18nKey(html.UnescapeString(m[1]))
 		switch {
 		case m[2] != "/":
 			t.Errorf("%s: data-i18n on an element that also holds markup (%q...).\n"+
@@ -93,17 +233,39 @@ func i18nKeys(t *testing.T, page string) map[string]bool {
 				t.Errorf("%s: data-i18n-attr names %q, which the element does not carry:\n%s", page, name, tag[0])
 				continue
 			}
-			keys[strings.TrimSpace(html.UnescapeString(v))] = true
+			keys[i18nKey(html.UnescapeString(v))] = true
 		}
 	}
+	return keys
+}
+
+// i18nCallKeys reads the keys out of every t(...) in a comment-stripped source.
+func i18nCallKeys(t i18nReporter, mod, src string) map[string]bool {
+	keys := map[string]bool{}
+	for _, loc := range i18nCallRe.FindAllStringIndex(src, -1) {
+		arg, closed := i18nArg(src[loc[1]:])
+		if !closed {
+			t.Errorf("%s: the t( at byte %d never closes — an unterminated string literal?", mod, loc[1])
+			continue
+		}
+		if key, ok := i18nLiteral(t, mod, arg); ok {
+			keys[key] = true
+		}
+	}
+	return keys
+}
+
+// i18nKeys is every English string page asks to have translated: its own
+// markup, its inline scripts, and the modules it loads.
+func i18nKeys(t *testing.T, page string) map[string]bool {
+	t.Helper()
+	src := i18nStrip(page, pageHTML(t, page))
+	keys := i18nMarkupKeys(t, page, src)
 
 	// The page itself is scanned too: lobby.html's script is inline.
-	for _, mod := range append([]string{page}, scripts[page]...) {
-		for _, m := range i18nCallRe.FindAllStringSubmatch(pageHTML(t, mod), -1) {
-			if key, ok := i18nLiteral(t, mod, m[2]); ok {
-				keys[key] = true
-			}
-		}
+	maps.Copy(keys, i18nCallKeys(t, page, src))
+	for _, mod := range scripts[page] {
+		maps.Copy(keys, i18nCallKeys(t, mod, i18nStrip(mod, pageHTML(t, mod))))
 	}
 	return keys
 }
@@ -182,6 +344,125 @@ func TestTranslationsAndMarkupHaveNotDrifted(t *testing.T) {
 					"Either the English was edited and this entry is stale, or the entry is in the wrong file.", f, k, where)
 			}
 		}
+	}
+}
+
+// i18nCollector is an i18nReporter that keeps what it was told instead of
+// failing, so the guard can be pointed at its own hard cases.
+type i18nCollector []string
+
+func (c *i18nCollector) Errorf(format string, args ...any) {
+	*c = append(*c, fmt.Sprintf(format, args...))
+}
+
+// The guard decides what English the client is allowed to say, so its edges are
+// worth as much care as the rules themselves. Each case below is a shape that
+// either cost a real string its phrasing (the accepted half) or is real drift
+// the guard exists to catch (the rejected half).
+func TestTheGuardItself(t *testing.T) {
+	calls := []struct {
+		name    string
+		file    string // "" means a .js module
+		src     string
+		key     string // "" means the call must be rejected
+		ignored bool   // ... unless it is not a t() call at all
+	}{
+		{name: "an apostrophe is English, not a delimiter",
+			src: `t("the match's event feed")`, key: "the match's event feed"},
+		{name: "so is a parenthesis",
+			src: `t("Open lobbies (waiting)")`, key: "Open lobbies (waiting)"},
+		{name: "and a comma inside the literal is text, not a second argument",
+			src: `t("one, two, three")`, key: "one, two, three"},
+		{name: "a quote that is not the delimiter is ordinary text",
+			src: `t('say "go" once')`, key: `say "go" once`},
+		{name: "a comment mentioning t() is documentation",
+			src: "// t(x) reads a literal\nt(\"Ready\")", key: "Ready"},
+		{name: "so is a block comment mentioning it",
+			src: "/* t(x), never t(`${x}`) */ t(\"Ready\")", key: "Ready"},
+		{name: "a // inside a string literal is a URL, not a comment",
+			src: `const u = "https://example.com/x"; t("Ready")`, key: "Ready"},
+		{name: "a JS comment inside an inline script is stripped as JS",
+			file: "case.html", src: "<script type=\"module\">\n// t(\"gone\")\nt(\"Ready\");\n</script>", key: "Ready"},
+		{name: "an HTML comment written inside a JS string is a string",
+			file: "case.html", src: "<script type=\"module\">\nconst c = \"<!--\"; t(\"Ready\"); const d = \"-->\";\n</script>", key: "Ready"},
+		{name: "a bare identifier cannot be checked from out here",
+			src: `t(x)`},
+		{name: "nor can a concatenation",
+			src: `t("a " + b)`},
+		{name: "nor can an interpolation",
+			src: "t(`a ${b} c`)"},
+		{name: "nor can an escape, whose source text is not its runtime string",
+			src: `t("a\nb")`},
+		{name: "someObject.t(x) is not this t()",
+			src: `report.t(x)`, ignored: true},
+	}
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			file := c.file
+			if file == "" {
+				file = "case.js"
+			}
+			var rep i18nCollector
+			got := i18nCallKeys(&rep, file, i18nStrip(file, c.src))
+			switch {
+			case c.ignored:
+				if len(rep) != 0 || len(got) != 0 {
+					t.Errorf("%s is not a t() call: keys %v, said %v", c.src, slices.Sorted(maps.Keys(got)), []string(rep))
+				}
+			case c.key != "":
+				if len(rep) != 0 {
+					t.Errorf("%s should be accepted, but the guard said: %v", c.src, []string(rep))
+				}
+				if want := []string{c.key}; !slices.Equal(slices.Sorted(maps.Keys(got)), want) {
+					t.Errorf("%s: key is %v, want %v", c.src, slices.Sorted(maps.Keys(got)), want)
+				}
+			default:
+				if len(rep) == 0 {
+					t.Errorf("%s should be rejected — an unverifiable key is the drift the guard is for", c.src)
+				}
+				if len(got) != 0 {
+					t.Errorf("%s was rejected but still contributed %v", c.src, slices.Sorted(maps.Keys(got)))
+				}
+			}
+		})
+	}
+
+	markup := []struct {
+		name string
+		src  string
+		keys []string // nil means the markup must be rejected
+	}{
+		{"a paragraph wrapped across three source lines is one key",
+			"<p data-i18n>\n      The bars stop where the match's\n      event feed stops, so a loss older\n      than the feed is not in them.\n    </p>",
+			[]string{"The bars stop where the match's event feed stops, so a loss older than the feed is not in them."}},
+		{"an HTML comment mentioning data-i18n is documentation",
+			"<!-- data-i18n marks an element, and the key is its text -->\n<p data-i18n>Ready</p>",
+			[]string{"Ready"}},
+		{"an attribute value is collapsed the same way",
+			"<input data-i18n-attr=\"placeholder\"\n           placeholder=\"Lobby name\">",
+			[]string{"Lobby name"}},
+		{"an element that really does wrap markup is still rejected",
+			`<p data-i18n>Rules <span id="rulecount">0</span></p>`, nil},
+		{"and so is one with no text at all",
+			`<p data-i18n></p>`, nil},
+	}
+	for _, c := range markup {
+		t.Run(c.name, func(t *testing.T) {
+			var rep i18nCollector
+			got := i18nMarkupKeys(&rep, "case.html", i18nStrip("case.html", c.src))
+			if c.keys == nil {
+				if len(rep) == 0 {
+					t.Errorf("%q should be rejected", c.src)
+				}
+				return
+			}
+			if len(rep) != 0 {
+				t.Errorf("%q should be accepted, but the guard said: %v", c.src, []string(rep))
+			}
+			if !slices.Equal(slices.Sorted(maps.Keys(got)), c.keys) {
+				t.Errorf("%q: keys are %v, want %v", c.src, slices.Sorted(maps.Keys(got)), c.keys)
+			}
+		})
 	}
 }
 

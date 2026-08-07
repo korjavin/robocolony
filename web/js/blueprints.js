@@ -618,8 +618,8 @@ $("clear").addEventListener("click", () => {
 $("del").addEventListener("click", async () => {
   err(""); status("");
   const b = selected();
-  // The quotes live outside the key: web/i18n_test.go will not read a literal
-  // that carries one, and it is right not to — the escaping is not translatable.
+  // The quotes live outside the key, around the substituted name: they are
+  // punctuation on the player's own text, not something a translator chooses.
   if (!b || !confirm(fill(t("Delete the blueprint %1?"), `"${b.name}"`))) return;
   try {
     await api("DELETE", `/api/blueprints/${b.id}`);

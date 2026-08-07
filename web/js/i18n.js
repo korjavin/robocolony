@@ -4,10 +4,11 @@
 // all — t("Ready") returns "Ready" when nothing German is behind it, and the
 // HTML keeps its English text. German is a pure overlay.
 //
-// Markup opts in per element: `data-i18n` (key = the element's own trimmed
-// text) and `data-i18n-attr="placeholder,title"` (key = each named attribute's
-// own value). Nothing is translated implicitly — code samples, robot ids and
-// rule-language keywords must stay English.
+// Markup opts in per element: `data-i18n` (key = the element's own text, with
+// runs of whitespace collapsed to one space) and
+// `data-i18n-attr="placeholder,title"` (key = each named attribute's own value,
+// collapsed the same way). Nothing is translated implicitly — code samples,
+// robot ids and rule-language keywords must stay English.
 //
 // The dictionary fetch is a top-level await, so any module importing t() is
 // guaranteed a loaded dict before it renders its first row. web/i18n_test.go is
@@ -54,6 +55,12 @@ export function t(s) {
   return dict[s] ?? s;
 }
 
+// The key a marked-up element carries: its text with the source's line wrapping
+// and indentation collapsed away, so a paragraph may be wrapped for the width
+// of the file and still look up the same German as one written on one line.
+// web/i18n_test.go collapses the same way; the two have to agree exactly.
+const key = (s) => s.trim().replace(/\s+/g, " ");
+
 // Switching reloads. That is the feature, not a shortcut: it re-renders the
 // JS-built UI for free, and there is no live re-translation to keep correct.
 export function setLang(next) {
@@ -69,13 +76,13 @@ export function setLang(next) {
 // Module scripts are deferred, so the document is parsed by the time this runs.
 document.documentElement.lang = lang;
 for (const el of document.querySelectorAll("[data-i18n]")) {
-  const de = dict[el.textContent.trim()];
+  const de = dict[key(el.textContent)];
   if (de) el.textContent = de; // textContent, never innerHTML: a dictionary is data.
 }
 for (const el of document.querySelectorAll("[data-i18n-attr]")) {
   for (const name of el.dataset.i18nAttr.split(",")) {
     const attr = name.trim();
-    const de = dict[el.getAttribute(attr)?.trim()];
+    const de = dict[key(el.getAttribute(attr) ?? "")];
     if (de) el.setAttribute(attr, de);
   }
 }

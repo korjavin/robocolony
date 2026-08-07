@@ -64,7 +64,7 @@
   "%n loss": "%n Verlust",
   "%n losses": "%n Verluste",
   "One bar per %s of match time.": "Ein Balken pro %s Matchzeit.",
-  "%d of %n losses happened before the event feed reached this far back, so they are not in the bars.": "%d von %n Verlusten liegen weiter zurück, als der Ereignis-Feed des Matches reicht — sie fehlen in den Balken.",
+  "%d of %n losses happened before the match's event feed reached this far back, so they are not in the bars.": "%d von %n Verlusten liegen weiter zurück, als der Ereignis-Feed des Matches reicht — sie fehlen in den Balken.",
 
   "No attribution was stored for this match.": "Für dieses Match wurde keine Zuordnung gespeichert.",
   "%n robots lost, none of them to an attacker the event feed still remembers.": "%n Roboter verloren, keinen davon an einen Angreifer, an den sich der Ereignis-Feed noch erinnert.",

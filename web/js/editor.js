@@ -924,10 +924,8 @@ async function runShadow() {
     // 422: the draft does not fit that robot's blueprint, which is the same
     // refusal an install would give. 404: the robot has been destroyed since
     // the picker was built.
-    // Genitive rephrased: an apostrophe cannot appear in a key, because the
-    // guard reads the keys back out of the source with a regex.
     shadowNote = e.status === 422
-      ? t("these rules do not fit the blueprint of %s").replace("%s", bot.name)
+      ? t("these rules do not fit %s's blueprint").replace("%s", bot.name)
       : `${bot.name}: ${e.message}`;
   }
 }
@@ -943,7 +941,7 @@ function renderShadowHead() {
   // arrived.
   head.textContent = t("shadow test · %s @ tick %n").replace("%s", bot.name).replace("%n", shadow.tick)
     + (shadow.signals_assumed_absent ? " · " + t("signals assumed absent") : "");
-  head.title = t("what these rules would decide against what this robot senses this tick.")
+  head.title = t("what these rules would decide against this robot's senses this tick.")
     + " " + t("Nothing is installed: the robot goes on running the program it has.");
 }
 
@@ -978,7 +976,7 @@ function shadowVerdict(i) {
   }
   return el("span", {
     className: "meta", textContent: t("✗ NOT MET"),
-    title: t("its conditions did not hold against what this robot senses this tick"),
+    title: t("its conditions did not hold against this robot's senses this tick"),
   });
 }
 
@@ -1085,7 +1083,7 @@ function renderCodeDoc(line) {
     host.append(el("div", { style: "margin:0 0 .6rem" },
       el("code", { textContent: id }),
       el("p", { className: "meta", style: "margin:.2rem 0 0",
-        textContent: spec ? spec.desc : t("not in the catalogue of this build.") })));
+        textContent: spec ? spec.desc : t("not in this build's catalogue.") })));
   }
 }
 

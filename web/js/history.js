@@ -257,9 +257,7 @@ function renderBars(m) {
   const dropped = c.losses - losses.reduce((a, b) => a + b, 0);
   note.textContent = t("One bar per %s of match time.").replace("%s", mmss(bucket))
     + (dropped > 0
-      // No apostrophe in a key: the guard cannot tell one from a quote, so the
-      // sentence loses "the match's" rather than the check.
-      ? " " + t("%d of %n losses happened before the event feed reached this far back, so they are not in the bars.")
+      ? " " + t("%d of %n losses happened before the match's event feed reached this far back, so they are not in the bars.")
         .replace("%d", dropped).replace("%n", c.losses)
       : "");
 }
