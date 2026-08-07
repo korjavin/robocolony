@@ -130,42 +130,40 @@
   <section class="first">
     <div class="say">
       <div>
-        <div class="label">Step 1 of 3 &middot; what you do</div>
-        <h1>You are not the commander.</h1>
+        <div class="label" data-i18n>Step 1 of 3 &middot; what you do</div>
+        <h1 data-i18n>You are not the commander.</h1>
       </div>
-      <p class="tag">You design the robots and write the rules they follow. Then
-      they compete without you &mdash; including while you are logged out.
-      Nothing on this screen steers anything.</p>
+      <p class="tag" data-i18n>You design the robots and write the rules they follow. Then they compete without you &mdash; including while you are logged out. Nothing on this screen steers anything.</p>
 
       <ol class="steps">
         <li><span class="n">01</span><div>
-          <b>Assemble a blueprint</b>
-          <span>Parts compete for one budget and add mass that slows the robot down.</span>
+          <b data-i18n>Assemble a blueprint</b>
+          <span data-i18n>Parts compete for one budget and add mass that slows the robot down.</span>
         </div></li>
         <li><span class="n">02</span><div>
-          <b>Write a priority list</b>
-          <span>Every robot re-decides every tick. The first rule that matches takes the tick.</span>
+          <b data-i18n>Write a priority list</b>
+          <span data-i18n>Every robot re-decides every tick. The first rule that matches takes the tick.</span>
         </div></li>
         <li><span class="n">03</span><div>
-          <b>Watch, and find out what you forgot</b>
-          <span>Two robots walking past each other facing the wrong way is not a bug. It is the game.</span>
+          <b data-i18n>Watch, and find out what you forgot</b>
+          <span data-i18n>Two robots walking past each other facing the wrong way is not a bug. It is the game.</span>
         </div></li>
       </ol>
 
-      <p class="alpha"><strong>Pre-alpha.</strong> Playable end to end, but young:
-      balance still moves. A restart resumes the matches that were running; a
-      deploy that changes the simulation ends them instead.</p>
+      <!-- Split at the bold rather than marked on the <p>: the runtime key is an
+           element's whole textContent, so a paragraph holding markup cannot be
+           one key. Every fragment is a clause the German can be rewritten in. -->
+      <p class="alpha"><strong data-i18n>Pre-alpha.</strong>
+      <span data-i18n>Playable end to end, but young: balance still moves. A restart resumes the matches that were running; a deploy that changes the simulation ends them instead.</span></p>
 
       <div class="truth">
-        <div class="label">You do not have to write anything yet</div>
-        <p>A colony that has approved nothing opens with the built-in starter
-        kit. It is unarmed, and against the aggressive AI it usually dies
-        &mdash; which is the moment to open the editor.</p>
+        <div class="label" data-i18n>You do not have to write anything yet</div>
+        <p data-i18n>A colony that has approved nothing opens with the built-in starter kit. It is unarmed, and against the aggressive AI it usually dies &mdash; which is the moment to open the editor.</p>
       </div>
 
       <div class="cta">
-        <a class="btn primary" href="/lobby">Start with the starter kit &rarr;</a>
-        <a class="btn" href="/editor">Open the editor first</a>
+        <a class="btn primary" href="/lobby" data-i18n>Start with the starter kit &rarr;</a>
+        <a class="btn" href="/editor" data-i18n>Open the editor first</a>
       </div>
     </div>
 
@@ -176,11 +174,11 @@
       <!-- meet, not slice: the caption below names things in this crop, and a
            fill-the-box slice cuts half of them off at any aspect ratio but the
            frame's own. It letterboxes against the terrain colour instead. -->
-      <svg viewBox="0 0 364 224" role="img" preserveAspectRatio="xMidYMid meet"
-           aria-label="A crop of the arena: a scavenger with its vision wedge lit
-                       up, a second scavenger cornered by an enemy gunner beside
-                       the home base and its guard, and a loose radar component
-                       lying on open ground.">
+      <!-- The label is one line because the key is the attribute's own value,
+           newlines and all; wrapped, the German behind it would have to carry
+           this file's indentation. -->
+      <svg viewBox="0 0 364 224" role="img" preserveAspectRatio="xMidYMid meet" data-i18n-attr="aria-label"
+           aria-label="A crop of the arena: a scavenger with its vision wedge lit up, a second scavenger cornered by an enemy gunner beside the home base and its guard, and a loose radar component lying on open ground.">
         <path fill="var(--terrain-open)" d="M0 0h112v14h-112zM126 0h14v14h-14zM154 0h112v14h-112zM280 0h28v14h-28zM322 0h42v14h-42zM0 14h364v14h-364zM0 28h28v14h-28zM42 28h42v14h-42zM98 28h70v14h-70zM182 28h182v14h-182zM0 42h14v14h-14zM28 42h28v14h-28zM70 42h28v14h-28zM126 42h14v14h-14zM154 42h14v14h-14zM182 42h112v14h-112zM336 42h28v14h-28zM0 56h364v14h-364zM14 70h70v14h-70zM112 70h28v14h-28zM154 70h28v14h-28zM210 70h14v14h-14zM238 70h126v14h-126zM0 84h56v14h-56zM70 84h14v14h-14zM98 84h14v14h-14zM126 84h98v14h-98zM238 84h28v14h-28zM280 84h84v14h-84zM0 98h14v14h-14zM42 98h56v14h-56zM126 98h84v14h-84zM224 98h28v14h-28zM266 98h56v14h-56zM336 98h14v14h-14zM0 112h56v14h-56zM70 112h14v14h-14zM98 112h14v14h-14zM154 112h112v14h-112zM280 112h84v14h-84zM0 126h98v14h-98zM126 126h140v14h-140zM280 126h28v14h-28zM322 126h42v14h-42zM0 140h84v14h-84zM98 140h56v14h-56zM182 140h154v14h-154zM350 140h14v14h-14zM0 154h42v14h-42zM70 154h14v14h-14zM98 154h182v14h-182zM294 154h70v14h-70zM0 168h14v14h-14zM28 168h56v14h-56zM112 168h112v14h-112zM238 168h126v14h-126zM0 182h42v14h-42zM70 182h84v14h-84zM168 182h28v14h-28zM210 182h154v14h-154zM0 196h126v14h-126zM140 196h168v14h-168zM322 196h42v14h-42zM0 210h42v14h-42zM56 210h42v14h-42zM126 210h70v14h-70zM210 210h140v14h-140z"/>
         <path fill="var(--terrain-barrier)" d="M28 28h14v14h-14zM84 28h14v14h-14zM168 28h14v14h-14zM14 42h14v14h-14zM112 42h14v14h-14zM168 42h14v14h-14zM294 42h42v14h-42zM0 70h14v14h-14zM84 70h28v14h-28zM196 70h14v14h-14zM266 84h14v14h-14zM14 98h28v14h-28zM98 98h14v14h-14zM210 98h14v14h-14zM322 98h14v14h-14zM350 98h14v14h-14zM56 112h14v14h-14zM84 112h14v14h-14zM126 112h14v14h-14zM266 126h14v14h-14zM154 140h14v14h-14zM84 168h28v14h-28zM224 168h14v14h-14zM56 182h14v14h-14zM196 182h14v14h-14zM126 196h14v14h-14zM42 210h14v14h-14zM98 210h28v14h-28zM196 210h14v14h-14z"/>
         <path fill="var(--terrain-rubble)" d="M112 0h14v14h-14zM308 0h14v14h-14zM56 42h14v14h-14zM98 42h14v14h-14zM140 70h14v14h-14zM182 70h14v14h-14zM112 98h14v14h-14zM140 112h14v14h-14zM112 126h14v14h-14zM168 140h14v14h-14zM42 154h14v14h-14zM84 154h14v14h-14zM280 154h14v14h-14zM14 168h14v14h-14zM42 182h14v14h-14z"/>
@@ -199,105 +197,74 @@
            in the picture get named here, in the colours the renderer draws them
            in. -->
       <div class="over t">
-        <h3>Two senses, drawn differently</h3>
-        <p>A robot sees 90&deg; and six cells in front of its nose, and nothing
-        else &mdash; that is the lit wedge below. Radar, if you paid the mass for
-        it, answers in every direction, out of a box wider than this whole crop,
-        so the match view is where you watch one get drawn. If a robot did not
-        perceive a thing, no rule of yours can react to it.</p>
+        <h3 data-i18n>Two senses, drawn differently</h3>
+        <p data-i18n>A robot sees 90&deg; and six cells in front of its nose, and nothing else &mdash; that is the lit wedge below. Radar, if you paid the mass for it, answers in every direction, out of a box wider than this whole crop, so the match view is where you watch one get drawn. If a robot did not perceive a thing, no rule of yours can react to it.</p>
         <ul class="legend">
-          <li><span class="sw sight"></span>Sight &middot; 90&deg; &times; 6 cells &middot; forward only</li>
-          <li><span class="sw radar"></span>Radar &middot; 16&ndash;28 cells &middot; omnidirectional</li>
+          <li><span class="sw sight"></span><span data-i18n>Sight &middot; 90&deg; &times; 6 cells &middot; forward only</span></li>
+          <li><span class="sw radar"></span><span data-i18n>Radar &middot; 16&ndash;28 cells &middot; omnidirectional</span></li>
         </ul>
       </div>
 
       <figcaption class="over b">
-        <h3>One real frame &mdash; seed 55, tick 400</h3>
-        <p>This scavenger has picked up a laser it cannot fire, and is carrying
-        it home for the base to build with. Four cells from that base, one of its
-        own is at 50 health with a gunner in the next cell &mdash; and nobody is
-        going to tell either of them what to do about it.</p>
+        <h3 data-i18n>One real frame &mdash; seed 55, tick 400</h3>
+        <p data-i18n>This scavenger has picked up a laser it cannot fire, and is carrying it home for the base to build with. Four cells from that base, one of its own is at 50 health with a gunner in the next cell &mdash; and nobody is going to tell either of them what to do about it.</p>
       </figcaption>
     </figure>
   </section>
 
-  <h2>What you actually do</h2>
+  <h2 data-i18n>What you actually do</h2>
 
-  <p>Two things, and neither of them is steering. You <strong>assemble
-  blueprints</strong> out of components &mdash; locomotion, armour, a
-  manipulator, a radar, weapons &mdash; which compete for the same budget and
-  add mass that slows the robot down. Then you <strong>write programs</strong>:
-  an ordered list of rules, each one <em>when these conditions hold, do
-  this</em>. Every robot re-decides every tick, and the first rule whose
-  conditions match takes the tick. That list is your whole control surface.</p>
+  <p><span data-i18n>Two things, and neither of them is steering. You</span>
+  <strong data-i18n>assemble blueprints</strong>
+  <span data-i18n>out of components &mdash; locomotion, armour, a manipulator, a radar, weapons &mdash; which compete for the same budget and add mass that slows the robot down. Then you</span>
+  <strong data-i18n>write programs</strong><span data-i18n>: an ordered list of rules, each one</span>
+  <em data-i18n>when these conditions hold, do this</em><span data-i18n>. Every robot re-decides every tick, and the first rule whose conditions match takes the tick. That list is your whole control surface.</span></p>
 
-  <p>A robot perceives a 90&deg; wedge six cells deep in front of it, plus
-  whatever radar you paid the mass for, plus two signals it can broadcast to its
-  own colony across half the board and three coordinates it can remember. If it
-  did not perceive a thing, no rule of yours can react to it. Two robots walking
-  past each other facing the wrong way is not a bug; it is the game.</p>
+  <p data-i18n>A robot perceives a 90&deg; wedge six cells deep in front of it, plus whatever radar you paid the mass for, plus two signals it can broadcast to its own colony across half the board and three coordinates it can remember. If it did not perceive a thing, no rule of yours can react to it. Two robots walking past each other facing the wrong way is not a bug; it is the game.</p>
 
-  <p>The simulation is server-side and authoritative: ten ticks a second on an
-  arena generated from a seed nobody sees beforehand &mdash; 64&times;64 by
-  default, and the host can pick anything from 32&times;32 to 128&times;128.
-  Every colony
-  starts on the same budget and keeps one base that cannot be destroyed &mdash;
-  losing every robot is a setback rather than an elimination, because the base
-  goes on building from whatever your scavengers brought home. Matches run to a
-  fixed duration, ten minutes by default, whether or not anyone is watching.</p>
+  <p data-i18n>The simulation is server-side and authoritative: ten ticks a second on an arena generated from a seed nobody sees beforehand &mdash; 64&times;64 by default, and the host can pick anything from 32&times;32 to 128&times;128. Every colony starts on the same budget and keeps one base that cannot be destroyed &mdash; losing every robot is a setback rather than an elimination, because the base goes on building from whatever your scavengers brought home. Matches run to a fixed duration, ten minutes by default, whether or not anyone is watching.</p>
 
-  <p>The five pillars, one line each: autonomy first; program behaviour, not
-  movement; modular trade-offs; emergent competition; readable simulation. They
-  are &sect;1.1 of <a
-  href="https://github.com/korjavin/robocolony/blob/master/docs/design_v0.1.md">the
-  design document</a>, which is what the game is trying to be; every question it
-  left open was answered in <a
-  href="https://github.com/korjavin/robocolony/blob/master/docs/decisions.md">the
-  decisions log</a>, together with the measurements behind the balance calls.</p>
+  <p><span data-i18n>The five pillars, one line each: autonomy first; program behaviour, not movement; modular trade-offs; emergent competition; readable simulation. They are &sect;1.1 of</span>
+  <a href="https://github.com/korjavin/robocolony/blob/master/docs/design_v0.1.md" data-i18n>the design document</a><span data-i18n>, which is what the game is trying to be; every question it left open was answered in</span>
+  <a href="https://github.com/korjavin/robocolony/blob/master/docs/decisions.md" data-i18n>the decisions log</a><span data-i18n>, together with the measurements behind the balance calls.</span></p>
 
-  <h2>Your first match, in four steps</h2>
+  <h2 data-i18n>Your first match, in four steps</h2>
 
   <ol>
-    <li><a href="/login">Sign in with Google.</a> Nothing but your identity is
-    read from the account.</li>
+    <li><a href="/login" data-i18n>Sign in with Google.</a>
+    <span data-i18n>Nothing but your identity is read from the account.</span></li>
 
-    <li>Create a lobby on the <a href="/lobby">lobbies page</a>. The defaults
-    make a fine first match: ten minutes, four seats.</li>
+    <li><span data-i18n>Create a lobby on the</span> <a href="/lobby" data-i18n>lobbies page</a>.
+    <span data-i18n>The defaults make a fine first match: ten minutes, four seats.</span></li>
 
-    <li>Add an AI opponent, and pick the rung you want. <strong>Tutorial</strong>
-    and <strong>peaceful</strong> carry no weapon in any of their blueprints
-    &mdash; a test pins that &mdash; so they compete with you for parts and
-    cannot take a robot off the board at all. <strong>Defensive</strong> keeps
-    armed responders and hurts a colony that blunders into it.
-    <strong>Aggressive</strong> comes looking for you: measured against the
-    default starter kit over sixteen seeds, it left that colony with no robots
-    standing on ten of them.</li>
+    <!-- The four rung names stay English: they are the profile ids the lobby
+         page seats you against, printed there straight from the server. -->
+    <li><span data-i18n>Add an AI opponent, and pick the rung you want.</span>
+    <strong>Tutorial</strong> <span data-i18n>and</span> <strong>peaceful</strong>
+    <span data-i18n>carry no weapon in any of their blueprints &mdash; a test pins that &mdash; so they compete with you for parts and cannot take a robot off the board at all.</span>
+    <strong>Defensive</strong>
+    <span data-i18n>keeps armed responders and hurts a colony that blunders into it.</span>
+    <strong>Aggressive</strong>
+    <span data-i18n>comes looking for you: measured against the default starter kit over sixteen seeds, it left that colony with no robots standing on ten of them.</span></li>
 
-    <li>Start the match and watch. Click any robot for its loadout, its memory
-    and the rule that made this tick's decision &mdash; and, on your own robots,
-    to recall one or install a different program mid-match.</li>
+    <li data-i18n>Start the match and watch. Click any robot for its loadout, its memory and the rule that made this tick's decision &mdash; and, on your own robots, to recall one or install a different program mid-match.</li>
   </ol>
 
-  <h2>Where things are</h2>
+  <h2 data-i18n>Where things are</h2>
 
   <ul>
-    <li><a href="/blueprints">Blueprint configurator</a> &mdash; assemble the
-    robot out of components, and see what each one costs you: the budget it
-    spends, the speed the mass takes away, where it may no longer go, and which
-    of your programs will still run on it.</li>
-    <li><a href="/editor">Editor</a> &mdash; the priority-rule programs those
-    blueprints run. Checked against the robot as you edit, and a program can be
-    dry-run against one before anything carries it into a match.</li>
-    <li><a href="/help">The rule language, in one page</a> &mdash; what a robot
-    can perceive, what each condition means, and three worked programs to start
-    from.</li>
-    <li><a href="/lobby">Lobbies</a> &mdash; create a match, seat AI colonies,
-    wait for players, start it.</li>
-    <li><a href="/history">History</a> &mdash; every match that has finished,
-    with its final standing, its score graph, and the whole thing played back.</li>
-    <li><a href="https://github.com/korjavin/robocolony">Source</a> &mdash; Go
-    and a deterministic simulation core; the client is this, plain HTML with no
-    build step.</li>
+    <li><a href="/blueprints" data-i18n>Blueprint configurator</a>
+    <span data-i18n>&mdash; assemble the robot out of components, and see what each one costs you: the budget it spends, the speed the mass takes away, where it may no longer go, and which of your programs will still run on it.</span></li>
+    <li><a href="/editor" data-i18n>Editor</a>
+    <span data-i18n>&mdash; the priority-rule programs those blueprints run. Checked against the robot as you edit, and a program can be dry-run against one before anything carries it into a match.</span></li>
+    <li><a href="/help" data-i18n>The rule language, in one page</a>
+    <span data-i18n>&mdash; what a robot can perceive, what each condition means, and three worked programs to start from.</span></li>
+    <li><a href="/lobby" data-i18n>Lobbies</a>
+    <span data-i18n>&mdash; create a match, seat AI colonies, wait for players, start it.</span></li>
+    <li><a href="/history" data-i18n>History</a>
+    <span data-i18n>&mdash; every match that has finished, with its final standing, its score graph, and the whole thing played back.</span></li>
+    <li><a href="https://github.com/korjavin/robocolony" data-i18n>Source</a>
+    <span data-i18n>&mdash; Go and a deterministic simulation core; the client is this, plain HTML with no build step.</span></li>
   </ul>
 
   <footer>
