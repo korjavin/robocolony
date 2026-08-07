@@ -46,10 +46,18 @@ async function load(name) {
 }
 
 const page = document.documentElement.dataset.i18nPage;
+// Object.create(null), not {}: the dictionary is a lookup table, and a plain
+// object answers for every name on Object.prototype as well as its own. A key
+// of "toString" or "constructor" would find a *function* there — not null, not
+// undefined, so ?? keeps it — and stringify into whatever the caller was
+// building. With no prototype there is nothing to find but entries, which makes
+// every lookup below safe by construction rather than by each one checking. It
+// also makes a "__proto__" key an ordinary entry instead of a setter.
+// Do not tidy this back to {}.
 const dict =
   lang === "en"
-    ? {}
-    : Object.assign({}, ...(await Promise.all([load("common"), page ? load(page) : {}])));
+    ? Object.create(null)
+    : Object.assign(Object.create(null), ...(await Promise.all([load("common"), page ? load(page) : {}])));
 
 export function t(s) {
   return dict[s] ?? s;
@@ -78,7 +86,9 @@ export function t(s) {
 // off a t() call here, so it reads them off the server instead.
 export function errorText(data, res) {
   const en = data?.error || res?.statusText || `HTTP ${res?.status ?? "?"}`;
-  const de = typeof data?.key === "string" ? dict[data.key] : undefined;
+  // Anything but a string entry — no key, a key of the wrong type, a body that
+  // is not an object at all — falls through to the English above.
+  const de = dict[data?.key];
   if (typeof de !== "string") return en;
   const args = Array.isArray(data.args) ? data.args : [];
   let i = 0;
@@ -99,10 +109,10 @@ export function errorText(data, res) {
     // "program" — the wire cannot say which is which, and the server field
     // carries the same note. Cosmetic; arg-marking is the upgrade if it bites.
     //
-    // typeof, not ??: an argument named "toString" or "constructor" finds a
-    // function on the prototype chain, which is neither null nor undefined and
-    // would stringify into the sentence as JS source.
-    return typeof dict[a] === "string" ? dict[a] : a;
+    // This is the one lookup whose key is player-reachable, so it is the one
+    // that would have found "toString" on a prototype. It does not check for
+    // that: the dictionary has no prototype to find it on. See its comment.
+    return dict[a] ?? a;
   });
 }
 
