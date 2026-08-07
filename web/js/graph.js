@@ -29,6 +29,8 @@
 // gives it, and stretched digits are unreadable. Lines survive that; glyphs do
 // not.
 
+import { t } from "./i18n.js";
+
 const $ = (id) => document.getElementById(id);
 const opt = $; // the same lookup, a different contract: may be absent
 const setText = (n, s) => { if (n.textContent !== s) n.textContent = s; };
@@ -40,8 +42,6 @@ export const colonyVar = (id) => `--colony-${((id % 8) + 8) % 8}`;
 // the server: once past it, every second sample is dropped and the interval
 // doubles. A page left open on a long match must not grow without limit.
 const GRAPH_MAX = 512;
-
-const METRICS = { score: "score", robots: "robots", collected: "parts collected" };
 
 // The drawing box, in viewBox units. The dashboard's y-axis column lines its
 // labels up against these, so pad is padding on the *value* axis: the top
@@ -140,12 +140,16 @@ export function drawGraph() {
   const lines = $("graph-lines");
   const note = $("graph-note");
   const metric = $("graph-metric").value;
+  // The series is named by the option the player picked, so the note reads in
+  // whatever language the page was marked up in and this module needs no table
+  // of its own. Both pages carry the same three options.
+  const label = $("graph-metric").selectedOptions[0]?.textContent.trim() || metric;
   if (!series || series.ticks.length < 2) {
     lines.replaceChildren();
     drawAxis(0, 0, () => 0);
     drawLegend();
-    setText(note, "Waiting for the first samples — one every "
-      + `${mmss(series?.interval || 100)} of match time.`);
+    setText(note, t("Waiting for the first samples — one every %s of match time.")
+      .replace("%s", mmss(series?.interval || 100)));
     return;
   }
 
@@ -164,21 +168,24 @@ export function drawGraph() {
 
   lines.replaceChildren(...series.colonies.map((c) => {
     const p = document.createElementNS(SVGNS, "polyline");
-    p.setAttribute("points", series.ticks.map((t, i) =>
-      `${((t - t0) / span * W).toFixed(1)},`
+    p.setAttribute("points", series.ticks.map((tk, i) =>
+      `${((tk - t0) / span * W).toFixed(1)},`
       + `${y(c[metric][i] || 0).toFixed(1)}`).join(" "));
     // var(), not a resolved colour: the same custom property the map and the
     // legend read, so a theme switch needs no redraw.
     p.style.stroke = `var(${colonyVar(c.colony)})`;
     p.setAttribute("vector-effect", "non-scaling-stroke");
-    const t = document.createElementNS(SVGNS, "title");
-    t.textContent = colonyName(c.colony);
-    p.append(t);
+    const ttl = document.createElementNS(SVGNS, "title");
+    ttl.textContent = colonyName(c.colony);
+    p.append(ttl);
     return p;
   }));
-  setText(note, `${METRICS[metric]} — peak ${peak}, ${mmss(t0)} to `
-    + `${mmss(series.ticks[series.ticks.length - 1])}, `
-    + `one point per ${mmss(series.interval)}. Colours match the standing above.`);
+  setText(note, t("%1 — peak %2, %3 to %4, one point per %5. Colours match the standing above.")
+    .replace("%1", () => label)
+    .replace("%2", peak)
+    .replace("%3", mmss(t0))
+    .replace("%4", mmss(series.ticks[series.ticks.length - 1]))
+    .replace("%5", mmss(series.interval)));
 }
 
 $("graph-metric").addEventListener("change", drawGraph);

@@ -14,6 +14,8 @@ import { colonyVar, drawGraph, mmss, seriesAppend, seriesReset, SVGNS } from "./
 
 import { SHAPES, MUZZLE, slug } from "./shapes.js";
 
+import { t } from "./i18n.js";
+
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
 
@@ -66,7 +68,9 @@ const colonyColor = (id) => {
 // what to call the thing you picked.
 const shortID = (r) => `${(r.archetype || "?").charAt(0).toUpperCase()}-${String(r.id).padStart(2, "0")}`;
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// Both forms are passed in rather than an "s" appended: German pluralises by
+// changing the word, and the translator only ever sees a plain literal.
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 let init = null;       // init frame
 let snap = null;       // last tick frame
@@ -97,25 +101,25 @@ function bakeTerrain() {
   // Resolved once per match rather than per cell, and kept: the camera paints
   // the same ground cell by cell (drawPOV) and must read the same property, or
   // the two views would disagree about what a robot is standing on.
-  terrainColors = init.terrain_legend.map((t) => css(`--terrain-${slug(t.name)}`, css("--terrain-unknown", "#888")));
+  terrainColors = init.terrain_legend.map((tc) => css(`--terrain-${slug(tc.name)}`, css("--terrain-unknown", "#888")));
   terrain = document.createElement("canvas");
   terrain.width = canvas.width;
   terrain.height = canvas.height;
-  const t = terrain.getContext("2d");
+  const tx = terrain.getContext("2d");
   for (let y = 0; y < init.height; y++) {
     const row = init.terrain[y] || "";
     for (let x = 0; x < init.width; x++) {
-      t.fillStyle = terrainColors[row.charCodeAt(x) - 48] || terrainColors[0];
-      t.fillRect(x * cell, y * cell, cell, cell);
+      tx.fillStyle = terrainColors[row.charCodeAt(x) - 48] || terrainColors[0];
+      tx.fillRect(x * cell, y * cell, cell, cell);
     }
   }
-  t.strokeStyle = css("--grid-line", "#0001");
-  t.lineWidth = 1;
+  tx.strokeStyle = css("--grid-line", "#0001");
+  tx.lineWidth = 1;
   for (let i = 0; i <= init.width; i++) {
-    t.beginPath(); t.moveTo(i * cell + .5, 0); t.lineTo(i * cell + .5, terrain.height); t.stroke();
+    tx.beginPath(); tx.moveTo(i * cell + .5, 0); tx.lineTo(i * cell + .5, terrain.height); tx.stroke();
   }
   for (let i = 0; i <= init.height; i++) {
-    t.beginPath(); t.moveTo(0, i * cell + .5); t.lineTo(terrain.width, i * cell + .5); t.stroke();
+    tx.beginPath(); tx.moveTo(0, i * cell + .5); tx.lineTo(terrain.width, i * cell + .5); tx.stroke();
   }
   bakeMinimap();
 }
@@ -289,18 +293,19 @@ function legendShapes(host, items) {
   }));
 }
 
-function terrainLabel(t) {
+function terrainLabel(tc) {
   const names = (vs) => vs.map(compName).join(", ");
   const effects = [];
-  if (t.hard_barrier) effects.push("blocks everything");
-  else if (t.impassable?.length) effects.push(`blocks ${names(t.impassable)}`);
-  if (t.favored?.length) effects.push(`favours ${names(t.favored)}`);
-  return effects.length ? `${t.name} — ${effects.join(", ")}` : t.name;
+  if (tc.hard_barrier) effects.push(t("blocks everything"));
+  // The locomotion names are the catalogue's own, so only the frame is translated.
+  else if (tc.impassable?.length) effects.push(t("blocks %s").replace("%s", () => names(tc.impassable)));
+  if (tc.favored?.length) effects.push(t("favours %s").replace("%s", () => names(tc.favored)));
+  return effects.length ? `${tc.name} — ${effects.join(", ")}` : tc.name;
 }
 
 function buildLegend() {
-  legendList($("lg-terrain"), init.terrain_legend.map((t) =>
-    [terrainLabel(t), `var(--terrain-${slug(t.name)}, var(--terrain-unknown))`]));
+  legendList($("lg-terrain"), init.terrain_legend.map((tc) =>
+    [terrainLabel(tc), `var(--terrain-${slug(tc.name)}, var(--terrain-unknown))`]));
 
   const kinds = [...new Set(init.components.map((c) => c.kind))].sort();
   legendList($("lg-kinds"), kinds.map((k) =>
@@ -314,8 +319,8 @@ function buildLegend() {
   // falling back to the plain body, which is the signal to draw it one.
   const locos = init.components.filter((c) => c.kind === "locomotion");
   legendShapes($("lg-chassis"), locos.map((c) => [c.name, slug(c.name), false, ""]).concat([
-    ["armed", locos.length ? slug(locos[0].name) : "unknown", true,
-      "a weapon of any kind, on any chassis, puts a barrel past the nose"],
+    [t("armed"), locos.length ? slug(locos[0].name) : "unknown", true,
+      t("a weapon of any kind, on any chassis, puts a barrel past the nose")],
   ]));
 
   // The mark glyphs draw a real body rather than a stand-in circle, from the
@@ -462,15 +467,15 @@ const trails = new Map(); // robot id -> {xs, ys, n, at}
 
 function trailsRecord() {
   for (const r of snap.robots) {
-    let t = trails.get(r.id);
-    if (!t) {
-      t = { xs: new Int16Array(TRAIL_TICKS), ys: new Int16Array(TRAIL_TICKS), n: 0, at: 0 };
-      trails.set(r.id, t);
+    let tr = trails.get(r.id);
+    if (!tr) {
+      tr = { xs: new Int16Array(TRAIL_TICKS), ys: new Int16Array(TRAIL_TICKS), n: 0, at: 0 };
+      trails.set(r.id, tr);
     }
-    t.xs[t.at] = r.x;
-    t.ys[t.at] = r.y;
-    t.at = (t.at + 1) % TRAIL_TICKS;
-    if (t.n < TRAIL_TICKS) t.n++;
+    tr.xs[tr.at] = r.x;
+    tr.ys[tr.at] = r.y;
+    tr.at = (tr.at + 1) % TRAIL_TICKS;
+    if (tr.n < TRAIL_TICKS) tr.n++;
   }
   // A robot that is gone has no path left to draw. Only walked when the counts
   // disagree, which is the tick something died on.
@@ -483,18 +488,18 @@ function trailsRecord() {
 // Dashed, in the robot's own colony colour and under everything else, so it
 // reads as a record rather than as another thing on the board.
 function drawTrail(r) {
-  const t = trails.get(r.id);
-  if (!t || t.n < 2) return;
+  const tr = trails.get(r.id);
+  if (!tr || tr.n < 2) return;
   ctx.save();
   ctx.strokeStyle = colonyColor(r.colony);
   ctx.lineWidth = Math.max(1, cell * 0.14);
   ctx.setLineDash([cell / 2, cell / 2]);
   ctx.globalAlpha = .7;
   ctx.beginPath();
-  const first = (t.at - t.n + TRAIL_TICKS) % TRAIL_TICKS;
-  for (let i = 0; i < t.n; i++) {
+  const first = (tr.at - tr.n + TRAIL_TICKS) % TRAIL_TICKS;
+  for (let i = 0; i < tr.n; i++) {
     const j = (first + i) % TRAIL_TICKS;
-    const x = t.xs[j] * cell + cell / 2, y = t.ys[j] * cell + cell / 2;
+    const x = tr.xs[j] * cell + cell / 2, y = tr.ys[j] * cell + cell / 2;
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
@@ -503,12 +508,15 @@ function drawTrail(r) {
 
 function renderTrailsCard(r) {
   const card = $("trails-card");
-  const t = r && trails.get(r.id);
-  card.hidden = !replay || !t || t.n < 2;
+  const tr = r && trails.get(r.id);
+  card.hidden = !replay || !tr || tr.n < 2;
   // The window is what has actually been recorded, not the cap: a replay opened
   // thirty ticks ago has thirty ticks of path, and saying 400 would be a claim
   // about frames this page never saw.
-  if (!card.hidden) setText($("trails-label"), `Trails · last ${t.n} ticks · ${shortID(r)}`);
+  if (!card.hidden) {
+    setText($("trails-label"),
+      t("Trails · last %s ticks").replace("%s", tr.n) + ` · ${shortID(r)}`);
+  }
 }
 
 // --------------------------------------------------------- selected card
@@ -557,12 +565,15 @@ function renderSelCard(r) {
   // the same two constants the renderer draws them from, so the bar cannot
   // state a range nothing paints.
   setText($("reach-note"), r
-    ? `90° cone · ${VISION_RANGE} cells`
-      + (robotStyle(r).radar ? ` · radar ${robotStyle(r).radar} cells omni` : " · no radar fitted")
-    : "Overlays are drawn for the selected robot only");
+    ? t("90° cone · %s cells").replace("%s", VISION_RANGE)
+      + " · " + (robotStyle(r).radar
+        ? t("radar %s cells omni").replace("%s", robotStyle(r).radar)
+        : t("no radar fitted"))
+    : t("Overlays are drawn for the selected robot only"));
   if (!r) return;
-  setText($("sel-who"), `Selected · ${shortID(r)}`);
-  setText($("sel-cell"), `cell ${r.x},${r.y} · facing ${HEADINGS[r.heading % 8]}`);
+  setText($("sel-who"), t("Selected") + ` · ${shortID(r)}`);
+  setText($("sel-cell"), t("cell %1 · facing %2")
+    .replace("%1", `${r.x},${r.y}`).replace("%2", HEADINGS[r.heading % 8]));
   // var(--colony-N), never a resolved literal: the marks are then literally the
   // property the canvas reads, and they follow a theme switch with no re-render.
   const colour = `var(${colonyVar(r.colony)})`;
@@ -574,7 +585,8 @@ function renderSelCard(r) {
     for (const l of snap.loose) if (sees(r, l)) seen++;
     sight.firstElementChild.style.background = colour;
     setText(sight.lastElementChild,
-      `sight · 90° × ${VISION_RANGE} cells · ${plural(seen, "component")}`);
+      t("sight · 90° × %s cells").replace("%s", VISION_RANGE)
+      + " · " + plural(seen, t("component"), t("components")));
   }
 
   const row = $("sel-radar");
@@ -582,8 +594,8 @@ function renderSelCard(r) {
   row.hidden = !radar || !senses.radar;
   if (!row.hidden) {
     row.firstElementChild.style.color = colour;
-    setText(row.lastElementChild, `radar · ${radar} cells omni · `
-      + plural(radarContacts(r, radarOf, radar), "contact"));
+    setText(row.lastElementChild, t("radar · %s cells omni").replace("%s", radar)
+      + " · " + plural(radarContacts(r, radarOf, radar), t("contact"), t("contacts")));
   }
 }
 
@@ -606,7 +618,7 @@ const POV_TOP = 44;             // the strip past sight, which is most of what t
 const POV_BOT = 58;             // where the robot itself stands
 const POV_CELL = POV_W / (2 * VISION_RANGE + 1);
 const POV_BAND = (POV_H - POV_TOP - POV_BOT) / VISION_RANGE;
-const POV_LABELS = Array.from({ length: VISION_RANGE }, (_, i) => `RANGE ${i + 1}`);
+const POV_LABELS = Array.from({ length: VISION_RANGE }, (_, i) => t("RANGE %s").replace("%s", i + 1));
 
 const pov = $("pov");
 const pctx = pov.getContext("2d");
@@ -668,7 +680,7 @@ function drawPOV(r) {
   pctx.font = "700 14px system-ui, sans-serif";
   pctx.textAlign = "center";
   pctx.textBaseline = "middle";
-  pctx.fillText("BEYOND SIGHT — NO RULE CAN REACT TO IT", POV_W / 2, POV_TOP / 2);
+  pctx.fillText(t("BEYOND SIGHT — NO RULE CAN REACT TO IT"), POV_W / 2, POV_TOP / 2);
   if (!r) return;
 
   const h = r.heading % 8;
@@ -677,8 +689,8 @@ function drawPOV(r) {
   for (let dy = -VISION_RANGE; dy <= VISION_RANGE; dy++) {
     for (let dx = -VISION_RANGE; dx <= VISION_RANGE; dx++) {
       if (!povPlace(h, dx, dy)) continue;
-      const t = terrainAt(r.x + dx, r.y + dy);
-      pctx.fillStyle = t < 0 ? beyond : terrainColors[t] || terrainColors[0];
+      const tc = terrainAt(r.x + dx, r.y + dy);
+      pctx.fillStyle = tc < 0 ? beyond : terrainColors[tc] || terrainColors[0];
       pctx.fillRect(povAt.x, povAt.y, POV_CELL, POV_BAND);
       pctx.strokeStyle = grid;
       pctx.strokeRect(povAt.x + .5, povAt.y + .5, POV_CELL - 1, POV_BAND - 1);
@@ -739,7 +751,8 @@ function drawPOV(r) {
   pctx.textAlign = "center";
   pctx.textBaseline = "middle";
   pctx.fillStyle = css("--fg-0", "#111");
-  pctx.fillText(`${shortID(r)} — you are here, facing ${HEADINGS[h]}`, POV_W / 2, POV_H - 14);
+  pctx.fillText(shortID(r) + " — "
+    + t("you are here, facing %s").replace("%s", HEADINGS[h]), POV_W / 2, POV_H - 14);
 }
 
 // ------------------------------------------------------------- radar dial
@@ -818,10 +831,10 @@ function renderDial(r) {
 
   setText($("dial-note"), !r ? ""
     : !st.radar
-      ? "This robot carries no radar. The dial is empty because it has no second"
-        + " sense — not because there is nothing out there."
-      : `${st.radarOf.replace(/-/g, " ")} · ${st.radar} cells · `
-        + plural(radarContacts(r, st.radarOf, st.radar), "contact"));
+      ? t("This robot carries no radar. The dial is empty because it has no second sense — not because there is nothing out there.")
+      // The radar is named as the catalogue names it, so only the frame is translated.
+      : `${st.radarOf.replace(/-/g, " ")} · ` + t("%s cells").replace("%s", st.radar)
+        + " · " + plural(radarContacts(r, st.radarOf, st.radar), t("contact"), t("contacts")));
 }
 
 // ---------------------------------------------------------------- contacts
@@ -912,29 +925,30 @@ function renderContacts(r) {
     const p = contactPick[i], o = p.o;
     if (p.src === SRC_PART) {
       contactPut(i, "◆", kindColor(o.variant), compName(o.variant), rangeDir(r, o),
-        p.d > INTERACT_RANGE ? "seen — too far to take"
-          : st.hands ? "in reach — the manipulator can take it"
-            : "in reach, but this robot has no manipulator");
+        p.d > INTERACT_RANGE ? t("seen — too far to take")
+          : st.hands ? t("in reach — the manipulator can take it")
+            : t("in reach, but this robot has no manipulator"));
     } else if (p.src === SRC_ENEMY) {
       contactPut(i, "▮", `var(${colonyVar(o.colony)})`, `${shortID(o)} ${o.archetype || ""}`,
-        rangeDir(r, o), `enemy — in the cone${robotStyle(o).armed ? ", and armed" : ""}`);
+        rangeDir(r, o), t("enemy — in the cone") + (robotStyle(o).armed ? t(", and armed") : ""));
     } else {
       contactPut(i, "◇",
         st.radarOf === "parts-radar" ? kindColor(o.variant) : `var(${colonyVar(o.colony)})`,
         st.radarOf === "parts-radar" ? compName(o.variant)
-          : st.radarOf === "enemy-robot-radar" ? shortID(o) : `${colonyName(o.colony)} base`,
-        rangeDir(r, o), "radar only — not in the cone");
+          : st.radarOf === "enemy-robot-radar" ? shortID(o)
+            : t("%s base").replace("%s", () => colonyName(o.colony)),
+        rangeDir(r, o), t("radar only — not in the cone"));
     }
   }
   for (let i = kept; i < CONTACT_ROWS; i++) contactRows[i].node.hidden = true;
 
   const none = $("contacts-none");
   none.hidden = n > 0;
-  setText(none, r ? "Nothing in sight and nothing on radar this tick."
-    : "No robot selected — the camera has nobody to look out of.");
+  setText(none, r ? t("Nothing in sight and nothing on radar this tick.")
+    : t("No robot selected — the camera has nobody to look out of."));
   const more = $("contacts-more");
   more.hidden = n <= CONTACT_ROWS;
-  if (!more.hidden) setText(more, `and ${n - CONTACT_ROWS} more`);
+  if (!more.hidden) setText(more, t("and %s more").replace("%s", n - CONTACT_ROWS));
 }
 
 // Within sight's reach but not necessarily in its wedge: the range half of
@@ -956,15 +970,20 @@ function blindNote(r) {
     if (o.colony === r.colony) { if (nearby(r, o)) mine++; continue; }
     if (nearby(r, o) && !sees(r, o)) behind++;
   }
-  const first = behind === 0
-    ? `Nothing within ${VISION_RANGE} cells is hidden behind the nose this tick.`
-    : `${plural(behind, "thing")} within ${VISION_RANGE} cells ${behind === 1 ? "is" : "are"}`
-      + ` outside the wedge right now — a turn would reveal ${behind === 1 ? "it" : "them"},`
-      + " and until then no condition can test it.";
+  // One whole sentence per case rather than fragments glued together: a
+  // translation reorders a sentence, and half a clause cannot be reordered.
+  const first = (behind === 0
+    ? t("Nothing within %s cells is hidden behind the nose this tick.")
+    : behind === 1
+      ? t("One thing within %s cells is outside the wedge right now — a turn would reveal it, and until then no condition can test it.")
+      : t("%n things within %s cells are outside the wedge right now — a turn would reveal them, and until then no condition can test it.")
+        .replace("%n", behind)
+  ).replace("%s", VISION_RANGE);
   if (mine === 0) return first;
-  return `${first} ${plural(mine, "robot")} of its own colony ${mine === 1 ? "is" : "are"}`
-    + " within range too, and no facing would help: vision reports loose parts and"
-    + " enemies, never your own.";
+  return first + " " + (mine === 1
+    ? t("One robot of its own colony is within range too, and no facing would help: vision reports loose parts and enemies, never your own.")
+    : t("%s robots of its own colony are within range too, and no facing would help: vision reports loose parts and enemies, never your own.")
+      .replace("%s", mine));
 }
 
 function renderCamera(r) {
@@ -1150,7 +1169,7 @@ function idCard(r, alive) {
   } else {
     head.append(el("span", "id", `#${selected}`));
   }
-  head.append(el("span", alive ? "badge" : "badge gone", alive ? "▮ Alive" : "▮ Destroyed"));
+  head.append(el("span", alive ? "badge" : "badge gone", alive ? t("▮ Alive") : t("▮ Destroyed")));
   return head;
 }
 
@@ -1163,14 +1182,14 @@ function renderInspector() {
   const box = $("inspector");
   box.replaceChildren();
   if (selected === null) {
-    box.append(el("p", "meta", "No robot selected."));
+    box.append(el("p", "meta", t("No robot selected.")));
     renderCommand(null);
     return;
   }
   const r = snap?.robots.find((x) => x.id === selected);
   if (!r) {
     box.append(idCard(lastSel && lastSel.id === selected ? lastSel : null, false),
-      el("p", "meta", `Robot #${selected} is gone — destroyed, or salvaged.`));
+      el("p", "meta", t("Robot #%s is gone — destroyed, or salvaged.").replace("%s", selected)));
     renderCommand(null);
     return;
   }
@@ -1186,32 +1205,33 @@ function renderInspector() {
   // The fraction goes above the bar (design 269-277): the number is the fact,
   // and the bar is the shape of it.
   const hphead = el("div", "hp-head");
-  hphead.append(el("span", "label", "Health"), el("span", "v", `${r.hp} / ${r.hp_max}`));
+  hphead.append(el("span", "label", t("Health")), el("span", "v", `${r.hp} / ${r.hp_max}`));
   box.append(hphead, bar);
 
-  box.append(el("h3", null, "Active rule"));
+  box.append(el("h3", null, t("Active rule")));
   box.append(ruleBox(r));
 
   // Loadout is what the robot *is* (design 303-310). Where it is standing and
   // which way it faces moved to the card over the map, where the cell it names
   // is a place you can look at rather than a pair of numbers.
   const bp = blueprintOf(r);
-  box.append(el("h3", null, "Loadout"));
+  box.append(el("h3", null, t("Loadout")));
   box.append(defs([
-    ["Blueprint", bp ? `${bp.name} (${bp.id})` : r.blueprint],
-    ["Parts", bp ? bp.components.map(compName).join(", ") : "—"],
-    ["Program", r.program || "none"],
-    ["Cargo", r.cargo ? compName(r.cargo) : "empty"],
-    ["Mass", bp ? massLine(bp) : "—"],
+    // The values are the player's own names and the catalogue's, never translated.
+    [t("Blueprint"), bp ? `${bp.name} (${bp.id})` : r.blueprint],
+    [t("Parts"), bp ? bp.components.map(compName).join(", ") : "—"],
+    [t("Program"), r.program || t("none")],
+    [t("Cargo"), r.cargo ? compName(r.cargo) : t("empty")],
+    [t("Mass"), bp ? massLine(bp) : "—"],
   ]));
 
-  box.append(el("h3", null, "Memory"));
+  box.append(el("h3", null, t("Memory")));
   // Highlighted straight after an install: design §4.2 step 4 clears all three,
   // and §13 criterion 6 is checked by looking at exactly this list.
   const fresh = note && note.robot === r.id && !note.bad;
   const mem = el("ul", "tight" + (fresh ? " cleared" : ""));
   (r.memory || []).forEach((p, i) => {
-    mem.append(el("li", null, `${i + 1}: ` + (p ? `${p.x}, ${p.y}` : "unset")));
+    mem.append(el("li", null, `${i + 1}: ` + (p ? `${p.x}, ${p.y}` : t("unset"))));
   });
   box.append(mem);
 
@@ -1236,7 +1256,7 @@ function renderCommand(r) {
     note = null;
     cmd = commandBox(r);
     cmdFor = r.id;
-    host.replaceChildren(el("h3", null, "Command"), cmd.node);
+    host.replaceChildren(el("h3", null, t("Command")), cmd.node);
     loadPrograms();
   }
   host.hidden = false;
@@ -1247,25 +1267,26 @@ function renderCommand(r) {
 // matched" — it is the deposit reflex (design §10.5's caveat), and labelling it
 // as a failure to match would make the one automatic action in the game look
 // like a bug. The reason line beside it says which reflex.
-function ruleName(t) {
-  if (t.rule >= 0) return `rule ${t.rule + 1}`;
-  return t.action ? "reflex, no rule needed" : "no rule matched";
+function ruleName(tr) {
+  if (tr.rule >= 0) return t("rule %s").replace("%s", tr.rule + 1);
+  return tr.action ? t("reflex, no rule needed") : t("no rule matched");
 }
 
 function ruleBox(r) {
-  const t = r.trace;
+  const tr = r.trace;
   const div = el("div", "rule");
   div.style.borderLeftColor = colonyColor(r.colony);
-  if (!t) {
+  if (!tr) {
     div.classList.add("idle");
-    div.append(el("div", "idx", "no decision yet"),
-      el("div", "why", "the robot has no program, or was built this tick"));
+    div.append(el("div", "idx", t("no decision yet")),
+      el("div", "why", t("the robot has no program, or was built this tick")));
     return div;
   }
-  if (t.idle) div.classList.add("idle");
-  div.append(el("div", "idx", ruleName(t)));
-  div.append(el("div", "act", t.action ? t.action : "idle"));
-  div.append(el("div", "why", t.reason || ""));
+  if (tr.idle) div.classList.add("idle");
+  div.append(el("div", "idx", ruleName(tr)));
+  // The action is the rule language as the player wrote it, so it stays verbatim.
+  div.append(el("div", "act", tr.action ? tr.action : t("idle")));
+  div.append(el("div", "why", tr.reason || ""));
   // The condition-level part of the card (design 1a 291-297) comes from the
   // trace poll rather than the tick frame, so it exists only for a robot that
   // is being watched, and it describes the decision it was recorded on. Nothing
@@ -1277,15 +1298,19 @@ function ruleBox(r) {
     const rule = ex.rule >= 0 ? p?.program?.rules?.[ex.rule] : null;
     if (rule) div.append(whenList(rule.when, ex));
     div.append(el("div", "tested", testedLine(ex)
-      + (ex.tick === t.tick ? "" : ` Read on tick ${ex.tick}.`)));
+      + (ex.tick === tr.tick ? "" : " " + t("Read on tick %s.").replace("%s", ex.tick))));
   }
-  if (snap && t.tick !== snap.tick) {
-    div.append(el("div", "meta", `decided on tick ${t.tick}, ${snap.tick - t.tick} ticks ago`));
+  if (snap && tr.tick !== snap.tick) {
+    div.append(el("div", "meta", t("decided on tick %1, %2 ticks ago")
+      .replace("%1", tr.tick).replace("%2", snap.tick - tr.tick)));
   }
   // The cooldown is about this tick's decision — whether the weapon was even
   // available to it — so it belongs beside the decision rather than in the
   // loadout, which is what the robot is rather than what it can do right now.
-  if (r.cooldown > 0) div.append(el("div", "meta", `weapon cooling down · ${r.cooldown} ticks`));
+  if (r.cooldown > 0) {
+    div.append(el("div", "meta",
+      t("weapon cooling down · %s ticks").replace("%s", r.cooldown)));
+  }
   return div;
 }
 
@@ -1324,7 +1349,7 @@ function massLine(bp) {
       .catch(() => { /* the mass is still true without it */ });
   }
   const pace = paces.get(key);
-  return pace ? `${mass} · 1 cell / ${pace} ticks` : String(mass);
+  return pace ? mass + " · " + t("1 cell / %s ticks").replace("%s", pace) : String(mass);
 }
 
 // ---------------------------------------------------------------- roster
@@ -1357,7 +1382,7 @@ function rosterGroup(colony) {
   // lives as long as the colony does, so a theme switch has to reach it.
   sw.style.background = `var(${colonyVar(colony)})`;
   const count = el("span", "meta");
-  const you = el("span", "meta", "you");
+  const you = el("span", "meta", t("you"));
   node.append(sw, el("span", "name", colonyName(colony)), count, el("span", "grow"), you);
   return {
     node,
@@ -1389,17 +1414,20 @@ function rosterRow(r) {
 
     // A recalled robot has suspended its program (design §4.2), so its trace is
     // stale — say what it is actually doing, not what it last decided.
-    const t = cur.trace;
-    const doing = !cur.recalled && (!t || !t.action);
-    setText(act, cur.recalled ? "returning to base"
-      : t ? (t.action || (t.rule >= 0 ? "idle" : "no rule matched — idle"))
-        : "no decision yet");
+    const tr = cur.trace;
+    const doing = !cur.recalled && (!tr || !tr.action);
+    setText(act, cur.recalled ? t("returning to base")
+      : tr ? (tr.action || (tr.rule >= 0 ? t("idle") : t("no rule matched — idle")))
+        : t("no decision yet"));
     act.className = doing ? "act idle" : "act";
 
     // Cargo lost its column to the single-line row, so it rides the tooltip
     // with the reason — the arena still draws the shoulder dot for it.
-    let why = cur.recalled ? "recalled" : (t && t.reason) || "";
-    if (cur.cargo) why = why ? `${why} · carrying ${compName(cur.cargo)}` : `carrying ${compName(cur.cargo)}`;
+    let why = cur.recalled ? t("recalled") : (tr && tr.reason) || "";
+    if (cur.cargo) {
+      const carrying = t("carrying %s").replace("%s", () => compName(cur.cargo));
+      why = why ? `${why} · ${carrying}` : carrying;
+    }
     if (node.title !== why) node.title = why;
 
     // The last notable thing that happened to this robot, design 99-151. ✗ is
@@ -1409,14 +1437,14 @@ function rosterRow(r) {
     const ev = lastEventOf.get(cur.id);
     const fresh = !!ev && Number(snap.tick) - Number(ev.tick)
       <= EVENT_RECENT_SECS * (init?.tick_rate || 10);
-    const state = (t && !t.action && t.rule < 0) ? "!" : fresh ? "ev" : "·";
+    const state = (tr && !tr.action && tr.rule < 0) ? "!" : fresh ? "ev" : "·";
     if (ev !== markEv || state !== markState) {
       markEv = ev;
       markState = state;
       const g = state === "ev" ? (EVENT_GLYPH[ev.kind] || "·") : state;
       setText(mark, g);
       mark.className = g === "·" ? "evg quiet" : "evg";
-      mark.title = state === "!" ? "no rule matched — idle" : state === "ev" ? eventText(ev) : "";
+      mark.title = state === "!" ? t("no rule matched — idle") : state === "ev" ? eventText(ev) : "";
     }
 
     const on = cur.id === selected;
@@ -1516,7 +1544,7 @@ function histEntry(e) {
   const when = el("span", "when");
   const head = el("div", "head");
   head.append(el("span", "idx", ruleName(e)),
-    el("span", "act", e.action || "idle"));
+    el("span", "act", e.action || t("idle")));
   // The cell the action aimed at. It cannot be worked out from the arena later:
   // the component or enemy it was aimed at has moved or is gone.
   if (e.target) head.append(el("span", "at", `→ ${e.target.x}, ${e.target.y}`));
@@ -1533,18 +1561,25 @@ function histEntry(e) {
   const also = (e.matched || []).filter((i) => i !== e.rule);
   if (also.length) {
     const hidden = (e.matched_total || 0) - (e.matched || []).length;
-    node.append(el("div", "also", `also matched: ${also.map((i) => `rule ${i + 1}`).join(", ")}`
-      + (hidden > 0 ? ` and ${hidden} more` : "")));
+    node.append(el("div", "also", t("also matched: %s")
+      .replace("%s", also.map((i) => t("rule %s").replace("%s", i + 1)).join(", "))
+      + (hidden > 0 ? " " + t("and %s more").replace("%s", hidden) : "")));
   }
   for (const m of e.memory || []) {
     node.append(el("div", "evt mem",
-      m.cleared ? `cleared point ${m.point}` : `point ${m.point} set to ${m.x}, ${m.y}`));
+      m.cleared ? t("cleared point %s").replace("%s", m.point)
+        : t("point %1 set to %2").replace("%1", m.point).replace("%2", `${m.x}, ${m.y}`)));
   }
   for (const s of e.signals || []) {
-    node.append(el("div", "evt sig", `heard “${s.kind}” from #${s.from} at ${s.x}, ${s.y}`));
+    // s.kind is the signal as the rule language spells it, so it stays verbatim.
+    node.append(el("div", "evt sig", t("heard “%1” from #%2 at %3")
+      .replace("%1", s.kind).replace("%2", s.from).replace("%3", `${s.x}, ${s.y}`)));
   }
   const rest = (e.signals_total || 0) - (e.signals || []).length;
-  if (rest > 0) node.append(el("div", "evt sig", `and ${rest} more signal${rest > 1 ? "s" : ""}`));
+  if (rest > 0) {
+    node.append(el("div", "evt sig", rest === 1 ? t("and 1 more signal")
+      : t("and %s more signals").replace("%s", rest)));
+  }
 
   // Text-only updates from here on: extending a run touches one text node.
   //
@@ -1587,11 +1622,10 @@ function histReset() {
   explainRobot = null;
   renderMind();
   setText($("history-note"), replay
-    ? "Decisions are recorded while a match runs, and only for a selected robot,"
-    + " so a replay has none to show."
+    ? t("Decisions are recorded while a match runs, and only for a selected robot, so a replay has none to show.")
     : selected === null
-      ? "Select a robot to start recording why it acts."
-      : `Recording robot #${selected} from now on.`);
+      ? t("Select a robot to start recording why it acts.")
+      : t("Recording robot #%s from now on.").replace("%s", selected));
 }
 
 // Polls are strictly serialised. Three things call this — the interval, a new
@@ -1640,13 +1674,13 @@ async function pollHistory() {
   // a lie: what came back is the whole of what was kept.
   if (data.final) {
     setText($("history-note"), histRows === 0
-      ? `The match is over, and robot #${robot} was not being recorded when it ended — a robot only records while somebody has it selected.`
-      : `The last ${secs}s before the match ended, newest first.`);
+      ? t("The match is over, and robot #%s was not being recorded when it ended — a robot only records while somebody has it selected.").replace("%s", robot)
+      : t("The last %ss before the match ended, newest first.").replace("%s", secs));
     return;
   }
   setText($("history-note"), histRows === 0
-    ? `Recording robot #${robot} from now on — history is only kept while a robot is selected.`
-    : `Last ${secs}s of decisions, newest first. Only the selected robot is recorded.`);
+    ? t("Recording robot #%s from now on — history is only kept while a robot is selected.").replace("%s", robot)
+    : t("Last %ss of decisions, newest first. Only the selected robot is recorded.").replace("%s", secs));
 }
 
 setInterval(() => { if (!over) pollHistory(); }, HISTORY_POLL_MS);
@@ -1705,7 +1739,10 @@ const condMark = (c) => (c.impossible || c.unknown ? "·" : c.true ? "✓" : "�
 // impossible, so the fallback is only reached when the catalogue never loaded.
 function needsOf(pred) {
   const needs = predSpecs.get(pred)?.needs || [];
-  return needs.length ? `NO ${needs.join(" + ").toUpperCase()}` : "NOT ON THIS BLUEPRINT";
+  // The hardware is named as the catalogue names it; only the frame is translated.
+  return needs.length
+    ? t("NO %s").replace("%s", needs.join(" + ").toUpperCase())
+    : t("NOT ON THIS BLUEPRINT");
 }
 
 // The right-hand column: why the row cannot be true, or the number behind the
@@ -1714,7 +1751,7 @@ function needsOf(pred) {
 // whose argument is a percentage are the ones whose value is one.
 function condValue(c) {
   if (c.impossible) return needsOf(c.pred);
-  if (c.unknown) return "not asked";
+  if (c.unknown) return t("not asked");
   if (c.value === undefined || c.value === null) return "—";
   return predSpecs.get(c.pred)?.arg === "percent" ? `${c.value}%` : String(c.value);
 }
@@ -1722,12 +1759,11 @@ function condValue(c) {
 // Why there is no table, said in the terms of whichever thing is missing.
 function mindNote() {
   if (replay) {
-    return "The truth table is evaluated as the robot decides, so a replay —"
-      + " which decides nothing — has none to show.";
+    return t("The truth table is evaluated as the robot decides, so a replay — which decides nothing — has none to show.");
   }
-  if (selected === null) return "Select a robot to read what its rules can test.";
-  return `Waiting for robot #${selected} to decide — the table is recorded from the`
-    + " first decision after you select it.";
+  if (selected === null) return t("Select a robot to read what its rules can test.");
+  return t("Waiting for robot #%s to decide — the table is recorded from the first decision after you select it.")
+    .replace("%s", selected);
 }
 
 function renderMind() {
@@ -1772,9 +1808,10 @@ function renderMind() {
     const cls = "srow" + (c.impossible || c.unknown ? " off" : c.true ? "" : " no");
     if (cell.row.className !== cls) cell.row.className = cls;
   }
-  const behind = snap && snap.tick > ex.tick ? `, ${snap.tick - ex.tick} ticks ago` : "";
-  setText(note, `Evaluated on tick ${ex.tick}${behind}. Grey rows can never be true`
-    + " on this blueprint; a dot is a condition no rule asks about.");
+  const behind = snap && snap.tick > ex.tick
+    ? t(", %s ticks ago").replace("%s", snap.tick - ex.tick) : "";
+  setText(note, t("Evaluated on tick %s").replace("%s", ex.tick) + behind + ". "
+    + t("Grey rows can never be true on this blueprint; a dot is a condition no rule asks about."));
   renderFirstMatch(ex);
 }
 
@@ -1809,16 +1846,22 @@ function libraryProgram(r) {
 function renderFirstMatch(ex) {
   const shadowed = ex.rules.filter((v) => v.verdict === "shadowed").map((v) => v.rule);
   const ran = ex.rules.filter((v) => v.verdict === "ran").map((v) => v.rule);
-  const said = [ex.rule >= 0 ? `Rule ${ruleNo(ex.rule)} took this tick.` : "No rule took this tick."];
+  const said = [ex.rule >= 0
+    ? t("Rule %s took this tick.").replace("%s", ruleNo(ex.rule))
+    : t("No rule took this tick.")];
   if (shadowed.length) {
-    said.push(`${shadowed.length === 1 ? "Rule" : "Rules"} ${shadowed.map(ruleNo).join(", ")}`
-      + ` also matched and never ran — ${shadowed.length === 1 ? "it is" : "they are"} below it.`);
+    said.push((shadowed.length === 1
+      ? t("Rule %s also matched and never ran — it is below it.")
+      : t("Rules %s also matched and never ran — they are below it."))
+      .replace("%s", shadowed.map(ruleNo).join(", ")));
   } else if (ex.rule >= 0) {
-    said.push("Nothing below it would have matched.");
+    said.push(t("Nothing below it would have matched."));
   }
   if (ran.length) {
-    said.push(`${ran.length === 1 ? "Rule" : "Rules"} ${ran.map(ruleNo).join(", ")} ran side effects`
-      + " and let evaluation carry on down the list.");
+    said.push((ran.length === 1
+      ? t("Rule %s ran side effects and let evaluation carry on down the list.")
+      : t("Rules %s ran side effects and let evaluation carry on down the list."))
+      .replace("%s", ran.map(ruleNo).join(", ")));
   }
   setText($("fmw-note"), said.join(" "));
 
@@ -1831,7 +1874,8 @@ function renderFirstMatch(ex) {
     // to shadow-test it against this very robot.
     edit.href = `/editor?program=${encodeURIComponent(p.id)}`
       + `&match=${encodeURIComponent(matchID)}&robot=${encodeURIComponent(r.id)}`;
-    edit.title = `open “${p.name}” in the editor and test it against ${shortID(r)}`;
+    edit.title = t("open “%1” in the editor and test it against %2")
+      .replace("%1", () => p.name).replace("%2", shortID(r));
   }
   $("fmw").hidden = false;
 }
@@ -1877,7 +1921,7 @@ function whenList(when, ex) {
   }
   // The conditions are read out of the viewer's own library, and a library row
   // can be edited after it was installed. Said here rather than left implied.
-  row.title = "the rule as your library holds it now, checked against this tick";
+  row.title = t("the rule as your library holds it now, checked against this tick");
   return row;
 }
 
@@ -1885,14 +1929,19 @@ function whenList(when, ex) {
 // the winner are what make the winner the winner, and a player looking at rule
 // 03 wants to know that 01 and 02 were asked at all.
 function testedLine(ex) {
-  if (!ex.rules.length) return "This program has no rules.";
-  if (ex.rule < 0) return `All ${plural(ex.rules.length, "rule")} were tested and none matched.`;
+  if (!ex.rules.length) return t("This program has no rules.");
+  if (ex.rule < 0) {
+    return t("All %s were tested and none matched.")
+      .replace("%s", plural(ex.rules.length, t("rule"), t("rules")));
+  }
   const above = ex.rules
     .filter((v) => v.rule < ex.rule && v.verdict === "not_met")
     .map((v) => v.rule);
-  if (!above.length) return "The first rule matched.";
-  return `${above.length === 1 ? "Rule" : "Rules"} ${above.map(ruleNo).join(", ")} `
-    + `${above.length === 1 ? "was" : "were"} tested and did not match.`;
+  if (!above.length) return t("The first rule matched.");
+  return (above.length === 1
+    ? t("Rule %s was tested and did not match.")
+    : t("Rules %s were tested and did not match."))
+    .replace("%s", above.map(ruleNo).join(", "));
 }
 
 // ---------------------------------------------------------------- commands
@@ -1964,14 +2013,13 @@ function commandBox(r) {
   const node = el("div", "cmd");
   const state = el("div", "state");
   const pick = el("select");
-  const recall = el("button", "btn sm", "Recall home");
-  const install = el("button", "btn sm", "Install program");
+  const recall = el("button", "btn sm", t("Recall home"));
+  const install = el("button", "btn sm", t("Install program"));
   const msg = el("p", "note");
   const row = el("div", "row");
   row.append(recall, install);
   node.append(state, pick, row,
-    el("p", "caption", "Reprogramming wipes all three memory points."
-      + " It takes effect on the next tick."),
+    el("p", "caption", t("Reprogramming wipes all three memory points. It takes effect on the next tick.")),
     msg);
 
   const fail = (e) => { note = { robot: r.id, text: e.message, bad: true }; };
@@ -1988,7 +2036,7 @@ function commandBox(r) {
 
   install.addEventListener("click", async () => {
     const id = Number(pick.value);
-    if (!id) { note = { robot: r.id, text: "Pick a program first.", bad: true }; render(); return; }
+    if (!id) { note = { robot: r.id, text: t("Pick a program first."), bad: true }; render(); return; }
     const name = pick.selectedOptions[0].textContent;
     note = null;
     install.disabled = true;
@@ -1999,7 +2047,8 @@ function commandBox(r) {
         // Counted from the server's own reply, not assumed: this is the claim
         // design §13 criterion 6 asks the player to verify.
         const cleared = st.memory.filter((p) => !p).length;
-        note = { robot: r.id, text: `${name} installed — ${cleared} memory points cleared.` };
+        note = { robot: r.id, text: t("%1 installed — %2 memory points cleared.")
+          .replace("%1", () => name).replace("%2", cleared) };
       }
     } catch (e) { fail(e); }
     render();
@@ -2009,8 +2058,8 @@ function commandBox(r) {
     const home = atOwnBase(cur);
     state.className = "state" + (cur.recalled ? (home ? " home" : " back") : "");
     state.textContent = cur.recalled
-      ? (home ? "at base — awaiting program" : "returning to base")
-      : "in the field, running its program";
+      ? (home ? t("at base — awaiting program") : t("returning to base"))
+      : t("in the field, running its program");
 
     recall.disabled = over || cur.recalled;
     // A program can be installed on any robot standing at its own base, recalled
@@ -2019,13 +2068,13 @@ function commandBox(r) {
     pick.disabled = install.disabled = !ready;
 
     if (programs === null) {
-      pick.replaceChildren(el("option", null, "loading library…"));
+      pick.replaceChildren(el("option", null, t("loading library…")));
     } else if (pick.dataset.lib !== programs.map((p) => p.id).join(",")) {
       pick.dataset.lib = programs.map((p) => p.id).join(",");
       // A new library is seeded with the worked programs, so an empty one means
       // the player deleted them all; the editor is the only way back.
       const none = el("option", null,
-        programs.length ? "— pick a program —" : "library empty — write one in the editor");
+        programs.length ? t("— pick a program —") : t("library empty — write one in the editor"));
       none.value = ""; // without this an <option> takes its own text as its value
       pick.replaceChildren(none);
       for (const p of programs) {
@@ -2074,20 +2123,20 @@ function renderSpectate() {
   const out = mine !== null && isOut(mine);
   box.hidden = !out;
   if (out) {
-    setText(box, "Your colony is out — no robots left, and nothing your base can build. "
-      + "You keep watching: pick any robot, from any colony, to follow what it decides.");
+    setText(box, t("Your colony is out — no robots left, and nothing your base can build. You keep watching: pick any robot, from any colony, to follow what it decides."));
   }
 }
 
 function renderStats() {
-  const t = $("stats");
-  t.replaceChildren();
+  const table = $("stats");
+  table.replaceChildren();
   if (!snap) return;
   const head = document.createElement("tr");
-  for (const c of ["#", "Colony", "Robots", "Score", "Fleet", "Stock", "Parts", "Lost", "Kills"]) {
+  for (const c of ["#", t("Colony"), t("Robots"), t("Score"), t("Fleet"),
+    t("Stock"), t("Parts"), t("Lost"), t("Kills")]) {
     head.append(el("th", null, c));
   }
-  t.append(head);
+  table.append(head);
 
   // Rank by score, not fleet value: the design §9 score is fleet value plus a
   // quarter of the base inventory, so a colony sitting on a large stock can
@@ -2103,8 +2152,8 @@ function renderStats() {
     name.append(sw, document.createTextNode(colonyName(c.colony)));
     if (isOut(c.colony)) {
       tr.classList.add("outrow");
-      name.append(el("span", "out", "out"));
-      tr.title = "no robots left and nothing the base can build — design §5.3";
+      name.append(el("span", "out", t("out")));
+      tr.title = t("no robots left and nothing the base can build — design §5.3");
     }
     // Parts / Lost / Kills are sim.Stats, cumulative since tick 0 — what the
     // colony has *done*, next to what it currently holds. ticks_active has no
@@ -2112,12 +2161,12 @@ function renderStats() {
     // described by its robot count, so it rides that cell as a tooltip.
     const robots = el("td", "num", String(c.robots));
     const secs = Math.round((c.ticks_active || 0) / (init?.tick_rate || 10));
-    robots.title = `fielded a robot for ${secs}s of the match so far`;
+    robots.title = t("fielded a robot for %ss of the match so far").replace("%s", secs);
     tr.append(name, robots,
       el("td", "num", String(c.score)), el("td", "num", String(c.fleet_value)),
       el("td", "num", String(c.inventory)), el("td", "num", String(c.collected ?? 0)),
       el("td", "num", String(c.losses ?? 0)), el("td", "num", String(c.kills ?? 0)));
-    t.append(tr);
+    table.append(tr);
   });
 }
 
@@ -2134,7 +2183,7 @@ function renderBase() {
   const sel = snap.robots.find((r) => r.id === selected);
   if (sel) baseColony = sel.colony;
   const b = snap.bases.find((x) => x.colony === baseColony) || snap.bases[0];
-  if (!b) { box.append(el("p", "meta", "No base.")); return; }
+  if (!b) { box.append(el("p", "meta", t("No base."))); return; }
 
   const head = el("div");
   const sw = el("span", "swatch");
@@ -2143,7 +2192,7 @@ function renderBase() {
     el("span", "meta", ` · ${b.x}, ${b.y}`));
   box.append(head);
 
-  box.append(el("h3", null, "Building"));
+  box.append(el("h3", null, t("Building")));
   if (b.build) {
     const key = `${b.colony}|${b.build.blueprint}`;
     const total = Math.max(buildTotals.get(key) || 0, b.build.ticks_left);
@@ -2153,30 +2202,33 @@ function renderBase() {
     fill.style.width = `${(1 - b.build.ticks_left / total) * 100}%`;
     bar.append(fill);
     box.append(el("div", null, b.build.blueprint), bar,
-      el("div", "meta", `${b.build.ticks_left} ticks left · `
-        + b.build.components.map(compName).join(", ")));
+      el("div", "meta", t("%s ticks left").replace("%s", b.build.ticks_left)
+        + " · " + b.build.components.map(compName).join(", ")));
   } else if (isOut(b.colony)) {
     // Not idle: out. Design §5.3 — the base survives, the colony does not.
     const p = el("p", "meta");
-    p.append(el("span", "out", "out"), document.createTextNode(
-      ` — no robots left and ${b.idle_reason}. Nothing can fetch another`
-      + " component, so this colony cannot build again."));
+    // b.idle_reason is the server's own wording and still reaches the player in
+    // English; rc-mjj.9 owns that half.
+    p.append(el("span", "out", t("out")), document.createTextNode(" — "
+      + t("no robots left and %s. Nothing can fetch another component, so this colony cannot build again.")
+        .replace("%s", () => b.idle_reason)));
     box.append(p);
   } else {
     // idle_reason (from the server) distinguishes a base that is merely between
     // builds from one that is blocked — a silent stall reads as a bug.
-    box.append(el("p", "meta", b.idle_reason ? `Idle — ${b.idle_reason}.` : "Idle."));
+    box.append(el("p", "meta", b.idle_reason
+      ? t("Idle — %s.").replace("%s", () => b.idle_reason) : t("Idle.")));
   }
 
-  box.append(el("h3", null, "Inventory"));
-  if (b.inventory.length === 0) box.append(el("p", "meta", "Empty."));
+  box.append(el("h3", null, t("Inventory")));
+  if (b.inventory.length === 0) box.append(el("p", "meta", t("Empty.")));
   else {
     const ul = el("ul", "tight");
     for (const e of b.inventory) ul.append(el("li", null, `${e.count} × ${compName(e.variant)}`));
     box.append(ul);
   }
 
-  box.append(el("h3", null, "Approved blueprints"));
+  box.append(el("h3", null, t("Approved blueprints")));
   const ul = el("ul", "tight");
   for (const bp of blueprintsOf(b.colony)) {
     ul.append(el("li", null, `${bp.name} — ${bp.components.map(compName).join(", ")} (${bp.value})`));
@@ -2196,8 +2248,9 @@ function renderClock() {
   // match you are — but only when the client has been told where that is; see
   // liveTick. Everywhere else it would be a made-up number.
   setText($("tick"), liveTick === null
-    ? `/ ${mmss(end)} · tick ${snap.tick}`
-    : `tick ${snap.tick} · −${Math.max(0, Math.round((liveTick - Number(snap.tick)) / rate))}s`);
+    ? `/ ${mmss(end)} · ` + t("tick %s").replace("%s", snap.tick)
+    : t("tick %s").replace("%s", snap.tick)
+      + ` · −${Math.max(0, Math.round((liveTick - Number(snap.tick)) / rate))}s`);
 
   // The timeline is one filled bar whose right edge is now. Live it is not a
   // scrubber — nothing behind the head is seekable, because the server keeps no
@@ -2207,15 +2260,16 @@ function renderClock() {
   $("progress").style.width = `${(done * 100).toFixed(2)}%`;
   // The chip rides the head, so it needs no position of its own. Live it says
   // NOW; a replay is somewhere in the past and says which tick (design 252, 560).
-  setText($("now-chip"), replay ? `tick ${snap.tick}` : "now");
+  setText($("now-chip"), replay ? t("tick %s").replace("%s", snap.tick) : t("now"));
   const mark = $("live-mark");
   mark.hidden = liveTick === null || end <= 0;
   if (!mark.hidden) {
     mark.style.left = `${Math.min(100, liveTick / end * 100).toFixed(2)}%`;
-    setText($("live-mark-label"), `live ${liveTick}`);
+    setText($("live-mark-label"), t("live %s").replace("%s", liveTick));
   }
   const gone = Math.floor(Number(snap.tick) / rate);
-  setText($("tick-mid"), `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} elapsed`);
+  setText($("tick-mid"),
+    `${Math.floor(gone / 60)}:${String(gone % 60).padStart(2, "0")} ` + t("elapsed"));
   // The marks belong to this bar and are positioned as a fraction of the same
   // end tick, so they are placed from here rather than from a second reader of
   // it. Live that is the whole of the feed on screen; a replay also has the log.
@@ -2340,16 +2394,21 @@ function eventWho(e) {
 // is worse than a short line.
 function eventText(e) {
   switch (e.kind) {
+    // The robot names, the colony names and the blueprint names are data: only
+    // the sentence around them is translated.
     case "loss":
       return e.attacker
-        ? `${eventWho(e)} destroyed by #${e.attacker.robot} · ${colonyName(e.attacker.colony)}`
-        : `${eventWho(e)} destroyed`;
+        ? t("%1 destroyed by #%2").replace("%1", eventWho(e)).replace("%2", e.attacker.robot)
+          + ` · ${colonyName(e.attacker.colony)}`
+        : t("%s destroyed").replace("%s", eventWho(e));
     case "build":
-      return `Base built ${blueprintName(e.colony, e.blueprint) || "a robot"} — ${eventWho(e)}`;
+      return t("Base built %1 — %2")
+        .replace("%1", () => blueprintName(e.colony, e.blueprint) || t("a robot"))
+        .replace("%2", eventWho(e));
     case "deposit":
-      return `${eventWho(e)} banked a component at base`;
+      return t("%s banked a component at base").replace("%s", eventWho(e));
     case "idle":
-      return "Base stalled — nothing approved is covered by the stock";
+      return t("Base stalled — nothing approved is covered by the stock");
     default:
       return `${colonyName(e.colony)}: ${e.kind}`;
   }
@@ -2419,7 +2478,7 @@ function logRow(e) {
   sw.title = colonyName(e.colony);
   row.append(el("span", "when", mmss(Number(e.tick))), sw,
     el("span", "g", EVENT_GLYPH[e.kind] || "·"), el("span", "what", eventText(e)));
-  row.title = `Seek the replay to tick ${eventFrame(e)}`;
+  row.title = t("Seek the replay to tick %s").replace("%s", eventFrame(e));
   row.addEventListener("click", () => reopen(eventFrame(e)));
   return row;
 }
@@ -2445,10 +2504,12 @@ function renderEventLog() {
 
   const note = $("event-note");
   if (logRows.length === 0) {
-    setText(note, mine !== null ? "Nothing has happened to your colony yet." : "No events yet.");
+    setText(note, mine !== null
+      ? t("Nothing has happened to your colony yet.") : t("No events yet."));
   } else if (feedDropped) {
     // Never a silent truncation: the list is the last 400 of a longer match.
-    setText(note, `The feed keeps the last ${EVENT_CAP} events — the earliest ones are gone.`);
+    setText(note, t("The feed keeps the last %s events — the earliest ones are gone.")
+      .replace("%s", EVENT_CAP));
   }
   note.hidden = logRows.length > 0 && !feedDropped;
 
@@ -2656,9 +2717,13 @@ let dragging = false;
 let liveTick = null;
 
 function connect() {
-  if (!matchID) { err("No match id in the URL: try /match?id=1"); conn("over", "no match"); return; }
+  if (!matchID) {
+    err(t("No match id in the URL: try /match?id=1"));
+    conn("over", t("no match"));
+    return;
+  }
   seeking = replay;
-  conn("retry", replay ? "seeking…" : "connecting…");
+  conn("retry", replay ? t("seeking…") : t("connecting…"));
   source = new EventSource(replay
     ? `/api/matches/${encodeURIComponent(matchID)}/replay?from=${from}&speed=${speed}`
     : `/api/matches/${encodeURIComponent(matchID)}/stream`);
@@ -2670,7 +2735,7 @@ function connect() {
     // before the first frame — a few hundred ms on a default match — and
     // "live" over a board that has not moved yet would be a lie. The tick
     // handler reports it when there is something to report.
-    if (!replay) conn("live", "▮ live");
+    if (!replay) conn("live", t("▮ live"));
   });
 
   source.addEventListener("init", (ev) => {
@@ -2709,6 +2774,7 @@ function connect() {
       // One frame per tick, in order, so this is the whole of the trail: a seek
       // clears it rather than stitching two stretches of match together.
       trailsRecord();
+      // "replay" is the feature's own name here, kept as-is like Match and Tick.
       if (seeking) { seeking = false; conn("live", `▮ replay ×${speed}`); }
     }
     render();
@@ -2723,7 +2789,7 @@ function connect() {
     // The last board and the standing stay on screen: freezing without saying
     // so is indistinguishable from a stalled simulation.
     render();
-    conn("over", `match over at tick ${e.tick}`);
+    conn("over", t("match over at tick %s").replace("%s", e.tick));
     $("clock").textContent = "0:00";
   });
 
@@ -2733,7 +2799,7 @@ function connect() {
     if (over || !source) return;
     source.close();
     source = null;
-    conn("retry", "connection lost, checking…");
+    conn("retry", t("connection lost, checking…"));
 
     // EventSource never reports the status code, so a dropped connection, an
     // expired session and a match that no longer exists all arrive identically.
@@ -2756,20 +2822,20 @@ function connect() {
       const body = await res.json().catch(() => ({}));
       if (body.replayable === false) {
         over = true;
-        err(body.reason || "this match cannot be replayed by this build");
-        conn("over", "not replayable");
+        err(body.reason || t("this match cannot be replayed by this build"));
+        conn("over", t("not replayable"));
         return;
       }
     }
     if (res && (res.status === 404 || res.status === 410)) {
       over = true;
       const body = await res.json().catch(() => ({}));
-      err(body.error || "this match is not running");
-      conn("over", "no match");
+      err(body.error || t("this match is not running"));
+      conn("over", t("no match"));
       return;
     }
 
-    conn("retry", `reconnecting in ${Math.round(backoff / 1000)}s…`);
+    conn("retry", t("reconnecting in %ss…").replace("%s", Math.round(backoff / 1000)));
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 15000);
@@ -2789,12 +2855,13 @@ function connect() {
 // replaceChildren()-ed ten times a second — that would close the speed select
 // under the pointer (docs/engineering-notes.md).
 
-const syncPlay = () => { setText($("rp-play"), source ? "Pause" : "Play"); };
+// "Pause" is the same word in German, so only its opposite needs a key.
+const syncPlay = () => { setText($("rp-play"), source ? "Pause" : t("Play")); };
 
 function pause() {
   if (source) { source.close(); source = null; }
   clearTimeout(retryTimer);
-  conn("over", "paused");
+  conn("over", t("paused"));
   syncPlay();
 }
 
@@ -2856,7 +2923,7 @@ async function probeLive() {
 if (replay) {
   $("replay").hidden = false;
   $("replay-badge").hidden = false;
-  setText($("timeline-note"), "a finished match, replayed from its command log");
+  setText($("timeline-note"), t("a finished match, replayed from its command log"));
   // The event log is a replay panel: its rows seek, and live there is nothing
   // behind the head to seek to.
   $("p-events").hidden = false;
