@@ -738,7 +738,9 @@ type statusError struct {
 	msg  string
 	// key is the printf format string the message was built from, kept verbatim
 	// as the translation key: it is stable and unique per call site, and the
-	// client's i18n already keys off English source strings.
+	// client's i18n already keys off English source strings. Every call site
+	// therefore passes a *literal* format — a format built at run time would
+	// put a player's own text in the key, where a dictionary cannot use it.
 	key string
 	// args fills key. ponytail: the wire cannot say which args are vocabulary
 	// the client should translate ("blueprint") and which are player-authored
@@ -760,6 +762,9 @@ func libErrf(code int, format string, a ...any) error {
 // else — an error, mostly — becomes the text it already prints as, since an
 // error marshals to {} and would lose the very detail the message carries.
 // The copy also means the retained slice is never aliased by a caller.
+// A named scalar type (type Foo int) would fall to the default and lose its
+// numeric verb; no message passes one today, and the round trip in
+// errkey_test.go is where that would show up.
 func wireArgs(a []any) []any {
 	out := make([]any, len(a))
 	for i, v := range a {
