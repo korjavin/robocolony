@@ -17,7 +17,7 @@
 
   "Bays": "Steckplätze",
   "Add a part": "Bauteil hinzufügen",
-  "Exactly one locomotion unit and one armored body; at most one sensor and two weapons.": "Genau ein Antrieb und ein Panzerkörper; höchstens ein Sensor und zwei Waffen.",
+  "Exactly one locomotion unit and one armored body; at most one sensor and two weapons.": "Genau ein Antrieb (locomotion) und ein Panzerkörper (armor); höchstens ein Sensor und zwei Waffen.",
   "Each row is priced against the design on screen, not off the catalogue: what fitting it would cost this robot in pace and in robots the starting budget opens with, and how many predicates and actions it switches on.": "Jede Zeile ist gegen den Bauplan auf dem Bildschirm gerechnet, nicht gegen den Katalog: was der Einbau diesen Roboter an Tempo kostet und an Robotern, mit denen das Startbudget beginnt, und wie viele Bedingungen und Aktionen er freischaltet.",
   "Hover a row for its own price in budget and mass.": "Fahr über eine Zeile, um ihren eigenen Preis in Budget und Masse zu sehen.",
 
@@ -66,7 +66,7 @@
   "%1 dead rules: hardware this design does not carry": "%1 tote Regeln: Hardware, die dieser Bauplan nicht trägt",
 
   "An empty parts list is not a design yet.": "Eine leere Teileliste ist noch kein Bauplan.",
-  "Approved in %1 open lobby of yours:": "Genehmigt in %1 offenen Lobby von dir:",
+  "Approved in %1 open lobby of yours:": "Genehmigt in %1 offener Lobby von dir:",
   "Approved in %1 open lobbies of yours:": "Genehmigt in %1 offenen Lobbys von dir:",
   "Every robot the starting budget opens with is drawn from your approvals at random, so an approved design has no place in a queue — only a share of the draw.": "Jeder Roboter, mit dem das Startbudget beginnt, wird zufällig aus deinen Genehmigungen gezogen — ein genehmigter Bauplan hat also keinen Platz in einer Warteschlange, nur einen Anteil an der Ziehung.",
   "No open lobby of yours approves this parts list. Approval is per lobby, not a property of the design — approve it on the": "Keine deiner offenen Lobbys genehmigt diese Teileliste. Genehmigung gilt pro Lobby, nicht für den Bauplan selbst — genehmige ihn auf der",
