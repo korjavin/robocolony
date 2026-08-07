@@ -241,7 +241,11 @@
      back up. A finished match is a different question — its whole command log
      is on disk — so ?replay=1 adds the .replay row below. */
   .timeline { border-top: 1px solid var(--line-1); padding: 10px 14px 12px; }
-  .timeline .head { display: flex; align-items: baseline; gap: 12px; }
+  /* Wrapping, because the row is a sentence in whatever language the page is
+     in: the four event names are one short word each in English and two
+     syllables more in German, and unwrapped they push the dropped-events
+     warning off the end of the column. */
+  .timeline .head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   /* The top margin is the chip's room: it floats above the head, outside the
      track, and a smaller gap would put it through the row above. */
   .track {
@@ -294,7 +298,7 @@
     font-size: 10px; font-weight: 400; line-height: 1; color: var(--fg-2);
   }
   /* What a mark means, said once beside the track it is on. */
-  .timeline .glyphs { display: flex; gap: 10px; font-size: 11px; color: var(--fg-2); }
+  .timeline .glyphs { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--fg-2); }
   .timeline .glyphs b { font-weight: 400; color: var(--fg-0); }
   /* The feed keeps the last 400 events (internal/lobby/events.go). Past that a
      long match's marks do not reach back to the start, and the bar says so
@@ -632,7 +636,7 @@
        frame, so neither exists before the stream says so. -->
   <div class="matchbar">
     <span class="label">Match</span>
-    <h1 id="subtitle">Connecting to the world stream&hellip;</h1>
+    <h1 id="subtitle" data-i18n>Connecting to the world stream&hellip;</h1>
     <span class="badge" id="match-no" hidden></span>
     <span class="badge dashed" id="match-seed" hidden></span>
     <span class="err" id="err"></span>
@@ -642,8 +646,8 @@
     <span class="badge dashed" id="replay-badge" hidden>&#9664;&#9664; Replay</span>
     <span class="clock" id="clock">--:--</span>
     <span class="meta" id="tick"></span>
-    <a class="btn sm primary" id="to-live" hidden href="/lobby">Jump to live &rarr;</a>
-    <span class="conn" id="conn">connecting</span>
+    <a class="btn sm primary" id="to-live" hidden href="/lobby" data-i18n>Jump to live &rarr;</a>
+    <span class="conn" id="conn" data-i18n>connecting</span>
   </div>
 
   <main class="mgrid">
@@ -652,13 +656,13 @@
          this tick. -->
     <section class="pane left">
       <div class="pane-head">
-        <span class="label">Roster</span>
+        <span class="label" data-i18n>Roster</span>
         <span class="grow"></span>
-        <span class="meta">by colony</span>
+        <span class="meta" data-i18n>by colony</span>
       </div>
       <div class="pane-body">
         <div class="roster" id="roster"></div>
-        <p class="meta" id="roster-empty" style="padding:10px 14px">No robots yet.</p>
+        <p class="meta" id="roster-empty" style="padding:10px 14px" data-i18n>No robots yet.</p>
       </div>
       <!-- Design 177-180. The arrow keys are here because a list you can only
            click is a list you cannot walk down while watching the map — and in
@@ -668,7 +672,7 @@
            already locked to whatever is selected. -->
       <div class="pane-foot">
         <span class="kbd">&uarr;&darr;</span>
-        <span class="meta">Step robot &mdash; or click a row, or the arena</span>
+        <span class="meta" data-i18n>Step robot &mdash; or click a row, or the arena</span>
       </div>
     </section>
 
@@ -681,26 +685,26 @@
            minimap and the terrain blit rather than a stepper. The camera below
            needs neither: POV is already locked to the robot you picked. -->
       <div class="field-bar">
-        <span class="badge solid">Field</span>
+        <span class="badge solid" data-i18n>Field</span>
         <!-- Which of the two views is live (design 1b 368-372). Nothing about
              the stream depends on it: both draw the same snapshot. -->
-        <div class="seg" id="view-mode" role="group" aria-label="Field view">
-          <button type="button" data-mode="map" aria-pressed="true"
+        <div class="seg" id="view-mode" role="group" aria-label="Field view" data-i18n-attr="aria-label">
+          <button type="button" data-mode="map" aria-pressed="true" data-i18n data-i18n-attr="title"
                   title="The whole world, from above">Map</button>
-          <button type="button" data-mode="pov" aria-pressed="false"
+          <button type="button" data-mode="pov" aria-pressed="false" data-i18n-attr="title"
                   title="What the selected robot can see, and nothing else">POV</button>
-          <button type="button" data-mode="split" aria-pressed="false"
+          <button type="button" data-mode="split" aria-pressed="false" data-i18n data-i18n-attr="title"
                   title="Both at once: the world, and the robot's share of it">Split</button>
         </div>
-        <button class="badge toggle" type="button" id="t-sight" aria-pressed="true"
+        <button class="badge toggle" type="button" id="t-sight" aria-pressed="true" data-i18n data-i18n-attr="title"
                 title="The 90° forward wedge the selected robot can see (design §7.1)">Sight &#10003;</button>
-        <button class="badge toggle" type="button" id="t-radar" aria-pressed="true"
+        <button class="badge toggle" type="button" id="t-radar" aria-pressed="true" data-i18n-attr="title"
                 title="The square reach of the selected robot's radar, if it carries one (design §7.2)">Radar &#10003;</button>
         <span class="grow"></span>
         <!-- The reach of the two senses, written by match.js out of the same
              constants the renderer draws from, so it cannot state a range
              nothing paints. -->
-        <span class="meta" id="reach-note">Overlays are drawn for the selected robot only</span>
+        <span class="meta" id="reach-note" data-i18n>Overlays are drawn for the selected robot only</span>
       </div>
 
       <div class="stage" id="stage">
@@ -744,28 +748,28 @@
              frame, and the marks are static except for the robot body in each,
              which comes from the renderer's own shape table. -->
         <details class="legend fold overlay br" id="legend">
-          <summary>Legend</summary>
+          <summary data-i18n>Legend</summary>
 
-          <h4>Terrain</h4>
+          <h4 data-i18n>Terrain</h4>
           <ul class="lg" id="lg-terrain"></ul>
 
           <!-- Chassis and the armed mark. Filled by match.js from the same
                SHAPES table the canvas draws from, over the locomotion rows of
                the catalogue on the init frame, so neither a renamed component
                nor a new one can leave a stale shape here. -->
-          <h4>Chassis &mdash; the shape a robot is drawn as</h4>
+          <h4 data-i18n>Chassis &mdash; the shape a robot is drawn as</h4>
           <ul class="lg" id="lg-chassis"></ul>
 
-          <h4>Loose components, by kind</h4>
+          <h4 data-i18n>Loose components, by kind</h4>
           <ul class="lg" id="lg-kinds"></ul>
 
-          <h4>Colonies</h4>
+          <h4 data-i18n>Colonies</h4>
           <ul class="lg" id="lg-colonies"></ul>
 
           <!-- Every .lg-body group below is filled by match.js with the same
                path the renderer fills, so a mark cannot illustrate a robot the
                canvas never draws. Only the overlay beside it is written here. -->
-          <h4>Marks</h4>
+          <h4 data-i18n>Marks</h4>
           <ul class="lg">
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -775,7 +779,7 @@
                       stroke-width=".6" font-size="11" font-weight="700"
                       font-family="monospace">B</text>
               </svg>
-              Base <span class="note">&mdash; one per colony, indestructible</span>
+              <span data-i18n>Base</span> <span class="note" data-i18n>&mdash; one per colony, indestructible</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -784,13 +788,13 @@
                       stroke-width=".5" font-size="9" font-weight="700"
                       font-family="monospace">S</text>
               </svg>
-              Robot <span class="note">&mdash; letter is its blueprint's initial</span>
+              <span data-i18n>Robot</span> <span class="note" data-i18n>&mdash; letter is its blueprint's initial</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <g class="lg-body" transform="translate(8 8) rotate(45) scale(5.6)"></g>
               </svg>
-              Heading <span class="note">&mdash; the nose: where it faces, and all it can see</span>
+              <span data-i18n>Heading</span> <span class="note" data-i18n>&mdash; the nose: where it faces, and all it can see</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -798,7 +802,7 @@
                 <path d="M8 13 L-4 1 H20 Z" fill-opacity=".18" style="fill: var(--colony-1)"/>
                 <g class="lg-body" transform="translate(8 13) scale(2.6)"></g>
               </svg>
-              Vision wedge <span class="note">&mdash; drawn for the selected robot only</span>
+              <span data-i18n>Vision wedge</span> <span class="note" data-i18n>&mdash; drawn for the selected robot only</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -807,22 +811,21 @@
                       stroke-dasharray="2.4 2.4" style="stroke: var(--colony-1)"/>
                 <g class="lg-body" transform="translate(8 8) scale(2.6)"></g>
               </svg>
-              Radar reach <span class="note">&mdash; square, not round: the corner cells are
-              in reach too. Only if the robot carries a radar</span>
+              <span data-i18n>Radar reach</span> <span class="note" data-i18n>&mdash; square, not round: the corner cells are in reach too. Only if the robot carries a radar</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <rect y="12" width="16" height="4" fill="#0006"/>
                 <rect y="12" width="6" height="4" fill="#c0392b"/>
               </svg>
-              Health bar <span class="note">&mdash; only on a damaged robot</span>
+              <span data-i18n>Health bar</span> <span class="note" data-i18n>&mdash; only on a damaged robot</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <g class="lg-body" transform="translate(8 8) scale(5.6)"></g>
                 <circle cx="12.5" cy="3.5" r="2.9" style="fill: var(--kind-weapon)"/>
               </svg>
-              Cargo <span class="note">&mdash; the component it is carrying, by kind</span>
+              <span data-i18n>Cargo</span> <span class="note" data-i18n>&mdash; the component it is carrying, by kind</span>
             </li>
             <li>
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -830,7 +833,7 @@
                 <circle cx="8" cy="8" r="6.6" fill="none" stroke="#fff" stroke-width="1.6"/>
                 <circle cx="8" cy="8" r="7.4" fill="none" stroke="#000" stroke-width=".8"/>
               </svg>
-              Selected <span class="note">&mdash; the robot the panels describe</span>
+              <span data-i18n>Selected</span> <span class="note" data-i18n>&mdash; the robot the panels describe</span>
             </li>
           </ul>
         </details>
@@ -844,8 +847,7 @@
            the canvas rule above fits it to the pane. -->
       <div class="pov-wrap" id="pov-wrap" hidden>
         <canvas id="pov" width="640" height="480"></canvas>
-        <p id="pov-empty" hidden>Pick a robot &mdash; in the roster, on the map,
-        or with &uarr;&darr; &mdash; to see the match from inside it.</p>
+        <p id="pov-empty" hidden data-i18n>Pick a robot &mdash; in the roster, on the map, or with &uarr;&darr; &mdash; to see the match from inside it.</p>
       </div>
       </div>
 
@@ -855,19 +857,15 @@
            on this page that is not rebuilt from scratch every frame. -->
       <div class="pov-foot" id="pov-foot" hidden>
         <section class="blind">
-          <span class="label">Blind spot</span>
-          <p>The 270&deg; behind the nose is not dark &mdash; it does not exist.
-          No condition in the language can test it, so no rule can react to
-          anything standing there.</p>
+          <span class="label" data-i18n>Blind spot</span>
+          <p data-i18n>The 270&deg; behind the nose is not dark &mdash; it does not exist. No condition in the language can test it, so no rule can react to anything standing there.</p>
           <p class="blind-note" id="blind-note"></p>
         </section>
 
         <section class="sense">
           <div>
-            <span class="label">Radar &middot; separate sense</span>
-            <p>Radar answers in every direction and ignores the nose. The tinted
-            quadrant is the sight wedge: a mark outside it is a contact only a
-            radar rule can use.</p>
+            <span class="label" data-i18n>Radar &middot; separate sense</span>
+            <p data-i18n>Radar answers in every direction and ignores the nose. The tinted quadrant is the sight wedge: a mark outside it is a contact only a radar rule can use.</p>
             <p id="dial-note"></p>
           </div>
           <!-- Facing-locked, like the camera: up is the nose, the tinted
@@ -886,7 +884,7 @@
         </section>
 
         <section class="list">
-          <span class="label">Contacts this tick</span>
+          <span class="label" data-i18n>Contacts this tick</span>
           <div class="contacts" id="contacts"></div>
           <p id="contacts-none" hidden></p>
           <p id="contacts-more" hidden></p>
@@ -903,21 +901,21 @@
            second — a <select> in there closes under the pointer. -->
       <div class="timeline">
         <div class="head">
-          <span class="label">Timeline</span>
-          <span class="meta" id="timeline-note">the match runs whether or not anyone is watching</span>
+          <span class="label" data-i18n>Timeline</span>
+          <span class="meta" id="timeline-note" data-i18n>the match runs whether or not anyone is watching</span>
           <span class="grow"></span>
           <!-- What a mark on the track means (design 1a 233-237). Static, and
                the four of them are the wire's four kinds
                (internal/sim/events.go): a fifth would arrive unlabelled here,
                which is the signal to name it. -->
-          <span class="meta">Events</span>
+          <span class="meta" data-i18n>Events</span>
           <span class="glyphs">
-            <span><b>&#10007;</b> loss</span>
-            <span><b>&#9670;</b> deposit</span>
-            <span><b>&#9646;</b> build</span>
-            <span><b>!</b> stall</span>
+            <span><b>&#10007;</b> <span data-i18n>loss</span></span>
+            <span><b>&#9670;</b> <span data-i18n>deposit</span></span>
+            <span><b>&#9646;</b> <span data-i18n>build</span></span>
+            <span><b>!</b> <span data-i18n>stall</span></span>
           </span>
-          <span class="dropped" id="events-dropped" hidden>earliest events dropped</span>
+          <span class="dropped" id="events-dropped" hidden data-i18n>earliest events dropped</span>
         </div>
         <!-- The chip is a child of the fill, so it is carried by the same edge
              the head is drawn from. The live mark is only ever shown when the
@@ -929,7 +927,7 @@
           <span class="marks" id="track-marks"></span>
           <span class="live-mark" id="live-mark" hidden><span id="live-mark-label"></span></span>
         </div>
-        <div class="ticks"><span>start</span><span id="tick-mid">&nbsp;</span><span>end</span></div>
+        <div class="ticks"><span data-i18n>start</span><span id="tick-mid">&nbsp;</span><span data-i18n>end</span></div>
 
         <!-- Replay controls. Every one of them is a reconnect with new query
              params (see match.js): pause closes the stream, play, scrub, skip
@@ -938,10 +936,10 @@
              for a rate that is silently rounded. -->
         <div class="replay" id="replay" hidden>
           <div class="transport">
-            <button class="btn sm" type="button" id="rp-back" title="Back ten seconds">&#9664;&#9664;</button>
+            <button class="btn sm" type="button" id="rp-back" title="Back ten seconds" data-i18n-attr="title">&#9664;&#9664;</button>
             <button class="btn sm" type="button" id="rp-play">Pause</button>
-            <button class="btn sm" type="button" id="rp-fwd" title="Forward ten seconds">&#9654;&#9654;</button>
-            <div class="seg" id="rp-speed" role="group" aria-label="Playback speed">
+            <button class="btn sm" type="button" id="rp-fwd" title="Forward ten seconds" data-i18n-attr="title">&#9654;&#9654;</button>
+            <div class="seg" id="rp-speed" role="group" aria-label="Playback speed" data-i18n-attr="aria-label">
               <button type="button" data-speed="0.25">0.25&times;</button>
               <button type="button" data-speed="1" aria-pressed="true">1&times;</button>
               <button type="button" data-speed="4">4&times;</button>
@@ -949,18 +947,18 @@
             </div>
             <span class="grow"></span>
             <span class="kbd">&larr;</span><span class="kbd">&rarr;</span>
-            <span class="hint">&plusmn; 1 tick</span>
+            <span class="hint" data-i18n>&plusmn; 1 tick</span>
             <!-- Design 551. Back only, and that is not an omission: the replay
                  stream rebuilds to the tick it is standing on and sends the
                  feed forward from there, so an event ahead of the playhead is
                  not something this page has been told about. The list it steps
                  through is the event log's, filter and all. -->
             <span class="kbd">&#8679;&larr;</span>
-            <span class="hint">prev event</span>
+            <span class="hint" data-i18n>prev event</span>
           </div>
           <div class="scrub">
             <input type="range" id="rp-seek" min="0" max="0" value="0" step="1"
-                   aria-label="Seek to a tick of the match">
+                   aria-label="Seek to a tick of the match" data-i18n-attr="aria-label">
             <span class="meta" id="rp-at">0:00</span>
           </div>
         </div>
@@ -988,13 +986,13 @@
              here is a button, and #inspector is replaceChildren()-ed ten times
              a second. -->
         <details class="fold" id="p-events" open hidden>
-          <summary>Event log</summary>
+          <summary data-i18n>Event log</summary>
           <div class="log-head">
-            <button class="badge toggle" type="button" id="ev-mine" aria-pressed="false"
+            <button class="badge toggle" type="button" id="ev-mine" aria-pressed="false" data-i18n data-i18n-attr="title"
                     title="Show only what happened to your own colony">My colony only &#10007;</button>
           </div>
           <div class="log" id="event-log"></div>
-          <p class="meta" id="event-note">No events yet.</p>
+          <p class="meta" id="event-note" data-i18n>No events yet.</p>
         </details>
 
         <!-- Command lives outside #inspector on purpose: that panel is cleared
@@ -1003,8 +1001,8 @@
              control is outside it for the same reason, which is what <summary>
              gives free. -->
         <details class="fold" id="p-selected" open>
-          <summary>Selected robot</summary>
-          <div id="inspector"><p class="meta">No robot selected.</p></div>
+          <summary data-i18n>Selected robot</summary>
+          <div id="inspector"><p class="meta" data-i18n>No robot selected.</p></div>
           <div id="command" hidden></div>
         </details>
 
@@ -1019,13 +1017,13 @@
              does, so opening both costs one of the server's eight recording
              slots, not two. -->
         <details class="fold" id="p-mind" open>
-          <summary>Sensor state</summary>
+          <summary data-i18n>Sensor state</summary>
           <div class="sensors" id="sensors"></div>
-          <p class="meta" id="sensors-note">Select a robot to read what its rules can test.</p>
+          <p class="meta" id="sensors-note" data-i18n>Select a robot to read what its rules can test.</p>
           <div class="fmw" id="fmw" hidden>
-            <span class="label">First match wins</span>
+            <span class="label" data-i18n>First match wins</span>
             <p class="meta" id="fmw-note" style="margin:0"></p>
-            <a class="btn sm" id="fmw-edit" hidden href="/editor">Reorder in editor &nearr;</a>
+            <a class="btn sm" id="fmw-edit" hidden href="/editor" data-i18n>Reorder in editor &nearr;</a>
           </div>
         </details>
 
@@ -1035,17 +1033,15 @@
              second. The panel also holds one of the server's eight recording
              slots while it is open. -->
         <details class="fold" id="p-history">
-          <summary>Recent decisions</summary>
+          <summary data-i18n>Recent decisions</summary>
           <div class="hist-list" id="history-list"></div>
-          <p class="meta" id="history-note">Select a robot to start recording why it acts.</p>
+          <p class="meta" id="history-note" data-i18n>Select a robot to start recording why it acts.</p>
         </details>
 
         <details class="fold" id="p-colonies" open>
-          <summary>Colonies</summary>
+          <summary data-i18n>Colonies</summary>
           <div class="tablewrap"><table id="stats"></table></div>
-          <p class="meta">Standing by design §9 score: fleet value plus a quarter
-          of the base inventory, so stockpiling counts but fielding counts four
-          times more.</p>
+          <p class="meta" data-i18n>Standing by design §9 score: fleet value plus a quarter of the base inventory, so stockpiling counts but fielding counts four times more.</p>
 
           <!-- Score over time (design §4.4 "production history"). Built once
                and updated in place: deliberately not in #inspector, which is
@@ -1056,13 +1052,13 @@
                charting library: a <polyline> per colony is the whole chart, and
                it takes its stroke from the same --colony-N custom property the
                map and the legend read, so it re-themes for free. -->
-          <h3>Over time</h3>
+          <h3 data-i18n>Over time</h3>
           <div class="graph-head">
-            <label for="graph-metric">Series</label>
+            <label for="graph-metric" data-i18n>Series</label>
             <select id="graph-metric">
-              <option value="score">Score</option>
-              <option value="robots">Robots</option>
-              <option value="collected">Parts collected</option>
+              <option value="score" data-i18n>Score</option>
+              <option value="robots" data-i18n>Robots</option>
+              <option value="collected" data-i18n>Parts collected</option>
             </select>
           </div>
           <!-- preserveAspectRatio="none" stretches the box to the panel width;
@@ -1071,15 +1067,15 @@
                distort. -->
           <svg class="graph" id="graph" viewBox="0 0 600 180"
                preserveAspectRatio="none" role="img"
-               aria-label="Colony series over the match so far">
+               aria-label="Colony series over the match so far" data-i18n-attr="aria-label">
             <g id="graph-lines"></g>
           </svg>
-          <p class="meta" id="graph-note">Waiting for the first samples&hellip;</p>
+          <p class="meta" id="graph-note" data-i18n>Waiting for the first samples&hellip;</p>
         </details>
 
         <details class="fold" id="p-base">
-          <summary>Base</summary>
-          <div id="base"><p class="meta">No colony selected.</p></div>
+          <summary data-i18n>Base</summary>
+          <div id="base"><p class="meta" data-i18n>No colony selected.</p></div>
         </details>
       </div>
     </aside>
