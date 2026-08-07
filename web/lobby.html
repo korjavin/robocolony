@@ -239,7 +239,7 @@
 // them lives in js/lang/de/lobby.json, and the markup above opts in with
 // data-i18n. `lang` is imported for one thing only — ordinals, which German
 // writes as "1." and English as "1st", and which no frame string can paper over.
-import { t, lang } from "/js/i18n.js";
+import { t, lang, errorText } from "/js/i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -267,7 +267,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) { location.href = "/login"; return null; }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw new Error(errorText(data, res));
   return data;
 }
 

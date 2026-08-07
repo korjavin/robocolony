@@ -55,6 +55,47 @@ export function t(s) {
   return dict[s] ?? s;
 }
 
+// The one place a key is not a literal in this file's sight: server errors.
+// A failed response carries the English prose it always did plus the printf
+// format the handler built it from and that format's arguments, and the format
+// is the key — the same convention as everywhere else here, where the English
+// source string is the key. So one German entry translates the whole sentence,
+// arguments included.
+//
+// Everything degrades to English rather than to nothing: no key, no German
+// behind it, no JSON body at all — each falls through to the prose the server
+// already formatted, then to the status line, then to the bare code. A player
+// reading "blueprint not found" in the wrong language can still act on it; a
+// player reading "" or "undefined" cannot.
+//
+// Substitution is positional and dumb on purpose: the verb is replaced by the
+// argument, whatever the verb was. ponytail: %q therefore loses the quotes Go
+// would have put round it, so the German writes them itself where they matter.
+// Reimplementing printf to buy that back is not the trade.
+//
+// The German for these keys is checked by web/i18n_test.go against the format
+// strings in internal/server and internal/lobby — the guard cannot read them
+// off a t() call here, so it reads them off the server instead.
+export function errorText(data, res) {
+  const en = data?.error || res?.statusText || `HTTP ${res?.status ?? "?"}`;
+  const de = typeof data?.key === "string" ? dict[data.key] : undefined;
+  if (typeof de !== "string") return en;
+  const args = Array.isArray(data.args) ? data.args : [];
+  let i = 0;
+  // A verb with no argument left stays a verb: printing "undefined" would be
+  // worse than printing "%s", and either way the English is one language away.
+  return de.replace(/%[a-zA-Z%]/g, (verb) => {
+    if (verb === "%%") return "%";
+    if (i >= args.length) return verb;
+    const a = String(args[i++]);
+    // Vocabulary arguments ("blueprint", "program") have dictionary entries and
+    // translate. ponytail: so does a blueprint a player actually named
+    // "program" — the wire cannot say which is which, and the server field
+    // carries the same note. Cosmetic; arg-marking is the upgrade if it bites.
+    return dict[a] ?? a;
+  });
+}
+
 // The key a marked-up element carries: its text with the source's line wrapping
 // and indentation collapsed away, so a paragraph may be wrapped for the width
 // of the file and still look up the same German as one written on one line.

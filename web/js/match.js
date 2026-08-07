@@ -14,7 +14,7 @@ import { colonyVar, drawGraph, mmss, seriesAppend, seriesReset, SVGNS } from "./
 
 import { SHAPES, MUZZLE, slug } from "./shapes.js";
 
-import { t } from "./i18n.js";
+import { t, errorText } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -1988,7 +1988,7 @@ async function api(method, path, body) {
     // message already names its rule. Keep them: "invalid program" on its own
     // gives the player nothing to fix.
     const issues = (data.issues || []).map((i) => i.message);
-    throw new Error([data.error || res.statusText, ...issues].join(" · "));
+    throw new Error([errorText(data, res), ...issues].join(" · "));
   }
   return data;
 }
