@@ -25,7 +25,7 @@
 //     inventing a name would be a lie with a tooltip.
 
 import { colonyVar, seriesReset, mmss } from "./graph.js";
-import { t } from "./i18n.js";
+import { t, errorText } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const err = (m) => { $("err").textContent = m || ""; };
@@ -41,7 +41,7 @@ async function api(path) {
   const res = await fetch(path, { headers: { Accept: "application/json" } });
   if (res.status === 401) { location.href = "/login"; return null; }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw new Error(errorText(data, res));
   return data;
 }
 

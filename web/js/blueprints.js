@@ -13,7 +13,7 @@
 // its dimensions — sight and radar reach — arrive on the preview payload.
 
 import { SHAPES, MUZZLE, slug } from "./shapes.js";
-import { t } from "./i18n.js";
+import { t, errorText } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -55,7 +55,7 @@ async function api(method, path, body) {
   });
   if (res.status === 401) { location.href = "/login"; return null; }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw new Error(errorText(data, res));
   return data;
 }
 

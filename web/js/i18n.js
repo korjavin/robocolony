@@ -46,13 +46,74 @@ async function load(name) {
 }
 
 const page = document.documentElement.dataset.i18nPage;
+// Object.create(null), not {}: the dictionary is a lookup table, and a plain
+// object answers for every name on Object.prototype as well as its own. A key
+// of "toString" or "constructor" would find a *function* there — not null, not
+// undefined, so ?? keeps it — and stringify into whatever the caller was
+// building. With no prototype there is nothing to find but entries, which makes
+// every lookup below safe by construction rather than by each one checking. It
+// also makes a "__proto__" key an ordinary entry instead of a setter.
+// Do not tidy this back to {}.
 const dict =
   lang === "en"
-    ? {}
-    : Object.assign({}, ...(await Promise.all([load("common"), page ? load(page) : {}])));
+    ? Object.create(null)
+    : Object.assign(Object.create(null), ...(await Promise.all([load("common"), page ? load(page) : {}])));
 
 export function t(s) {
   return dict[s] ?? s;
+}
+
+// The one place a key is not a literal in this file's sight: server errors.
+// A failed response carries the English prose it always did plus the printf
+// format the handler built it from and that format's arguments, and the format
+// is the key — the same convention as everywhere else here, where the English
+// source string is the key. So one German entry translates the whole sentence,
+// arguments included.
+//
+// Everything degrades to English rather than to nothing: no key, no German
+// behind it, no JSON body at all — each falls through to the prose the server
+// already formatted, then to the status line, then to the bare code. A player
+// reading "blueprint not found" in the wrong language can still act on it; a
+// player reading "" or "undefined" cannot.
+//
+// Substitution is positional and dumb on purpose: the verb is replaced by the
+// argument, whatever the verb was. ponytail: %q therefore loses the quotes Go
+// would have put round it, so the German writes them itself where they matter.
+// Reimplementing printf to buy that back is not the trade.
+//
+// The German for these keys is checked by web/i18n_test.go against the format
+// strings in internal/server and internal/lobby — the guard cannot read them
+// off a t() call here, so it reads them off the server instead.
+export function errorText(data, res) {
+  const en = data?.error || res?.statusText || `HTTP ${res?.status ?? "?"}`;
+  // Anything but a string entry — no key, a key of the wrong type, a body that
+  // is not an object at all — falls through to the English above.
+  const de = dict[data?.key];
+  if (typeof de !== "string") return en;
+  const args = Array.isArray(data.args) ? data.args : [];
+  let i = 0;
+  // Flags, width and precision are part of the verb (%02d), so the whole thing
+  // is replaced and not just its last letter. web/i18n_test.go matches verbs
+  // the same way; the two have to agree, or a key can carry a verb the guard
+  // cannot see and the player reads a raw "%02d".
+  return de.replace(/%[-+#0]*\d*(?:\.\d+)?[a-zA-Z%]/g, (verb) => {
+    if (verb === "%%") return "%";
+    const v = args[i++];
+    // A verb with no argument left, or one whose argument is null, stays a
+    // verb: "undefined" and "null" are the two words this must never print,
+    // and the untranslated English is one line below anyway.
+    if (v === null || v === undefined) return verb;
+    const a = String(v);
+    // Vocabulary arguments ("blueprint", "program") have dictionary entries and
+    // translate. ponytail: so does a blueprint a player actually named
+    // "program" — the wire cannot say which is which, and the server field
+    // carries the same note. Cosmetic; arg-marking is the upgrade if it bites.
+    //
+    // This is the one lookup whose key is player-reachable, so it is the one
+    // that would have found "toString" on a prototype. It does not check for
+    // that: the dictionary has no prototype to find it on. See its comment.
+    return dict[a] ?? a;
+  });
 }
 
 // The key a marked-up element carries: its text with the source's line wrapping

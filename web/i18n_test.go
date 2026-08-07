@@ -34,11 +34,15 @@ import (
 	"html"
 	"io/fs"
 	"maps"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/korjavin/robocolony/web"
 )
@@ -61,6 +65,31 @@ var (
 	// bodies and not to the markup around them.
 	i18nHTMLCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
 	i18nScriptRe      = regexp.MustCompile(`(?s)(<script[^>]*>)(.*?)(</script>)`)
+
+	// The server's error funnels. errf/libErrf take the status and then the
+	// printf format that becomes the key; the format is sometimes on the next
+	// source line, so the match spans them. (?s) rather than a multi-line
+	// alternative because the only thing between the two is whitespace.
+	i18nErrfRe = regexp.MustCompile(`(?s)\b(?:libErrf|errf)\(\s*[A-Za-z0-9_.]+,\s*("(?:[^"\\]|\\.)*")`)
+	// Every place those funnels are *called*, whatever shape the arguments take.
+	// A scanner that quietly reads fewer messages than exist is worse than no
+	// scanner, because the German behind the ones it missed looks checked;
+	// counting the two against each other is what turns that into a failure.
+	// (?:func\s+)? so the declarations can be told from the calls.
+	i18nErrfCallRe = regexp.MustCompile(`(?:func\s+)?\b(?:libErrf|errf)\(`)
+	// The messages that are their own key: validationError, libValidationError
+	// and the two internalErrorMsg constants all name the string before using it.
+	i18nErrMsgRe = regexp.MustCompile(`(?m)^\s*(?:const\s+)?(?:msg|internalErrorMsg)\s*=\s*("(?:[^"\\]|\\.)*")`)
+	// notFound(err, "blueprint") fills "%s not found" with a vocabulary word,
+	// which the client translates like any other argument — so it needs German
+	// of its own, and nothing else would notice if it lost it.
+	i18nNotFoundRe = regexp.MustCompile(`\bnotFound\([^,)]*,\s*("(?:[^"\\]|\\.)*")\)`)
+	// A printf verb, matched exactly as web/js/i18n.js substitutes them: flags,
+	// width and precision belong to the verb, so %02d is one verb and not a
+	// stray "%0" next to a "2d". The two patterns have to stay in step — a verb
+	// this misses is a verb the client will not fill in either, and the check
+	// below would compare two empty lists and pass.
+	i18nVerbRe = regexp.MustCompile(`%[-+#0]*\d*(?:\.\d+)?[a-zA-Z%]`)
 )
 
 // i18nKey is the string the runtime will actually look up: web/js/i18n.js
@@ -283,6 +312,93 @@ func i18nDict(t *testing.T, name string) map[string]string {
 	return d
 }
 
+// Error keys are the hole in everything above. A page's German is checked
+// because the English sits next to it in a t("...") or a data-i18n element; an
+// error's English is built by the server and only ever reaches the client at
+// run time, so there is no literal here to scan and — without this — nothing at
+// all would notice a handler rewording its message and orphaning the German.
+//
+// So the guard reads the other end. The format strings in internal/server and
+// internal/lobby *are* the keys (rc-mjj.9 kept them verbatim for exactly this),
+// they are literals in Go source in this same repo, and this is already a Go
+// test. A regex over them is the whole mechanism: no parser, no dependency, and
+// no second list of messages to keep in step with the first.
+//
+// i18nErrorKeys pulls those keys out of one file's source.
+func i18nErrorKeys(t i18nReporter, name, src string) map[string]bool {
+	keys := map[string]bool{}
+
+	// The funnel is scanned for the *format* it was given, which assumes the
+	// status in front of it is a plain identifier — every call writes one
+	// today. If one stops, the format regex simply finds nothing there and the
+	// message drops out of the check in silence, which is the one failure mode
+	// a guard must not have. So the calls are counted too. notFound is not
+	// counted: its first argument is always the error being wrapped, and there
+	// is no other shape for it to take.
+	calls := 0
+	for _, m := range i18nErrfCallRe.FindAllString(src, -1) {
+		if !strings.HasPrefix(m, "func") {
+			calls++
+		}
+	}
+	if read := len(i18nErrfRe.FindAllString(src, -1)); read != calls {
+		t.Errorf("%s: %d errf/libErrf calls, but only %d formats could be read out of them.\n"+
+			"A call whose status is not a plain identifier is invisible to this guard, and so is the German\n"+
+			"behind its message. Give the status a name, or widen i18nErrfRe to match the new shape.", name, calls, read)
+	}
+
+	for _, re := range []*regexp.Regexp{i18nErrfRe, i18nErrMsgRe, i18nNotFoundRe} {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			k, err := strconv.Unquote(m[1])
+			if err != nil {
+				t.Errorf("%s: %s is not a plain string literal, so its key cannot be read: %v", name, m[1], err)
+				continue
+			}
+			// "%s" is a whole message that is nothing but its argument
+			// (errf(code, "%s", err)): with the verbs taken out there is no
+			// word left to translate, and demanding a German "%s" would be a
+			// dictionary entry that says nothing. The argument still translates.
+			if !strings.ContainsFunc(i18nVerbRe.ReplaceAllString(k, ""), unicode.IsLetter) {
+				continue
+			}
+			keys[k] = true
+		}
+	}
+	return keys
+}
+
+// i18nServerErrorKeys is every string the two error funnels can send a player.
+// Read off disk rather than out of web.FS: this is the one thing the guard
+// checks that does not live under web/.
+func i18nServerErrorKeys(t *testing.T) map[string]bool {
+	t.Helper()
+	keys := map[string]bool{}
+	var files []string
+	for _, dir := range []string{"../internal/server", "../internal/lobby"} {
+		found, err := filepath.Glob(dir + "/*.go")
+		if err != nil || len(found) == 0 {
+			t.Fatalf("no Go sources under %s (%v) — has the package moved? This guard is the only thing\n"+
+				"checking the German behind server errors, so it must not quietly find nothing.", dir, err)
+		}
+		files = append(files, found...)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		maps.Copy(keys, i18nErrorKeys(t, f, string(b)))
+	}
+	if len(keys) == 0 {
+		t.Fatal("no server error keys were found, which cannot be right — the funnels are errf/libErrf in\n" +
+			"internal/server and internal/lobby. If they were renamed, rename them in i18nErrfRe too.")
+	}
+	return keys
+}
+
 func TestTranslationsAndMarkupHaveNotDrifted(t *testing.T) {
 	used := map[string]map[string]bool{}
 	all := map[string]bool{}
@@ -290,6 +406,14 @@ func TestTranslationsAndMarkupHaveNotDrifted(t *testing.T) {
 		used[page] = i18nKeys(t, page)
 		maps.Copy(all, used[page])
 	}
+	// Server errors are keys the same way, and they belong to every page: each
+	// page's fetch helper hands its failed response to errorText() in i18n.js.
+	// Adding them to the pool is also what lets their entries live in
+	// common.json without the orphan check below calling them stale — and what
+	// makes that check bite the other way, on an entry for a message the server
+	// no longer sends.
+	errKeys := i18nServerErrorKeys(t)
+	maps.Copy(all, errKeys)
 
 	files, err := fs.Glob(web.FS, "js/lang/*/*.json")
 	if err != nil || len(files) == 0 {
@@ -321,6 +445,32 @@ func TestTranslationsAndMarkupHaveNotDrifted(t *testing.T) {
 				t.Errorf("%s asks for %q to be translated, but no %s entry answers it.\n"+
 					"Add it to %s (or to js/lang/%s/common.json if more than one page says it).",
 					page, k, lang, name, lang)
+			}
+		}
+
+		for _, k := range slices.Sorted(maps.Keys(errKeys)) {
+			de, ok := common[k]
+			if !ok {
+				t.Errorf("the server can answer %q, but no %s entry translates it.\n"+
+					"Add it to js/lang/%s/common.json: errors cross every page, and the only thing that\n"+
+					"knows this key exists is the format string in internal/server or internal/lobby.", k, lang, lang)
+				continue
+			}
+			// A translation may reword freely, but web/js/i18n.js fills the
+			// verbs positionally and in order, so a German that dropped one
+			// would silently lose an argument and one that gained a verb would
+			// print a stray "%d". Same verbs, same order, or the entry is wrong
+			// in a way an entry merely existing cannot rule out.
+			//
+			// What this cannot see is a German that keeps both %s and swaps
+			// what they mean — the verbs are identical and only a reader knows
+			// the sentence now says the wrong thing. The keys with two verbs of
+			// one kind are countable on one hand; a translation with named
+			// arguments is the upgrade if that stops being true.
+			if a, b := i18nVerbRe.FindAllString(k, -1), i18nVerbRe.FindAllString(de, -1); !slices.Equal(a, b) {
+				t.Errorf("js/lang/%s/common.json translates %q as %q, whose verbs are %v, not %v.\n"+
+					"The arguments are substituted positionally, so the verbs have to match in kind and order.",
+					lang, k, de, b, a)
 			}
 		}
 	}
@@ -461,6 +611,49 @@ func TestTheGuardItself(t *testing.T) {
 			}
 			if !slices.Equal(slices.Sorted(maps.Keys(got)), c.keys) {
 				t.Errorf("%q: keys are %v, want %v", c.src, slices.Sorted(maps.Keys(got)), c.keys)
+			}
+		})
+	}
+}
+
+// The error-key scanner reads Go, which the rest of this file does not, so its
+// shapes get the same treatment as the JS ones above: the call forms that exist
+// in the funnels today, and the ones that must not be mistaken for them.
+func TestServerErrorKeysAreRead(t *testing.T) {
+	cases := []struct {
+		name       string
+		src        string
+		keys       []string
+		unreadable bool // ... and the scanner must say it could not read the call
+	}{
+		{"a one-line errf", `return errf(http.StatusNotFound, "lobby not found")`, []string{"lobby not found"}, false},
+		{"libErrf is the same funnel", `libErrf(http.StatusBadRequest, "name is required")`, []string{"name is required"}, false},
+		{"a format wrapped onto the next line is still the key",
+			"errf(http.StatusConflict,\n\t\"the lobby is empty\")", []string{"the lobby is empty"}, false},
+		{"arguments after the format are not keys",
+			`errf(http.StatusNotFound, "no robot %d in this match", robotID)`, []string{"no robot %d in this match"}, false},
+		{"a message named before it is used", "\tconst msg = \"the draft program does not load\"", []string{"the draft program does not load"}, false},
+		{"and the constant the 500 body uses", `const internalErrorMsg = "internal error"`, []string{"internal error"}, false},
+		{"a vocabulary argument is a key too, because it is translated",
+			`return notFound(err, "blueprint")`, []string{"blueprint"}, false},
+		{"a message that is only its argument has no English to translate",
+			`errf(http.StatusBadRequest, "%s", err)`, nil, false},
+		{"and neither has a bare verb pair", `errf(http.StatusBadRequest, "%s: %s", a, b)`, nil, false},
+		{"a call that is not a funnel is not scanned", `fmt.Errorf("plain wrapped: %w", err)`, nil, false},
+		{"the funnel's own declaration is not a call",
+			"func errf(code int, format string, a ...any) error {", nil, false},
+		{"a status the regex cannot read is a failure, not a silence",
+			`errf(codeFor(err), "lobby not found")`, nil, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var rep i18nCollector
+			got := slices.Sorted(maps.Keys(i18nErrorKeys(&rep, "case.go", c.src)))
+			if c.unreadable != (len(rep) != 0) {
+				t.Errorf("%s: the scanner said %v, unreadable=%v", c.src, []string(rep), c.unreadable)
+			}
+			if want := c.keys; !slices.Equal(got, want) {
+				t.Errorf("%s: keys are %v, want %v", c.src, got, want)
 			}
 		})
 	}

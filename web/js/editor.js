@@ -14,7 +14,7 @@
 // are what the player types and reads as code, so they stay English in every
 // locale — a translated sees_enemy is a bug, not a feature. `locale` is the
 // chosen language, and it is only used to date-format.
-import { t, lang as locale } from "/js/i18n.js";
+import { t, lang as locale, errorText } from "/js/i18n.js";
 
 const $ = (id) => document.getElementById(id);
 function el(tag, props = {}, ...kids) {
@@ -35,7 +35,7 @@ async function api(method, path, body) {
   if (res.status === 401) { location.href = "/login"; return null; }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const e = new Error(data.error || res.statusText);
+    const e = new Error(errorText(data, res));
     e.status = res.status;
     e.data = data;
     throw e;
