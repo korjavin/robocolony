@@ -61,7 +61,7 @@ export function setLang(next) {
   try {
     localStorage.setItem(LANG_KEY, next);
   } catch {
-    /* private mode: the switch just does not stick */
+    return; // storage is blocked: the choice cannot stick, so do not reload into the same language
   }
   location.reload();
 }

@@ -19,6 +19,7 @@ package web_test
 
 import (
 	"encoding/json"
+	"html"
 	"io/fs"
 	"maps"
 	"path"
@@ -39,20 +40,36 @@ var (
 	// read back out of it.
 	i18nTagRe  = regexp.MustCompile(`<[a-zA-Z][^>]*\sdata-i18n-attr="([^"]*)"[^>]*>`)
 	i18nAttrRe = regexp.MustCompile(`([a-zA-Z-]+)="([^"]*)"`)
-	// t("...") and t('...'). A t(someVariable) cannot be checked from out here;
-	// keys stay literals, and this test is the reason that is worth it.
-	i18nCallRe = regexp.MustCompile(`\bt\(\s*(?:"([^"\\]*)"|'([^'\\]*)')\s*\)`)
+	// Every t(...) call, argument and all. A key that is not a plain literal
+	// cannot be checked from out here, so such a call is reported rather than
+	// skipped — otherwise it is exactly the shape of drift that walks past the
+	// guard. The leading class keeps someObject.t(x) out.
+	i18nCallRe = regexp.MustCompile(`(^|[^\w$.])t\(([^)]*)\)`)
 )
+
+// i18nLiteral reads the key out of a t(...) argument, or says why it cannot.
+func i18nLiteral(t *testing.T, src, arg string) (string, bool) {
+	a := strings.TrimSpace(arg)
+	if len(a) >= 2 && strings.ContainsAny(a[:1], "\"'`") && a[len(a)-1] == a[0] &&
+		!strings.ContainsAny(a[1:len(a)-1], "\"'`\\$") {
+		return a[1 : len(a)-1], true
+	}
+	t.Errorf("%s: t(%s) — the key has to be a plain string literal, or nothing can check that\n"+
+		"German exists behind it. Translate the literal and build the rest of the string around it.", src, a)
+	return "", false
+}
 
 // i18nKeys is every English string page asks to have translated: its own
 // markup, its inline scripts, and the modules it loads.
 func i18nKeys(t *testing.T, page string) map[string]bool {
 	t.Helper()
 	keys := map[string]bool{}
-	html := pageHTML(t, page)
+	src := pageHTML(t, page)
 
-	for _, m := range i18nTextRe.FindAllStringSubmatch(html, -1) {
-		key := strings.TrimSpace(m[1])
+	// The runtime keys off el.textContent and getAttribute, both of which the
+	// parser has already decoded, so &amp; here is & there.
+	for _, m := range i18nTextRe.FindAllStringSubmatch(src, -1) {
+		key := strings.TrimSpace(html.UnescapeString(m[1]))
 		switch {
 		case m[2] != "/":
 			t.Errorf("%s: data-i18n on an element that also holds markup (%q...).\n"+
@@ -64,7 +81,7 @@ func i18nKeys(t *testing.T, page string) map[string]bool {
 		}
 	}
 
-	for _, tag := range i18nTagRe.FindAllStringSubmatch(html, -1) {
+	for _, tag := range i18nTagRe.FindAllStringSubmatch(src, -1) {
 		attrs := map[string]string{}
 		for _, a := range i18nAttrRe.FindAllStringSubmatch(tag[0], -1) {
 			attrs[a[1]] = a[2]
@@ -76,14 +93,16 @@ func i18nKeys(t *testing.T, page string) map[string]bool {
 				t.Errorf("%s: data-i18n-attr names %q, which the element does not carry:\n%s", page, name, tag[0])
 				continue
 			}
-			keys[strings.TrimSpace(v)] = true
+			keys[strings.TrimSpace(html.UnescapeString(v))] = true
 		}
 	}
 
 	// The page itself is scanned too: lobby.html's script is inline.
-	for _, src := range append([]string{page}, scripts[page]...) {
-		for _, m := range i18nCallRe.FindAllStringSubmatch(pageHTML(t, src), -1) {
-			keys[m[1]+m[2]] = true // one of the two alternatives is empty
+	for _, mod := range append([]string{page}, scripts[page]...) {
+		for _, m := range i18nCallRe.FindAllStringSubmatch(pageHTML(t, mod), -1) {
+			if key, ok := i18nLiteral(t, mod, m[2]); ok {
+				keys[key] = true
+			}
 		}
 	}
 	return keys
