@@ -251,6 +251,16 @@ nav.site [aria-current] {
   box-shadow: inset 0 -2px 0 0 currentColor;
 }
 nav.site .grow { flex: 1 1 auto; }
+/* The language switcher. Two flags at the right end of the band, the active
+   one underlined the same way the current page is — same vocabulary, so it
+   reads as "where you are" rather than as a control. aria-pressed is set from
+   web/js/i18n.js, never in the markup: the nav has to stay byte-identical. */
+nav.site .lang { display: flex; gap: 6px; align-items: center; }
+nav.site .lang button { letter-spacing: .04em; }
+nav.site .lang button[aria-pressed="true"] {
+  color: var(--fg-0); font-weight: 700;
+  box-shadow: inset 0 -2px 0 0 currentColor;
+}
 nav.site form { display: inline; margin: 0; }
 nav.site button {
   font: inherit; font-size: 13px; padding: 0; border: 0;
