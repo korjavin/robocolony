@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-i18n-page="lobby">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -99,18 +99,20 @@
     .rail { border-left: 0; border-top: 1px solid var(--line-1); }
   }
 </style>
+<script type="module" src="/js/i18n.js"></script>
 </head>
 <body class="shell">
-  <nav class="site" aria-label="Site">
+  <nav class="site" aria-label="Site" data-i18n-attr="aria-label">
     <a class="brand" href="/">robocolony</a>
-    <a href="/lobby" aria-current="page">Lobbies</a>
-    <a href="/blueprints">Blueprints</a>
-    <a href="/editor">Editor</a>
-    <a href="/history">History</a>
-    <a href="/help">Guide</a>
+    <a href="/lobby" aria-current="page" data-i18n>Lobbies</a>
+    <a href="/blueprints" data-i18n>Blueprints</a>
+    <a href="/editor" data-i18n>Editor</a>
+    <a href="/history" data-i18n>History</a>
+    <a href="/help" data-i18n>Guide</a>
     <span class="grow"></span>
-    <a href="/login">Sign in</a>
-    <form method="post" action="/auth/logout"><button type="submit">Sign out</button></form>
+    <span class="lang" role="group" aria-label="Language" data-i18n-attr="aria-label"><button type="button" data-lang="en"><span aria-hidden="true">🇬🇧</span> EN</button><button type="button" data-lang="de"><span aria-hidden="true">🇩🇪</span> DE</button></span>
+    <a href="/login" data-i18n>Sign in</a>
+    <form method="post" action="/auth/logout"><button type="submit" data-i18n>Sign out</button></form>
   </nav>
 
   <main>

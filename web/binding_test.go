@@ -17,10 +17,14 @@ import (
 
 // scripts is what each page loads, transitively. graph.js appears twice on
 // purpose — one module, two pages, and that is the drift this test guards.
+// It must stay complete: web/i18n_test.go reads it to decide which dictionary
+// a module's t(...) keys have to resolve in, and fails on a module no page
+// claims.
 var scripts = map[string][]string{
-	"match.html":   {"js/match.js", "js/graph.js"},
-	"history.html": {"js/history.js", "js/graph.js"},
-	"editor.html":  {"js/editor.js"},
+	"match.html":      {"js/match.js", "js/graph.js", "js/shapes.js"},
+	"history.html":    {"js/history.js", "js/graph.js"},
+	"editor.html":     {"js/editor.js"},
+	"blueprints.html": {"js/blueprints.js", "js/shapes.js"},
 }
 
 var byIDRe = regexp.MustCompile(`\$\("([a-z0-9-]+)"\)`)
