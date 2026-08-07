@@ -734,23 +734,71 @@ func toVariants(in []int) []sim.Variant {
 // handlers stay short and anything unmapped is a 500.
 
 type statusError struct {
-	code   int
-	msg    string
+	code int
+	msg  string
+	// key is the printf format string the message was built from, kept verbatim
+	// as the translation key: it is stable and unique per call site, and the
+	// client's i18n already keys off English source strings.
+	key string
+	// args fills key. ponytail: the wire cannot say which args are vocabulary
+	// the client should translate ("blueprint") and which are player-authored
+	// names that must never be, so a blueprint actually named "program" will be
+	// translated. Cosmetic ceiling, not a correctness bug; upgrade by marking
+	// the vocabulary args explicitly if it ever bites.
+	args   []any
 	result *prog.Result // validation findings, when the failure is a refused save
 }
 
 func (e statusError) Error() string { return e.msg }
 
 func libErrf(code int, format string, a ...any) error {
-	return statusError{code: code, msg: fmt.Sprintf(format, a...)}
+	return statusError{code: code, msg: fmt.Sprintf(format, a...), key: format, args: wireArgs(a)}
+}
+
+// wireArgs copies printf arguments into a form that survives JSON. Scalars stay
+// themselves, so %d still meets a number when the key is reformatted; anything
+// else — an error, mostly — becomes the text it already prints as, since an
+// error marshals to {} and would lose the very detail the message carries.
+// The copy also means the retained slice is never aliased by a caller.
+func wireArgs(a []any) []any {
+	out := make([]any, len(a))
+	for i, v := range a {
+		switch v.(type) {
+		case nil, bool, string,
+			int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64,
+			float32, float64:
+			out[i] = v
+		default:
+			out[i] = fmt.Sprint(v)
+		}
+	}
+	return out
+}
+
+// internalErrorMsg is the body of an unmapped failure: the same text for the
+// player and, being its own key, translatable like every other message.
+const internalErrorMsg = "internal error"
+
+// withKey adds the translatable form of a message to an error body. Purely
+// additive: "error" keeps its English text byte for byte, so a client that
+// knows nothing of these fields is unaffected.
+func withKey(body map[string]any, key string, args []any) map[string]any {
+	if args == nil {
+		args = []any{}
+	}
+	body["key"], body["args"] = key, args
+	return body
 }
 
 // libValidationError refuses a save and carries the findings back, errors and
 // warnings still in their own lists.
 func libValidationError(res prog.Result) error {
+	const msg = "the program has errors and was not saved"
 	return statusError{
 		code:   http.StatusUnprocessableEntity,
-		msg:    "the program has errors and was not saved",
+		msg:    msg,
+		key:    msg,
 		result: &res,
 	}
 }
@@ -1045,6 +1093,7 @@ func writeResult(w http.ResponseWriter, code int, res prog.Result) {
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var se statusError
 	if errors.As(err, &se) {
+		body := map[string]any{"error": se.msg}
 		if se.result != nil {
 			res := *se.result
 			if res.Errors == nil {
@@ -1053,15 +1102,11 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 			if res.Warnings == nil {
 				res.Warnings = []prog.Issue{}
 			}
-			writeJSON(w, se.code, map[string]any{
-				"error": se.msg, "errors": res.Errors,
-				"warnings": res.Warnings, "notes": res.Notes,
-			})
-			return
+			body["errors"], body["warnings"], body["notes"] = res.Errors, res.Warnings, res.Notes
 		}
-		writeJSON(w, se.code, map[string]string{"error": se.msg})
+		writeJSON(w, se.code, withKey(body, se.key, se.args))
 		return
 	}
 	slog.Error("library request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	writeJSON(w, http.StatusInternalServerError, withKey(map[string]any{"error": internalErrorMsg}, internalErrorMsg, nil))
 }

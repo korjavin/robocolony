@@ -154,9 +154,11 @@ func (h *Robots) ShadowTest(matchID int64, robotID int, raw json.RawMessage) (Sh
 		// yet, and telling the player their program does not fit this robot
 		// when it does not parse at all would send them looking in the wrong
 		// place.
+		const msg = "the draft program does not load"
 		return ShadowResult{}, cmdError{
 			code:   http.StatusBadRequest,
-			msg:    "the draft program does not load",
+			msg:    msg,
+			key:    msg,
 			issues: res.Errors,
 		}
 	}
