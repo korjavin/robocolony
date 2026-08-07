@@ -110,6 +110,13 @@ func i18nCloseQuote(src string, open int) (int, bool) {
 // i18nStripJS blanks // and /* */ comments. String and template literals are
 // copied through untouched: a // inside one is a URL far more often than it is
 // a comment, and a comment that happens to mention t() is not a call.
+//
+// Regex literals are not tracked, which is a lexer's job and not worth one
+// here: JS itself reads a leading // or /* as a comment, so the only way to
+// hide a bare // in a regex is inside a character class, and the only /* is a
+// closing / followed by a multiplication. Both would strip to end of line —
+// which loses a t() call rather than inventing one, and a lost call shows up
+// as its dictionary entry going stale on the next run.
 func i18nStripJS(src string) string {
 	var b strings.Builder
 	for i := 0; i < len(src); i++ {
@@ -146,15 +153,23 @@ func i18nStripJS(src string) string {
 // a finding. JS rules apply to a .js file whole and to an .html file only
 // inside its <script> elements — markup prose is full of apostrophes, and
 // letting the JS scanner loose on it would have every one of them open a string.
+// One pass, so neither rule runs over the other's text: an HTML comment written
+// inside a JS string stays in the string, and a // in markup prose stays prose.
 func i18nStrip(name, src string) string {
 	if !strings.HasSuffix(name, ".html") {
 		return i18nStripJS(src)
 	}
-	src = i18nHTMLCommentRe.ReplaceAllString(src, "")
-	return i18nScriptRe.ReplaceAllStringFunc(src, func(s string) string {
-		m := i18nScriptRe.FindStringSubmatch(s)
-		return m[1] + i18nStripJS(m[2]) + m[3]
-	})
+	var b strings.Builder
+	at := 0
+	for _, m := range i18nScriptRe.FindAllStringSubmatchIndex(src, -1) {
+		b.WriteString(i18nHTMLCommentRe.ReplaceAllString(src[at:m[0]], ""))
+		b.WriteString(src[m[2]:m[3]])              // <script ...>
+		b.WriteString(i18nStripJS(src[m[4]:m[5]])) // its body
+		b.WriteString(src[m[6]:m[7]])              // </script>
+		at = m[1]
+	}
+	b.WriteString(i18nHTMLCommentRe.ReplaceAllString(src[at:], ""))
+	return b.String()
 }
 
 // i18nLiteral reads the key out of a t(...) argument, or says why it cannot.
@@ -368,6 +383,8 @@ func TestTheGuardItself(t *testing.T) {
 			src: `const u = "https://example.com/x"; t("Ready")`, key: "Ready"},
 		{name: "a JS comment inside an inline script is stripped as JS",
 			file: "case.html", src: "<script type=\"module\">\n// t(\"gone\")\nt(\"Ready\");\n</script>", key: "Ready"},
+		{name: "an HTML comment written inside a JS string is a string",
+			file: "case.html", src: "<script type=\"module\">\nconst c = \"<!--\"; t(\"Ready\"); const d = \"-->\";\n</script>", key: "Ready"},
 		{name: "a bare identifier cannot be checked from out here",
 			src: `t(x)`},
 		{name: "nor can a concatenation",
