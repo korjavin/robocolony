@@ -13,9 +13,25 @@
 // its dimensions — sight and radar reach — arrive on the preview payload.
 
 import { SHAPES, MUZZLE, slug } from "./shapes.js";
+import { t } from "./i18n.js";
 
 const $ = (id) => document.getElementById(id);
 const SVGNS = "http://www.w3.org/2000/svg";
+
+// Every user-visible sentence is translated whole and its numbers dropped in
+// afterwards. web/i18n_test.go only sees a key when the argument is a plain
+// literal, so a template literal wrapped round a translation is a string that
+// walks past the guard — and a German sentence is not the English one with the
+// values in the same places anyway.
+//
+// The replacement is a function on purpose: a value carrying $& or $1 is read
+// as a backreference by the string form, and blueprint names are the player's
+// own text.
+const fill = (s, ...vals) => vals.reduce((out, v, i) => out.replace(`%${i + 1}`, () => String(v)), s);
+
+// German pluralises the tick too, so the word is looked up rather than built
+// out of an English "s".
+const tickWord = (n) => (n === 1 ? t("tick") : t("ticks"));
 
 function el(tag, props = {}, ...kids) {
   const n = document.createElement(tag);
@@ -115,19 +131,20 @@ const marginal = (variant) =>
 // the starting budget still opens with as many robots once it is fitted.
 function verdict(m) {
   if (!m.ok) return m.error;
-  if (m.fleet === 0) return "over budget";
-  if (preview && preview.ok && m.fleet < preview.fleet) return `${m.fleet} robots, not ${preview.fleet}`;
-  return "fits";
+  if (m.fleet === 0) return t("over budget");
+  if (preview && preview.ok && m.fleet < preview.fleet) return fill(t("%1 robots, not %2"), m.fleet, preview.fleet);
+  return t("fits");
 }
 
 // The whole marginal line: whether it fits, the pace it leaves, and how many
 // rows of the rule language it switches on. Every number is the server's.
 function priced(m) {
   if (!m.ok) return m.error;
-  const t = m.ticks_per_cell;
-  const pace = preview && t === preview.ticks_per_cell ? `still ${t}` : `→ ${t}`;
-  const line = `${verdict(m)} · ${pace} tick${t === 1 ? "" : "s"}/cell`;
-  return m.unlocks > 0 ? `${line} · ${m.unlocks} rule${m.unlocks === 1 ? "" : "s"} unlock` : line;
+  const tpc = m.ticks_per_cell;
+  const pace = preview && tpc === preview.ticks_per_cell ? fill(t("still %1"), tpc) : `→ ${tpc}`;
+  const line = `${verdict(m)} · ${pace} ${tickWord(tpc)}/${t("cell")}`;
+  const unlocks = m.unlocks === 1 ? t("%1 rule unlock") : t("%1 rules unlock");
+  return m.unlocks > 0 ? `${line} · ${fill(unlocks, m.unlocks)}` : line;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +175,7 @@ function chip(kind) {
 
 function bay(variant, index) {
   const c = comp(variant);
-  const drop = el("button", { className: "drop", textContent: "✕", title: `remove ${c.name}` });
+  const drop = el("button", { className: "drop", textContent: "✕", title: fill(t("remove %1"), c.name) });
   drop.addEventListener("click", () => { picked.splice(index, 1); refresh(); });
   const says = bayLine(c.kind, c.name);
   return el("div", { className: "bay" },
@@ -169,7 +186,7 @@ function bay(variant, index) {
       chip(c.kind)),
     el("div", { className: "what" },
       el("b", { textContent: c.name }),
-      el("span", { className: "cost", textContent: `${c.value} budget · ${c.mass} mass` })),
+      el("span", { className: "cost", textContent: fill(t("%1 budget · %2 mass"), c.value, c.mass) })),
     says && el("div", { className: "says", textContent: says }));
 }
 
@@ -209,16 +226,19 @@ function emptyBay(kind) {
   const cheapest = cheapestOf(kind);
   return el("div", { className: "bay empty" },
     el("div", { className: "top" },
-      el("span", { className: "label", textContent: `${kindLabel(kind)} · empty` })),
+      el("span", { className: "label", textContent: `${kindLabel(kind)} · ${t("empty")}` })),
     el("div", { className: "what", textContent: emptyLine(kind, cheapest) }));
 }
 
 function emptyLine(kind, cheapest) {
-  if (!cheapest) return "nothing in the catalogue fits";
+  if (!cheapest) return t("nothing in the catalogue fits");
   const left = unspent();
   const m = marginal(cheapest.variant);
-  if (!m) return `${left} budget left — the cheapest ${kindLabel(kind)} is a ${cheapest.name}, at ${cheapest.value}`;
-  return `${left} budget left — a ${cheapest.name}: ${priced(m)}`;
+  if (!m) {
+    return fill(t("%1 budget left — the cheapest %2 is a %3, at %4"),
+      left, kindLabel(kind), cheapest.name, cheapest.value);
+  }
+  return fill(t("%1 budget left — a %2: %3"), left, cheapest.name, priced(m));
 }
 
 // The palette prices itself against the design on screen rather than off the
@@ -237,7 +257,7 @@ function renderPalette() {
     host.append(el("span", { className: "label kindname", textContent: kindLabel(kind) }));
     for (const c of lang.components.filter((x) => x.kind === kind)) {
       const m = marginal(c.variant);
-      const price = `${c.value} budget · ${c.mass} mass`;
+      const price = fill(t("%1 budget · %2 mass"), c.value, c.mass);
       const b = el("button", { className: m && !m.ok ? "no" : "", title: price },
         el("span", { textContent: `+ ${c.name}` }),
         el("span", { className: "say", textContent: m ? priced(m) : price }));
@@ -278,19 +298,19 @@ function renderBudget() {
   const left = unspent();
   host.append(
     el("div", { className: "head" },
-      el("span", { textContent: `${value} each` }),
+      el("span", { textContent: fill(t("%1 each"), value) }),
       el("b", { textContent: `${fleet} × ${value} / ${budget}` })),
     track,
     // What the picture means, not what it costs — the consequence column says
     // that, and saying it twice in different words is how two answers drift.
     el("div", { className: "meta", textContent: preview.ok
-      ? `One block per robot the starting budget opens with, split by the part each point went on.`
-      : "Legal designs only: the budget cannot field something §6.3 refuses to build." }),
+      ? t("One block per robot the starting budget opens with, split by the part each point went on.")
+      : t("Legal designs only: the budget cannot field something §6.3 refuses to build.") }),
   );
   // The leftover is the part players read as saved. It is not.
   if (left > 0) {
     host.append(el("div", { className: "meta", textContent:
-      `${left} unspent. Unspent budget is not saved — it is a robot the base did not build.` }));
+      fill(t("%1 unspent. Unspent budget is not saved — it is a robot the base did not build."), left) }));
   }
 }
 
@@ -301,30 +321,29 @@ function renderSpeed() {
   const host = $("speed");
   host.replaceChildren();
   if (!preview) return;
-  const t = preview.ticks_per_cell;
+  const tpc = preview.ticks_per_cell;
   const ticks = el("div", { className: "ticks" });
-  for (let i = 0; i < Math.min(t, 16); i++) ticks.append(el("i"));
+  for (let i = 0; i < Math.min(tpc, 16); i++) ticks.append(el("i"));
   const cand = nextPart();
   const h = cand && marginal(cand.variant);
   host.append(
     el("div", { className: "head" },
-      el("span", { textContent: `${preview.mass} mass` }),
-      el("b", { textContent: `1 cell / ${t} tick${t === 1 ? "" : "s"}` })),
+      el("span", { textContent: fill(t("%1 mass"), preview.mass) }),
+      el("b", { textContent: `1 ${t("cell")} / ${tpc} ${tickWord(tpc)}` })),
     ticks,
     // One block is one tick. No proportional bar and no seconds: the arena size
     // and the tick rate are the match's, not this page's, and a sentence that
     // assumed either would be wrong on the first lobby that changed one.
     el("div", { className: "meta", textContent:
-      `Speed ${preview.speed} on open ground. Every part you add is mass, and mass is blocks.` }),
+      fill(t("Speed %1 on open ground. Every part you add is mass, and mass is blocks."), preview.speed) }),
   );
   // Design 1f: what the next part would cost in pace, before it is bought. It
   // rides the preview with every other row's price, because the §6.4 speed model
   // is not arithmetic this file may repeat.
   if (h && h.ok) {
+    const n = h.ticks_per_cell;
     host.append(el("div", { className: "meta", textContent:
-      h.ticks_per_cell === t
-        ? `Adding a ${cand.name} → still ${t} tick${t === 1 ? "" : "s"} a cell.`
-        : `Adding a ${cand.name} → ${h.ticks_per_cell} ticks a cell.` }));
+      fill(t("Adding a %1 → %2 %3 a cell."), cand.name, n === tpc ? fill(t("still %1"), n) : n, tickWord(n)) }));
   }
 }
 
@@ -348,13 +367,13 @@ function renderFit() {
   host.replaceChildren();
   if (!preview || !preview.ok) {
     host.append(el("span", { className: "meta", textContent: "—" }),
-      el("span", { className: "meta", textContent: "Finish the design and every program in your library is checked against it." }));
+      el("span", { className: "meta", textContent: t("Finish the design and every program in your library is checked against it.") }));
     return;
   }
   const list = preview.programs || [];
   if (list.length === 0) {
     host.append(el("span", { className: "meta", textContent: "—" }),
-      el("span", { className: "meta" }, el("a", { href: "/editor", textContent: "Your library has no programs yet." })));
+      el("span", { className: "meta" }, el("a", { href: "/editor", textContent: t("Your library has no programs yet.") })));
     return;
   }
   for (const p of list) {
@@ -363,7 +382,12 @@ function renderFit() {
     host.append(el("span", { className: p.ok ? "" : "no", textContent: p.ok ? "✓" : "✗" }));
     const line = el("span", {}, el("span", { textContent: p.name }));
     if (!p.ok) line.append(el("span", { className: "why", textContent: ` — ${p.blocked}` }));
-    else if (p.dead > 0) line.append(el("span", { className: "why", textContent: ` — ${p.dead} dead rule${p.dead === 1 ? "" : "s"}: hardware this design does not carry` }));
+    else if (p.dead > 0) {
+      const dead = p.dead === 1
+        ? t("%1 dead rule: hardware this design does not carry")
+        : t("%1 dead rules: hardware this design does not carry");
+      line.append(el("span", { className: "why", textContent: ` — ${fill(dead, p.dead)}` }));
+    }
     host.append(line);
   }
 }
@@ -398,7 +422,7 @@ function renderApprovals() {
   const host = $("approvals");
   host.replaceChildren();
   if (picked.length === 0) {
-    host.append(el("p", { className: "meta", textContent: "An empty parts list is not a design yet." }));
+    host.append(el("p", { className: "meta", textContent: t("An empty parts list is not a design yet.") }));
     return;
   }
   const mine = partsKey(picked);
@@ -412,26 +436,29 @@ function renderApprovals() {
   const links = (list) => list.flatMap((l, i) =>
     [i ? el("span", { textContent: ", " }) : null, el("a", { href: "/lobby", textContent: l.name })]);
 
+  // The prose around each link is marked one fragment at a time: German puts
+  // the clauses in a different order, and a sentence assembled out of a link
+  // and two halves can only be reordered where the halves are whole clauses.
   if (builds.length > 0) {
+    const seats = builds.length === 1
+      ? t("Approved in %1 open lobby of yours:")
+      : t("Approved in %1 open lobbies of yours:");
     host.append(el("p", {},
-      el("span", { textContent: `Approved in ${builds.length} open ${builds.length === 1 ? "lobby" : "lobbies"} of yours: ` }),
+      el("span", { textContent: `${fill(seats, builds.length)} ` }),
       ...links(builds)));
     host.append(el("p", { className: "meta", textContent:
-      "Every robot the starting budget opens with is drawn from your approvals at random, " +
-      "so an approved design has no place in a queue — only a share of the draw." }));
+      t("Every robot the starting budget opens with is drawn from your approvals at random, so an approved design has no place in a queue — only a share of the draw.") }));
   } else {
     host.append(el("p", { className: "meta" },
-      el("span", { textContent: "No open lobby of yours approves this parts list. Approval is per lobby, " +
-        "not a property of the design — approve it on the " }),
-      el("a", { href: "/lobby", textContent: "lobbies page" }),
-      el("span", { textContent: " and your base there will build it." })));
+      el("span", { textContent: `${t("No open lobby of yours approves this parts list. Approval is per lobby, not a property of the design — approve it on the")} ` }),
+      el("a", { href: "/lobby", textContent: t("lobbies page") }),
+      el("span", { textContent: ` ${t("and your base there will build it.")}` })));
   }
   if (stale.length > 0) {
     host.append(el("p", { className: "meta" },
-      el("span", { textContent: "Approved under an earlier parts list in " }),
+      el("span", { textContent: `${t("Approved under an earlier parts list in")} ` }),
       ...links(stale),
-      el("span", { textContent: ": approving freezes a copy, so the base there still builds that one " +
-        "until you approve this design again." })));
+      el("span", { textContent: `: ${t("approving freezes a copy, so the base there still builds that one until you approve this design again.")}` })));
   }
 }
 
@@ -450,7 +477,7 @@ function renderSilhouette() {
   host.replaceChildren();
   $("sil-desc").replaceChildren();
   if (!preview || !preview.ok) {
-    host.setAttribute("aria-label", "no silhouette: the design is not legal yet");
+    host.setAttribute("aria-label", t("no silhouette: the design is not legal yet"));
     return;
   }
   const sight = preview.sight, radar = preview.radar;
@@ -487,13 +514,15 @@ function renderSilhouette() {
   // A legend, not a sentence: every row names one mark on the drawing above and
   // says what it means, so a player can look from one to the other. Four prose
   // clauses in a row cannot be looked up that way (design 957-962).
+  // The chassis is named, never translated: it is the component's own name, the
+  // one the catalogue and the wire use. Everything said *about* it is prose.
   const facts = [
-    ["shape", `chassis is ${loco ? loco.name : "unknown"} — teammates read it at a glance`],
-    armed ? ["barrel", "past the nose: every other player can see it is armed"]
-          : ["no barrel", "reads as unarmed to every other player"],
-    radar > 0 ? ["ring", `radar reach, ${radar} cells in every direction`]
-              : ["no ring", "no radar, so nothing outside the wedge exists to it"],
-    ["wedge", `sight, 90° × ${sight} cells — unchanged by any part`],
+    [t("shape"), fill(t("chassis is %1 — teammates read it at a glance"), loco ? loco.name : t("unknown"))],
+    armed ? [t("barrel"), t("past the nose: every other player can see it is armed")]
+          : [t("no barrel"), t("reads as unarmed to every other player")],
+    radar > 0 ? [t("ring"), fill(t("radar reach, %1 cells in every direction"), radar)]
+              : [t("no ring"), t("no radar, so nothing outside the wedge exists to it")],
+    [t("wedge"), fill(t("sight, 90° × %1 cells — unchanged by any part"), sight)],
   ];
   const legend = $("sil-desc");
   for (const [k, v] of facts) legend.append(el("span", { textContent: k }), el("span", { textContent: v }));
@@ -515,7 +544,7 @@ function refresh() {
   renderFit();
   renderSilhouette();
   $("save").disabled = !(preview && preview.ok && previewFor === key());
-  $("save").textContent = editing ? "Save changes" : "Save blueprint";
+  $("save").textContent = editing ? t("Save changes") : t("Save blueprint");
   for (const id of ["edit", "copy", "del"]) $(id).disabled = !selected();
   clearTimeout(timer);
   // Nothing left to ask: the answer already on screen describes this exact
@@ -541,7 +570,7 @@ async function reload(k) {
 // Which design is on screen, in the bar. The name field is the draft's identity
 // and it is editable, so the bar follows it rather than the library row.
 function showName() {
-  $("bpname").textContent = $("name").value.trim() || "unsaved design";
+  $("bpname").textContent = $("name").value.trim() || t("unsaved design");
 }
 
 // load opens a saved design in the draft. inPlace is the difference between the
@@ -561,7 +590,7 @@ function load(bp, inPlace) {
 function renderLibrary() {
   const sel = $("library");
   const keep = sel.value;
-  sel.replaceChildren(el("option", { value: "", textContent: `${blueprints.length} saved…` }));
+  sel.replaceChildren(el("option", { value: "", textContent: fill(t("%1 saved…"), blueprints.length) }));
   for (const b of blueprints) sel.append(el("option", { value: String(b.id), textContent: b.name }));
   if (blueprints.some((b) => String(b.id) === keep)) sel.value = keep;
 }
@@ -589,7 +618,9 @@ $("clear").addEventListener("click", () => {
 $("del").addEventListener("click", async () => {
   err(""); status("");
   const b = selected();
-  if (!b || !confirm(`Delete the blueprint "${b.name}"?`)) return;
+  // The quotes live outside the key: web/i18n_test.go will not read a literal
+  // that carries one, and it is right not to — the escaping is not translatable.
+  if (!b || !confirm(fill(t("Delete the blueprint %1?"), `"${b.name}"`))) return;
   try {
     await api("DELETE", `/api/blueprints/${b.id}`);
     blueprints = blueprints.filter((x) => x.id !== b.id);
@@ -598,7 +629,7 @@ $("del").addEventListener("click", async () => {
     // picker is never left with nothing in it.
     if (blueprints.length === 0) blueprints = (await api("GET", "/api/blueprints")).blueprints;
     renderLibrary();
-    status(`Deleted. Matches already running on it are unaffected.`);
+    status(t("Deleted. Matches already running on it are unaffected."));
   } catch (e) { err(e.message); }
 });
 
@@ -617,7 +648,7 @@ $("save").addEventListener("click", async () => {
     $("library").value = String(bp.id);
     $("name").value = bp.name;
     showName();
-    status(`Saved. Approve it on the lobbies page and your base will build it.`);
+    status(t("Saved. Approve it on the lobbies page and your base will build it."));
   } catch (e) { err(e.message); }
 });
 
