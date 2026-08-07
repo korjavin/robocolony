@@ -11,7 +11,7 @@
 
 services:
   robocolony:
-    image: ghcr.io/korjavin/robocolony:latest
+    image: ghcr.io/korjavin/robocolony:ae8a578d9ce41791c950dad634e2f3d0aa004159
     container_name: robocolony
     networks:
       - traefik_network
