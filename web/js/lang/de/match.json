@@ -242,8 +242,6 @@
   "Parts collected": "Gesammelte Teile",
   "Colony series over the match so far": "Kolonie-Reihen über das bisherige Match",
   "Waiting for the first samples…": "Warte auf die ersten Messpunkte…",
-  "Waiting for the first samples — one every %s of match time.": "Warte auf die ersten Messpunkte — einer pro %s Matchzeit.",
-  "%1 — peak %2, %3 to %4, one point per %5. Colours match the standing above.": "%1 — Spitzenwert %2, %3 bis %4, ein Punkt je %5. Die Farben entsprechen der Rangliste oben.",
 
   "No colony selected.": "Keine Kolonie gewählt.",
   "No base.": "Keine Basis.",
