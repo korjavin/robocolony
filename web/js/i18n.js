@@ -82,17 +82,27 @@ export function errorText(data, res) {
   if (typeof de !== "string") return en;
   const args = Array.isArray(data.args) ? data.args : [];
   let i = 0;
-  // A verb with no argument left stays a verb: printing "undefined" would be
-  // worse than printing "%s", and either way the English is one language away.
-  return de.replace(/%[a-zA-Z%]/g, (verb) => {
+  // Flags, width and precision are part of the verb (%02d), so the whole thing
+  // is replaced and not just its last letter. web/i18n_test.go matches verbs
+  // the same way; the two have to agree, or a key can carry a verb the guard
+  // cannot see and the player reads a raw "%02d".
+  return de.replace(/%[-+#0]*\d*(?:\.\d+)?[a-zA-Z%]/g, (verb) => {
     if (verb === "%%") return "%";
-    if (i >= args.length) return verb;
-    const a = String(args[i++]);
+    const v = args[i++];
+    // A verb with no argument left, or one whose argument is null, stays a
+    // verb: "undefined" and "null" are the two words this must never print,
+    // and the untranslated English is one line below anyway.
+    if (v === null || v === undefined) return verb;
+    const a = String(v);
     // Vocabulary arguments ("blueprint", "program") have dictionary entries and
     // translate. ponytail: so does a blueprint a player actually named
     // "program" — the wire cannot say which is which, and the server field
     // carries the same note. Cosmetic; arg-marking is the upgrade if it bites.
-    return dict[a] ?? a;
+    //
+    // typeof, not ??: an argument named "toString" or "constructor" finds a
+    // function on the prototype chain, which is neither null nor undefined and
+    // would stringify into the sentence as JS source.
+    return typeof dict[a] === "string" ? dict[a] : a;
   });
 }
 
